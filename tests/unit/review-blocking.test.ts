@@ -36,6 +36,7 @@ const report = (findings: ReviewFinding[], verdict: "pass" | "fail" = "fail"): R
   version: 1,
   verdict,
   changeDescription: "The handler checks the token expiry.",
+  whereToLook: [],
   findings,
 });
 

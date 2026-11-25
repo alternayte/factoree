@@ -38,6 +38,10 @@ const pullRequest = (overrides: Partial<PublishedPullRequest> = {}): PublishedPu
   verifiedRunId: "run-1",
   reviewerHandledKey: null,
   reviewerFollowUpKeys: [],
+  answeredFindingFingerprints: [],
+  reviewAppNoticeKey: null,
+  previewUrl: null,
+  previewHeadSha: null,
   bringCurrentHeadSha: null,
   workflowId: "pr:tenant-1:acme/api#12",
   ...overrides,
@@ -157,7 +161,15 @@ describe("missingGitHubAccess (docs/specs/pr-review-merge-and-deploy.md, D4)", (
       { name: "pull_requests", required: "write", granted: "read" },
       { name: "checks", required: "read", granted: null },
       { name: "statuses", required: "write", granted: null },
+      { name: "actions", required: "read", granted: null },
     ]);
-    expect(missing.events).toEqual(["pull_request_review", "check_run", "status"]);
+    expect(missing.events).toEqual([
+      "pull_request_review",
+      "check_run",
+      "status",
+      "issue_comment",
+      "pull_request_review_comment",
+      "pull_request_review_thread",
+    ]);
   });
 });

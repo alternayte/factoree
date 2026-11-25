@@ -50,7 +50,7 @@ export const AUTONOMY_HELP: readonly LevelHelp[] = [
     name: "Auto-merge",
     summary: "Runs every check. Turns on GitHub auto-merge.",
     detail:
-      "Factoree opens a ready pull request as at L3. It turns on GitHub auto-merge when its checks, the PR reviewer and every review pass on the head. The repository rules decide the merge. The repository must allow auto-merge, and the base branch must have a rule. Otherwise the pull request stays open as at L3.",
+      "Factoree opens a ready pull request as at L3. It turns on GitHub auto-merge when its checks, every review app and every review pass on the head. The repository rules decide the merge. The repository must allow auto-merge, and the base branch must have a rule. Otherwise the pull request stays open as at L3.",
   },
 ];
 

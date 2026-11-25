@@ -7,7 +7,7 @@ import type { Run } from "../run.js";
 import { failHung, failProviderUnreachable, hangOf, providerUnreachableOf, runSession, spriteOf } from "../sessions.js";
 import { oneOffSpriteInput, prepareOneOffSprite } from "./one-off-sprite.js";
 
-/** The failed PR reviewer check a triage reads. */
+/** The review app findings a triage reads (a failed PR reviewer check in a history from before the review apps). */
 export interface ReviewerCheck {
   pullRequestId: string;
   url: string;
@@ -25,7 +25,21 @@ export interface ReviewerCheck {
  * Factoree replies on the pull request to each dropped finding. A triage that keeps nothing ends the
  * Run with no change, and it does not count toward the limit. It answers every triaged finding.
  */
-export const triageReviewerFindings = async (run: Run, check: ReviewerCheck): Promise<TriagedFinding[]> => {
+export interface TriageOptions {
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.210. A triage that keeps nothing ends the run with no
+   * change. A run that also carries failed CI checks or human decisions goes on.
+   */
+  endWhenNothingKept: boolean;
+  /** Only an automatic run counts toward the product limit of automatic follow-up runs. */
+  count: boolean;
+}
+
+export const triageReviewerFindings = async (
+  run: Run,
+  check: ReviewerCheck,
+  options: TriageOptions = { endWhenNothingKept: true, count: true },
+): Promise<TriagedFinding[]> => {
   const { input } = run;
   await run.ensureTime();
   await run.waitForRunSlot();
@@ -76,14 +90,14 @@ export const triageReviewerFindings = async (run: Run, check: ReviewerCheck): Pr
   if (run.stopped) await run.cancel();
   if (triage === null) {
     await run.ensureTime();
-    return await run.fail("REVIEW_UNAVAILABLE", `The triage of the PR reviewer findings on ${check.url} did not finish.`);
+    return await run.fail("REVIEW_UNAVAILABLE", `The triage of the review app findings on ${check.url} did not finish.`);
   }
   const unreachable = providerUnreachableOf(triage);
   if (unreachable !== null) await failProviderUnreachable(run, "reviewer", unreachable);
   const hang = hangOf(triage);
   if (hang !== null) await failHung(run, "reviewer", hang);
   if (!triage.reportUsable) {
-    return await run.fail("REVIEW_UNAVAILABLE", `Factoree could not triage the PR reviewer findings on ${check.url}. ${triage.reportProblem ?? ""}`.trim());
+    return await run.fail("REVIEW_UNAVAILABLE", `Factoree could not triage the review app findings on ${check.url}. ${triage.reportProblem ?? ""}`.trim());
   }
   const kept = triage.decisions.filter((decision) => decision.kept);
   const dropped = triage.decisions.filter((decision) => !decision.kept);
@@ -91,21 +105,21 @@ export const triageReviewerFindings = async (run: Run, check: ReviewerCheck): Pr
     await notify(() => pullRequestReplyActivities.answerDroppedFindings({ tenantId: input.tenantId, pullRequestId: check.pullRequestId, findings: check.findings, dropped }));
   }
   const triageLine =
-    `Factoree triaged ${String(triage.decisions.length)} ${triage.decisions.length === 1 ? "finding" : "findings"} of the PR reviewer on ${check.url}: ` +
+    `Factoree triaged ${String(triage.decisions.length)} ${triage.decisions.length === 1 ? "finding" : "findings"} of ${check.reviewerName} on ${check.url}: ` +
     `it kept ${String(kept.length)} and dropped ${String(dropped.length)}.` +
-    (dropped.length === 0 ? "" : " It replied on the pull request to each dropped finding with the reason.");
-  if (kept.length === 0) {
+    (dropped.length === 0 ? "" : " It answered each dropped finding on the pull request with the reason.");
+  if (kept.length === 0 && options.endWhenNothingKept) {
     await run.report(
       [
         "## Factoree triage",
         "",
         triageLine,
         "",
-        "No finding names a concrete defect, a rule and evidence, so Factoree changed nothing. This triage does not count toward the limit of PR follow-up runs.",
+        "No finding names a concrete defect, a rule and evidence, so Factoree changed nothing. This triage does not count toward the automatic follow-up limit.",
       ].join("\n"),
     );
   }
   await run.progress(triageLine);
-  await activities.countReviewerFollowUp({ tenantId: input.tenantId, pullRequestId: check.pullRequestId, runId: run.id });
+  if (options.count) await activities.countReviewerFollowUp({ tenantId: input.tenantId, pullRequestId: check.pullRequestId, runId: run.id });
   return triage.decisions;
 };

@@ -85,8 +85,8 @@ type ProductRow = {
   sandboxProviderIds: string[];
   maxConcurrentRuns: number;
   appChangeIssues: string;
-  prReviewerAppSlug: string | null;
-  prReviewerCheckName: string | null;
+  reviewAppDenyList: string[];
+  automaticFollowUpLimit: number;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -131,15 +131,10 @@ const toProduct = (row: ProductRow): ProductRecord => {
     skillRegistryKind,
     skillRegistryUrl,
     skillRegistrySet,
-    prReviewerAppSlug,
-    prReviewerCheckName,
     ...rest
   } = row;
   return {
     ...rest,
-    // Both columns or neither: a half setting gates on nothing.
-    prReviewer:
-      prReviewerAppSlug !== null && prReviewerCheckName !== null ? { appSlug: prReviewerAppSlug, checkName: prReviewerCheckName } : null,
     skillRegistry: toSkillRegistry(skillRegistryKind, skillRegistryUrl, skillRegistrySet),
     riskCaps: toRiskCaps(row.riskCaps),
     status: row.status === "active" ? "active" : "pending",
@@ -453,8 +448,8 @@ export class PrismaProductRegistry implements ProductRegistry {
         sandboxProviderIds: settings.sandboxProviderIds,
         maxConcurrentRuns: settings.maxConcurrentRuns,
         appChangeIssues: settings.appChangeIssues,
-        prReviewerAppSlug: settings.prReviewer === undefined ? undefined : (settings.prReviewer?.appSlug ?? null),
-        prReviewerCheckName: settings.prReviewer === undefined ? undefined : (settings.prReviewer?.checkName ?? null),
+        reviewAppDenyList: settings.reviewAppDenyList,
+        automaticFollowUpLimit: settings.automaticFollowUpLimit,
       }).filter(([, value]) => value !== undefined),
     );
     const updated = await this.prisma.product.updateMany({ where: { tenantId, id }, data });

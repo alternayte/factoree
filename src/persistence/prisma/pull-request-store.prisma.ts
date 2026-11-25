@@ -49,16 +49,29 @@ const toRecord = (row: Row): PublishedPullRequest => ({
   reviewerHandledKey: row.reviewerHandledKey,
   reviewerFollowUpKeys: row.reviewerFollowUpKeys,
   bringCurrentHeadSha: row.bringCurrentHeadSha,
+  answeredFindingFingerprints: row.answeredFindingFingerprints,
+  reviewAppNoticeKey: row.reviewAppNoticeKey,
+  previewUrl: row.previewUrl,
+  previewHeadSha: row.previewHeadSha,
   workflowId: row.workflowId,
 });
 
-/** The facts an event moves on the record. Every other event changes no column. */
-const factsOf = (event: PullRequestEvent): Prisma.PullRequestUpdateManyMutationInput | null => {
+/**
+ * The facts an event moves on the record. Every other event changes no column. DI-21.220: a new head
+ * clears the preview, and a successful deployment with an environment URL on the head of an open
+ * pull request is its preview. A deployment of any other commit, such as a deploy of the merge
+ * commit, is no preview.
+ */
+const factsOf = (event: PullRequestEvent, current: { state: string; headSha: string }): Prisma.PullRequestUpdateManyMutationInput | null => {
   switch (event.kind) {
     case "synchronized":
-      return { headSha: event.headSha };
+      return { headSha: event.headSha, previewUrl: null, previewHeadSha: null };
     case "reopened":
-      return { state: "open", closedAt: null, mergeCommitSha: null, headSha: event.headSha };
+      return { state: "open", closedAt: null, mergeCommitSha: null, headSha: event.headSha, ...(event.headSha === current.headSha ? {} : { previewUrl: null, previewHeadSha: null }) };
+    case "deployment_status":
+      return current.state === "open" && event.state === "success" && event.sha === current.headSha && event.environmentUrl !== null && /^https?:\/\//.test(event.environmentUrl)
+        ? { previewUrl: event.environmentUrl, previewHeadSha: event.sha }
+        : null;
     case "edited":
       return { baseBranch: event.baseBranch };
     case "base_pushed":
@@ -295,7 +308,7 @@ export class PrismaPullRequestStore implements PullRequestStore, ChangeSetStore 
         skipDuplicates: true,
       });
       if (inserted.count === 0) return { isNew: false, pullRequest: toRecord(current) };
-      const facts = factsOf(event);
+      const facts = factsOf(event, current);
       if (facts === null) return { isNew: true, pullRequest: toRecord(current) };
       const updated = await tx.pullRequest.update({ where: { id: pullRequestId }, data: facts, include });
       return { isNew: true, pullRequest: toRecord(updated) };
@@ -389,6 +402,27 @@ export class PrismaPullRequestStore implements PullRequestStore, ChangeSetStore 
     return updated.count > 0;
   }
 
+  async addAnsweredFingerprints(tenantId: string, pullRequestId: string, fingerprints: readonly string[]): Promise<void> {
+    if (fingerprints.length === 0) return;
+    // One transaction: read the list and write the union, so a retry adds nothing twice.
+    await this.prisma.$transaction(async (tx) => {
+      const row = await tx.pullRequest.findFirst({ where: { id: pullRequestId, tenantId }, select: { answeredFindingFingerprints: true } });
+      if (row === null) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}"`);
+      const known = new Set(row.answeredFindingFingerprints);
+      const added = [...new Set(fingerprints)].filter((fingerprint) => !known.has(fingerprint));
+      if (added.length === 0) return;
+      await tx.pullRequest.updateMany({ where: { id: pullRequestId, tenantId }, data: { answeredFindingFingerprints: { push: added } } });
+    });
+  }
+
+  async markReviewAppNotice(tenantId: string, pullRequestId: string, key: string): Promise<boolean> {
+    const updated = await this.prisma.pullRequest.updateMany({
+      where: { id: pullRequestId, tenantId, OR: [{ reviewAppNoticeKey: null }, { reviewAppNoticeKey: { not: key } }] },
+      data: { reviewAppNoticeKey: key },
+    });
+    return updated.count > 0;
+  }
+
   async countReviewerFollowUp(tenantId: string, pullRequestId: string, key: string): Promise<number> {
     // DI-21.114. One conditional write: the key joins the list and the count moves only when the
     // list does not hold the key yet, so a retry after a successful write counts nothing.
@@ -404,6 +438,16 @@ export class PrismaPullRequestStore implements PullRequestStore, ChangeSetStore 
   async markBringCurrentTried(tenantId: string, pullRequestId: string, headSha: string): Promise<void> {
     const updated = await this.prisma.pullRequest.updateMany({ where: { id: pullRequestId, tenantId }, data: { bringCurrentHeadSha: headSha } });
     if (updated.count === 0) throw new Error(`no pull request "${pullRequestId}" of tenant "${tenantId}"`);
+  }
+
+  async listOpenByAgentSession(tenantId: string, agentSessionId: string): Promise<PublishedPullRequest[]> {
+    const rows = await this.prisma.pullRequest.findMany({
+      where: { tenantId, state: "open", originRun: { linearAgentSessionId: agentSessionId } },
+      orderBy: { createdAt: "asc" },
+      take: 20,
+      include,
+    });
+    return rows.map(toRecord);
   }
 
   async listOpenByBase(tenantId: string, repositoryFullName: string, baseBranch: string): Promise<PublishedPullRequest[]> {

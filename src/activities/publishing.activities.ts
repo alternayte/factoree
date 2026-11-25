@@ -19,6 +19,8 @@ import {
   buildPullRequestTitle,
   type PullRequestPort,
 } from "~/domain/publishing/pull-request.js";
+import { withOwnedBlock, type PullRequestBodyFacts } from "~/domain/publishing/pull-request-body.js";
+import type { ReviewGuideEntry } from "~/domain/review/review-report.js";
 import {
   bringCurrentOnTrustedCheckout,
   PatchHashMismatchError,
@@ -67,6 +69,38 @@ export const PUBLICATION_COMMIT_TIMESTAMP = "1970-01-01T00:00:00Z";
 /** The head branch of one Run. AT-35 requires a stable name, so a retry finds the same branch. */
 export const publishBranchName = (runId: string): string => `factoree/run-${runId}`;
 
+/**
+ * docs/specs/pr-body-for-humans.md. The facts of the first body, before the proof pack exists. The
+ * proof pack step then writes the whole owned block with what was asked and its evidence (DI-21.217).
+ */
+const firstBodyFacts = (input: {
+  workItemTitle: string;
+  workItemUrl: string | null;
+  runId: string;
+  baseSha: string;
+  patchSha256: string;
+  verificationSummary: string;
+  changedFileCount: number;
+  repairCount: number;
+  changeDescription: string | undefined;
+  whereToLook: ReviewGuideEntry[] | undefined;
+  linkTarget: PullRequestBodyFacts["linkTarget"];
+}): PullRequestBodyFacts => ({
+  workItemTitle: input.workItemTitle,
+  workItemUrl: input.workItemUrl,
+  runId: input.runId,
+  baseSha: input.baseSha,
+  patchSha256: input.patchSha256,
+  changedFileCount: input.changedFileCount,
+  repairCount: input.repairCount,
+  contractRevision: 1,
+  verification: [input.verificationSummary],
+  summary: input.changeDescription ?? "",
+  whereToLook: input.whereToLook ?? [],
+  linkTarget: input.linkTarget,
+  proof: null,
+});
+
 export interface PublishActivityInput {
   runId: string;
   tenantId: string;
@@ -103,6 +137,12 @@ export interface PublishActivityInput {
    * belongs to. The first body names them, and `writeChangeSetBody` adds the links. Absent for one target.
    */
   changeSetRepositories?: string[];
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.219. The fresh reviewer's summary and reading guide of
+   * the change. The first body shows them. Absent in a history from before them.
+   */
+  changeDescription?: string;
+  whereToLook?: ReviewGuideEntry[];
 }
 
 export interface PublishActivityOutput {
@@ -407,6 +447,9 @@ export interface WriteChangeSetBodyActivityInput {
   pullRequests: SetPullRequest[];
   /** DI-21.141. The cited provider-to-consumer edges of the run. */
   edges: Array<{ provider: string; consumer: string }>;
+  /** docs/specs/pr-body-for-humans.md, DI-21.219. The reviewer's summary and guide of the change. */
+  changeDescription?: string;
+  whereToLook?: ReviewGuideEntry[];
 }
 
 /** DI-21.153. Undoes the part of a change set that opened. */
@@ -581,7 +624,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       }
 
       // Step 9. SDD section 46 steps 1 to 8. The trusted checkout runs on the control plane.
-      const title = buildPullRequestTitle({ workItemTitle: input.workItemTitle });
+      const title = buildPullRequestTitle({ workItemTitle: input.workItemTitle, workItemUrl: input.workItemUrl });
       const commitMessage = [
         title,
         "",
@@ -631,14 +674,21 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           draft: input.draft,
           title,
           body: buildPullRequestBody({
-            workItemTitle: input.workItemTitle,
-            workItemUrl: input.workItemUrl,
-            runId: input.runId,
-            baseSha: input.baseSha,
-            patchSha256: patch.patchSha256,
-            verificationSummary: input.verificationSummary,
-            changedFileCount: patch.changedFiles.length,
-            repairCount: input.repairCount,
+            ...firstBodyFacts({
+              workItemTitle: input.workItemTitle,
+              workItemUrl: input.workItemUrl,
+              runId: input.runId,
+              baseSha: input.baseSha,
+              patchSha256: patch.patchSha256,
+              verificationSummary: input.verificationSummary,
+              changedFileCount: patch.changedFiles.length,
+              repairCount: input.repairCount,
+              changeDescription: input.changeDescription,
+              whereToLook: input.whereToLook,
+              // A change set names paths of several repositories, so its guide links no lines.
+              linkTarget:
+                input.changeSetRepositories === undefined ? { repositoryUrl: plainUrl.replace(/\.git$/, ""), commitSha: publication.commitSha } : null,
+            }),
             ...(input.changeSetRepositories === undefined ? {} : { changeSet: changeSetPendingSection(input.changeSetRepositories) }),
           }),
         },
@@ -700,7 +750,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       // DI-21.125. The clone only reads. The push mints its credential from the files it changes on the
       // branch, which for a merge holds the base side too.
       const { token, plainUrl, patch } = await captureForPublication(dependencies, input, "clone");
-      const title = buildPullRequestTitle({ workItemTitle: input.workItemTitle });
+      const title = buildPullRequestTitle({ workItemTitle: input.workItemTitle, workItemUrl: input.workItemUrl });
       const commitMessage = [
         `${title} (contract revision ${String(input.contractRevision)})`,
         "",
@@ -951,7 +1001,7 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
         };
       }
 
-      const title = buildPullRequestTitle({ workItemTitle: input.workItemTitle });
+      const title = buildPullRequestTitle({ workItemTitle: input.workItemTitle, workItemUrl: input.workItemUrl });
       const commitMessage = [
         title,
         "",
@@ -997,14 +1047,19 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
           title,
           body: dependencies.redactor.redactText(
             buildPullRequestBody({
-              workItemTitle: input.workItemTitle,
-              workItemUrl: input.workItemUrl,
-              runId: input.runId,
-              baseSha: input.baseSha,
-              patchSha256,
-              verificationSummary: "The checks of this patch did not pass. The warning above lists what did not pass.",
-              changedFileCount: changedFiles.length,
-              repairCount: input.repairCount,
+              ...firstBodyFacts({
+                workItemTitle: input.workItemTitle,
+                workItemUrl: input.workItemUrl,
+                runId: input.runId,
+                baseSha: input.baseSha,
+                patchSha256,
+                verificationSummary: "The checks of this patch did not pass. The warning above lists what did not pass.",
+                changedFileCount: changedFiles.length,
+                repairCount: input.repairCount,
+                changeDescription: undefined,
+                whereToLook: undefined,
+                linkTarget: null,
+              }),
               draftWarning: input.warning,
             }),
           ),
@@ -1141,18 +1196,26 @@ export const createPublishingActivities = (dependencies: PublishingActivityDepen
       assertInstallation(input.githubInstallationId);
       const token = await dependencies.tokens.tokenForInstallation(input.githubInstallationId, { pull_requests: "write" }, [input.repositorySlug]);
       dependencies.redactor.addSecret(token);
-      const body = buildPullRequestBody({
-        workItemTitle: input.workItemTitle,
-        workItemUrl: input.workItemUrl,
-        runId: input.runId,
-        baseSha: input.baseSha,
-        patchSha256: input.patchSha256,
-        verificationSummary: input.verificationSummary,
-        changedFileCount: input.changedFileCount,
-        repairCount: input.repairCount,
+      const block = buildPullRequestBody({
+        ...firstBodyFacts({
+          workItemTitle: input.workItemTitle,
+          workItemUrl: input.workItemUrl,
+          runId: input.runId,
+          baseSha: input.baseSha,
+          patchSha256: input.patchSha256,
+          verificationSummary: input.verificationSummary,
+          changedFileCount: input.changedFileCount,
+          repairCount: input.repairCount,
+          changeDescription: input.changeDescription,
+          whereToLook: input.whereToLook,
+          linkTarget: null,
+        }),
         changeSet: changeSetSection(input.repositorySlug, input.pullRequests, input.edges),
       });
-      await dependencies.pullRequests(token).updateBody(input.repositorySlug, input.pullRequestNumber, body, input.githubInstallationId);
+      // DI-21.217. Only the owned block changes. A human's text outside it stays.
+      const port = dependencies.pullRequests(token);
+      const current = await port.body(input.repositorySlug, input.pullRequestNumber, input.githubInstallationId);
+      await port.updateBody(input.repositorySlug, input.pullRequestNumber, withOwnedBlock(current, block), input.githubInstallationId);
     } catch (error) {
       throw namingTarget(dependencies.redactor, input.repositorySlug, error);
     }

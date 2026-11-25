@@ -17,7 +17,11 @@ export type PullRequestEvent =
   | PullRequestCheckRunEvent
   | PullRequestCommitStatusEvent
   | PullRequestDeploymentStatusEvent
-  | PullRequestBasePushedEvent;
+  | PullRequestBasePushedEvent
+  | PullRequestCommentEvent
+  | PullRequestReviewCommentEvent
+  | PullRequestReviewThreadEvent
+  | PullRequestLinearReplyEvent;
 
 export type PullRequestEventKind = PullRequestEvent["kind"];
 
@@ -85,6 +89,8 @@ export interface PullRequestReviewEvent {
   /** GitHub's author association, such as OWNER, MEMBER or COLLABORATOR. */
   authorAssociation: string;
   body: string | null;
+  /** docs/specs/pr-feedback-loop.md. True when the review body mentions the Factoree app. Absent before review apps. */
+  mentions?: boolean;
 }
 
 /** `check_run`. The app slug pins a check to the app that reported it. */
@@ -138,6 +144,94 @@ export interface PullRequestBasePushedEvent {
   sha: string;
 }
 
+/**
+ * docs/specs/pr-feedback-loop.md. `issue_comment` with the action `created`, on a pull request: a
+ * comment on its conversation. `mentions` is true when the body mentions the Factoree app.
+ */
+export interface PullRequestCommentEvent {
+  kind: "comment";
+  deliveryId: string;
+  commentId: number;
+  authorLogin: string;
+  /** GitHub's account type: User or Bot. */
+  authorType: string;
+  body: string;
+  mentions: boolean;
+  url: string | null;
+}
+
+/**
+ * docs/specs/pr-feedback-loop.md. `pull_request_review_comment` with the action `created`: a
+ * comment on a line of the diff, which opens a thread or replies in one.
+ */
+export interface PullRequestReviewCommentEvent {
+  kind: "review_comment";
+  deliveryId: string;
+  commentId: number;
+  reviewId: number | null;
+  /** The first comment of the thread this comment replies to, or null when it opens the thread. */
+  inReplyToId: number | null;
+  path: string;
+  line: number | null;
+  commitSha: string | null;
+  authorLogin: string;
+  authorType: string;
+  body: string;
+  mentions: boolean;
+  url: string | null;
+}
+
+/**
+ * docs/specs/pr-feedback-loop.md. `pull_request_review_thread`: a thread was resolved or
+ * unresolved. The PR workflow records it only. The planner reads the thread state from GitHub.
+ */
+export interface PullRequestReviewThreadEvent {
+  kind: "review_thread";
+  deliveryId: string;
+  action: "resolved" | "unresolved";
+  /** The first comment of the thread. */
+  commentId: number | null;
+  senderLogin: string | null;
+}
+
+/**
+ * docs/specs/pr-feedback-loop.md. A reply in the Linear agent session of the run while its pull
+ * request is open. It is a human decision on that pull request.
+ */
+export interface PullRequestLinearReplyEvent {
+  kind: "linear_reply";
+  deliveryId: string;
+  agentSessionId: string;
+  /** The Linear id of the reply, which keys its answer. */
+  replyId: string;
+  authorName: string | null;
+  body: string;
+  /** The Linear URL of the reply, or null when Linear names none. */
+  url: string | null;
+}
+
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.204. True when a GitHub comment body mentions the Factoree
+ * app as `@<slug>` or `@<slug>[bot]`, in any case, outside a quoted line and outside a fenced code
+ * block. A quote of an earlier mention is not a new decision.
+ */
+export const mentionsApp = (body: string, appSlug: string | null): boolean => {
+  if (appSlug === null || appSlug === "") return false;
+  const slug = appSlug.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const mention = new RegExp(`(^|[^a-z0-9_/@.-])@${slug}(\\[bot\\])?(?![a-z0-9_-])`, "i");
+  let fenced = false;
+  for (const line of body.split(/\r?\n/)) {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced || trimmed.startsWith(">")) continue;
+    if (mention.test(line.replace(/`[^`]*`/g, ""))) return true;
+  }
+  return false;
+};
+
 /** The commit an event names, or null when it names none. */
 export const eventHeadSha = (event: PullRequestEvent): string | null => {
   switch (event.kind) {
@@ -149,7 +243,12 @@ export const eventHeadSha = (event: PullRequestEvent): string | null => {
     case "check_run":
       return event.headSha;
     case "review":
+    case "review_comment":
       return event.commitSha;
+    case "comment":
+    case "review_thread":
+    case "linear_reply":
+      return null;
     case "commit_status":
     case "deployment_status":
       return event.sha;

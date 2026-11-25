@@ -19,9 +19,17 @@ import type { AgentRunWorkflowResult, agentRunWorkflow } from "./agent-run.workf
 import type { BringCurrentReason } from "~/domain/pull-requests/auto-merge.js";
 import type { StopRequest } from "~/domain/runs/run-stop.js";
 // The workflow bundler resolves a relative path only. The module imports nothing at run time.
-import { mayStartFollowUp } from "../domain/pull-requests/pr-follow-up.js";
+import {
+  isDecisionEvent,
+  mayStartFollowUp,
+  needsAttention,
+  SETTLE_MAX_MS,
+  SETTLE_QUIET_MS,
+  type DecisionEvent,
+} from "../domain/pull-requests/pr-follow-up.js";
 import { DEPLOY_WINDOW_MS } from "../domain/pull-requests/deploys.js";
 import { releaseMemo } from "./release.js";
+import { autoMergeTriggerOf, mayAmend, mayConflict, movesSetStatus } from "./pr-workflow-events.js";
 import { HELD_LINE } from "../domain/runs/drain-mode.js";
 import type { PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
@@ -65,6 +73,23 @@ export interface PullRequestWorkflowInput {
    * request continued as new. The workflow then takes deploys until the deploy window ends.
    */
   mergedAt?: number;
+  /** docs/specs/pr-feedback-loop.md, DI-21.209. The human decisions a continue-as-new carried over, oldest first. */
+  decisions?: DecisionEvent[];
+  /** DI-21.209. The settle of the head that a continue-as-new carried over, or null. */
+  attention?: ReviewSettle | null;
+}
+
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.209. The reviews of the head settle: the time of the first
+ * event that asked for attention, the time of the newest one, and the delivery of the newest one,
+ * which keys the run that the settle plans. Times are milliseconds since the epoch.
+ */
+export interface ReviewSettle {
+  since: number;
+  lastAt: number;
+  key: string;
+  /** True when the pull request belongs to a change set, so the plan takes the set. */
+  inSet: boolean;
 }
 
 /** Each activity reads or writes the database and Linear once. A retry repeats it safely. */
@@ -100,6 +125,13 @@ const BRING_CURRENT_PATCH = "bring-current";
  */
 const DEPLOYS_PATCH = "deploys";
 
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.209. A history from before the review apps starts a PR
+ * follow-up run on each failed PR reviewer check, one event at a time. After it, the workflow waits
+ * for the reviews of the head to settle and plans once from every review app, CI check and human.
+ */
+const REVIEW_APPS_SETTLE_PATCH = "review-apps-settle";
+
 /** docs/specs/drain-mode.md. While drain mode is on, a PR workflow waits before it starts a run. */
 const DRAIN_MODE_PATCH = "drain-mode";
 const DRAIN_MODE_POLL = "60 seconds";
@@ -116,48 +148,26 @@ const CHANGE_SET_STATUS_PATCH = "change-set-status";
  */
 const SET_RUN_PATCH = "change-set-runs";
 
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.213. The proof pack lists no PR comment and no suggestion of a
+ * passed check. A history from before this patch plans the amendment of such an event, which now
+ * amends nothing.
+ */
+const NO_COMMENT_AMENDMENTS_PATCH = "no-comment-amendments";
+
+/** docs/specs/pr-body-for-humans.md, DI-21.220. A history from before it writes no body after a deployment of the head. */
+const PREVIEW_LINK_PATCH = "pr-preview-link";
+
 /** DI-21.158. A waiting PR workflow reads the set again this often, in case a release signal was lost. */
 const SET_WAIT = "5 minutes";
 
-/** DI-21.155. The events that change the merge-order status of a change set: a new head, a reopen and a close. */
-const movesSetStatus = (event: PullRequestEvent): boolean => event.kind === "synchronized" || event.kind === "reopened" || event.kind === "closed";
 
 /** DI-21.115. GitHub computes the merge state after a push. The workflow reads it this often at most. */
 const MERGEABILITY_READS = 4;
 const MERGEABILITY_WAIT = "30 seconds";
 
-/** DI-21.117. The events after which the branch may conflict with its base. */
-const mayConflict = (event: PullRequestEvent): boolean =>
-  event.kind === "base_pushed" || event.kind === "synchronized" || event.kind === "reopened" || event.kind === "edited";
 
-/**
- * DI-21.123. The events that may list themselves in the proof pack: a submitted comment review, and a
- * check run or commit status that passed. The planner decides whether it is the PR reviewer's.
- */
-const mayAmend = (event: PullRequestEvent): boolean =>
-  (event.kind === "review" && event.action === "submitted" && event.state === "commented") ||
-  (event.kind === "check_run" && event.status === "completed" && event.conclusion === "success") ||
-  (event.kind === "commit_status" && event.state === "success");
 
-/**
- * DI-21.104. The trigger of the L4 merge for one taken event. A close ends the workflow, and a deploy
- * changes no merge condition, so neither steers.
- */
-const autoMergeTriggerOf = (event: PullRequestEvent): AutoMergeTrigger | null => {
-  switch (event.kind) {
-    case "closed":
-    case "deployment_status":
-      return null;
-    case "synchronized":
-      return "new_head";
-    case "auto_merge_disabled":
-      return "auto_merge_disabled";
-    case "base_pushed":
-      return "base_moved";
-    default:
-      return "event";
-  }
-};
 
 /**
  * docs/specs/pr-review-merge-and-deploy.md, DI-21.101. One workflow per published pull request, keyed
@@ -189,6 +199,9 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
     setReleased = true;
   });
   const closeQueued = (): boolean => queue.some((queued) => queued.kind === "closed");
+  // DI-21.209. The settle of the current head, and the human decisions held until its plan.
+  let attention: ReviewSettle | null = input.attention ?? null;
+  const decisions: DecisionEvent[] = [...(input.decisions ?? [])];
 
   /**
    * docs/specs/change-sets.md, slice 9, DI-21.158. Waits while another PR workflow of the set runs a
@@ -524,9 +537,64 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
   };
 
   /**
-   * docs/specs/pr-review-merge-and-deploy.md, DI-21.123. A plain comment, or a passed PR reviewer
-   * check with comments, amends the proof pack of the verified head. A failure costs only the
-   * amendment.
+   * docs/specs/pr-feedback-loop.md, DI-21.209 to DI-21.211. One event that asks for attention. A
+   * human decision is taken first: a GitHub one counts only from a human with write access, and gets
+   * 👀. The event then starts or extends the settle of the head. A decision that does not count asks
+   * for no attention, unless it is a review, which a review app may have written.
+   */
+  const attend = async (event: PullRequestEvent, inSet: boolean): Promise<void> => {
+    if (isDecisionEvent(event)) {
+      let accepted = false;
+      try {
+        ({ accepted } = await activities.acknowledgeHumanDecision({ tenantId: input.tenantId, pullRequestId: input.pullRequestId, event: event as DecisionEvent }));
+      } catch (error) {
+        if (isCancellation(error)) throw error;
+        log.warn("the human decision was not taken", { delivery_id: event.deliveryId, error: String(error) });
+      }
+      if (accepted && !decisions.some((held) => held.deliveryId === event.deliveryId)) decisions.push(event as DecisionEvent);
+      if (!accepted && event.kind !== "review") return;
+    }
+    const now = Date.now();
+    attention = attention === null ? { since: now, lastAt: now, key: event.deliveryId, inSet } : { ...attention, lastAt: now, key: event.deliveryId, inSet };
+  };
+
+  /**
+   * DI-21.209. The quiet window ended. While a review app check on the head still runs, the workflow
+   * waits another window, up to the upper wait from the first event. Then it plans once, with the
+   * decisions it held, and runs the plan.
+   */
+  const settle = async (): Promise<void> => {
+    const current = attention;
+    if (current === null) return;
+    let pending = false;
+    try {
+      ({ pending } = await followUpActivities.readReviewSettle({ tenantId: input.tenantId, pullRequestId: input.pullRequestId }));
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      log.warn("the review state of the head was not read, so the workflow plans now", { error: String(error) });
+    }
+    if (pending && Date.now() < current.since + SETTLE_MAX_MS) {
+      attention = { ...current, lastAt: Date.now() };
+      return;
+    }
+    attention = null;
+    const held = decisions.splice(0, decisions.length);
+    const planOnce = () =>
+      followUpActivities.planSettledFollowUp({ tenantId: input.tenantId, pullRequestId: input.pullRequestId, decisions: held, settleKey: current.key });
+    let plan: PullRequestFollowUpPlan;
+    try {
+      plan = await planInSet(current.inSet, planOnce);
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      log.warn("the settled PR follow-up plan failed", { settle: current.key, error: String(error) });
+      return;
+    }
+    await runChild(plan);
+  };
+
+  /**
+   * docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The amendment of a history from before the
+   * patch `no-comment-amendments`. A failure costs only the amendment.
    */
   const amend = async (event: PullRequestEvent): Promise<void> => {
     try {
@@ -582,6 +650,16 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
     }
   };
 
+  /** DI-21.220. Writes the body again with the preview link of the head. */
+  const preview = async (event: PullRequestEvent): Promise<void> => {
+    try {
+      await activities.writePullRequestPreviewBody({ tenantId: input.tenantId, pullRequestId: input.pullRequestId });
+    } catch (error) {
+      if (isCancellation(error)) throw error;
+      log.warn("the preview link was not written", { delivery_id: event.deliveryId, error: String(error) });
+    }
+  };
+
   // DI-21.121. A merged pull request takes deploys until this time, in milliseconds since the epoch.
   let mergedAt: number | null = input.mergedAt ?? null;
 
@@ -593,7 +671,16 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
 
   for (;;) {
     if (mergedAt === null) {
-      await condition(() => queue.length > 0);
+      if (attention === null) {
+        await condition(() => queue.length > 0);
+      } else {
+        // DI-21.209. A settle exists only after the patch, so its timer is a command of new histories only.
+        const quiet = attention.lastAt + SETTLE_QUIET_MS - Date.now();
+        if (quiet <= 0 || !(await condition(() => queue.length > 0, quiet))) {
+          await settle();
+          continue;
+        }
+      }
     } else {
       // DI-21.121. After the merge the workflow waits for deploys until the deploy window ends.
       const remaining = mergedAt + DEPLOY_WINDOW_MS - Date.now();
@@ -641,18 +728,32 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
         return view.state;
       }
     } else {
+      // DI-21.220. A successful deployment of the head is its preview: the record took it, and the
+      // body links it. A failure costs only the link.
+      if (event.kind === "deployment_status" && event.state === "success" && patched(PREVIEW_LINK_PATCH)) await preview(event);
       // DI-21.155. A new head of a provider or a consumer moves the status of the set.
       if (taken.changeSet === true && movesSetStatus(event) && patched(CHANGE_SET_STATUS_PATCH)) await setStatuses(event);
       const trigger = autoMergeTriggerOf(event);
       const wanted = trigger === null ? null : await steer(trigger, event.kind === "auto_merge_disabled" ? event.headSha : null);
-      if (mayStartFollowUp(event) && patched(PR_FOLLOW_UP_PATCH)) await followUp(event, taken.changeSet === true);
+      // DI-21.209. A new head starts a new settle. The decisions held for the old head stay, and
+      // their settle starts again on the new head.
+      if (event.kind === "synchronized" && attention !== null) {
+        const now = Date.now();
+        attention = decisions.length === 0 ? null : { since: now, lastAt: now, key: event.deliveryId, inSet: taken.changeSet === true };
+      }
+      if (needsAttention(event) && patched(REVIEW_APPS_SETTLE_PATCH)) {
+        await attend(event, taken.changeSet === true);
+      } else if (mayStartFollowUp(event) && patched(PR_FOLLOW_UP_PATCH)) {
+        await followUp(event, taken.changeSet === true);
+      }
       // Slice 4. A conflict at any level, or a branch an L4 merge needs up to date, is brought current.
       if ((wanted !== null || mayConflict(event)) && patched(BRING_CURRENT_PATCH)) {
         const reason = wanted ?? ((await conflicts(event)) ? "conflict" : null);
         if (reason !== null) await bringCurrent(reason, event.deliveryId);
       }
-      // DI-21.123. A plain comment or a passed PR reviewer check lists itself in the proof pack.
-      if (mayAmend(event) && patched(DEPLOYS_PATCH)) {
+      // DI-21.123, DI-21.213. A history from before the patch planned an amendment for a plain comment
+      // or a passed PR reviewer check. Since the patch, no such event amends the proof pack.
+      if (mayAmend(event) && patched(DEPLOYS_PATCH) && !patched(NO_COMMENT_AMENDMENTS_PATCH)) {
         await amend(event);
       }
     }
@@ -664,6 +765,8 @@ export const pullRequestWorkflow = async (input: PullRequestWorkflowInput): Prom
         pullRequestId: input.pullRequestId,
         pending: [...queue],
         ...(mergedAt === null ? {} : { mergedAt }),
+        ...(decisions.length === 0 ? {} : { decisions: [...decisions] }),
+        ...(attention === null ? {} : { attention }),
       });
     }
   }

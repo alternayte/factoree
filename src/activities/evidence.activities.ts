@@ -1,3 +1,14 @@
+import type { PullRequestPort } from "~/domain/publishing/pull-request.js";
+import {
+  bodyFactsOfProofPack,
+  keptPartsOf,
+  renderOwnedBlock,
+  repositoryUrlOf,
+  withOwnedBlock,
+  type PullRequestBodyTarget,
+} from "~/domain/publishing/pull-request-body.js";
+import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
+import type { ReviewGuideEntry } from "~/domain/review/review-report.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import { NOT_CHECKED_REASON } from "~/domain/runs/run-draft.js";
 import { ApplicationFailure } from "@temporalio/activity";
@@ -243,7 +254,18 @@ export interface ProofPackActivityDependencies {
   skills?: RunSkillStore | undefined;
   /** docs/specs/sandbox-provider-spillover.md. The name of a sandbox provider, or null when it is gone. */
   sandboxProviderName?: ((providerId: string) => Promise<string | null>) | undefined;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.217. Reads and writes the body of a pull request. Each
+   * call mints its own token for the one repository, on the control plane only.
+   */
+  pullRequestBodies?: Pick<PullRequestPort, "body" | "updateBody"> | undefined;
+  /** The run page, where the proof pack shows. Absent in a test that renders no link. */
+  runPageUrl?: ((runId: string) => string) | undefined;
+  /** DI-21.220. The published pull request records, which hold the preview of each head. */
+  pullRequests?: Pick<PullRequestStore, "find" | "findByNumber"> | undefined;
 }
+
+
 
 export interface PublishProofPackActivityInput {
   runId: string;
@@ -311,6 +333,12 @@ export interface PublishProofPackActivityInput {
   draft?: { attempt: number; reviewed: boolean };
   /** docs/specs/pr-review-merge-and-deploy.md. Present for a PR follow-up run. */
   pullRequestFollowUp?: ProofPackPullRequestFollowUp;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.217. The pull requests whose owned block this step
+   * writes, and the reviewer's guide. Absent in a history from before the human body.
+   */
+  pullRequestBodies?: PullRequestBodyTarget[];
+  whereToLook?: ReviewGuideEntry[];
 }
 
 export interface PublishProofPackActivityOutput {
@@ -347,7 +375,100 @@ const sandboxProviderOf = async (
   return (await dependencies.sandboxProviderName(providerId)) ?? providerId;
 };
 
+/**
+ * docs/specs/pr-body-for-humans.md, DI-21.217 and DI-21.220. Writes the owned block of each pull
+ * request from the proof pack input, keeping the draft warning and the change set section the
+ * publication wrote, and every line a human wrote outside the block. A target links the pull
+ * request preview only when the preview belongs to its head commit. The proof pack is the durable
+ * record, so a body that GitHub refuses is logged and costs the run nothing.
+ */
+const writePullRequestBodies = async (
+  dependencies: ProofPackActivityDependencies,
+  log: { tenantId: string; runId: string; step: string },
+  proofPackInput: ProofPackInput,
+  targets: readonly PullRequestBodyTarget[],
+  previewOf: (target: PullRequestBodyTarget) => Promise<string | null>,
+): Promise<number> => {
+  const port = dependencies.pullRequestBodies;
+  if (port === undefined) return 0;
+  const changeSet = targets.length > 1;
+  let written = 0;
+  for (const target of targets) {
+    try {
+      const current = await port.body(target.repositorySlug, target.pullRequestNumber, target.githubInstallationId);
+      const kept = keptPartsOf(current);
+      const repositoryUrl = repositoryUrlOf(target.pullRequestUrl);
+      const facts = bodyFactsOfProofPack(proofPackInput, {
+        whereToLook: proofPackInput.whereToLook ?? [],
+        linkTarget: changeSet || repositoryUrl === null ? null : { repositoryUrl, commitSha: target.commitSha },
+        proofPackUrl: dependencies.runPageUrl?.(log.runId) ?? null,
+        previewUrl: await previewOf(target),
+        changedFileCount: target.changedFileCount,
+        baseSha: target.baseSha,
+        patchSha256: target.patchSha256,
+      });
+      const block = renderOwnedBlock({
+        ...facts,
+        ...(kept.draftWarning === null ? {} : { draftWarning: kept.draftWarning }),
+        ...(kept.changeSet === null ? {} : { changeSet: kept.changeSet }),
+      });
+      const next = withOwnedBlock(current, dependencies.redactor.redactText(block));
+      if (next !== current) {
+        await port.updateBody(target.repositorySlug, target.pullRequestNumber, next, target.githubInstallationId);
+        written += 1;
+      }
+    } catch (error) {
+      dependencies.logger.warn("the pull request body was not written", {
+        tenant_id: log.tenantId,
+        run_id: log.runId,
+        step: log.step,
+        pull_request: `${target.repositorySlug}#${String(target.pullRequestNumber)}`,
+        error: dependencies.redactor.redactText(String(error)),
+      });
+    }
+  }
+  return written;
+};
+
+/** DI-21.220. The preview of the head of one target, or null when the record holds none for that head. */
+const storedPreviewOf =
+  (dependencies: ProofPackActivityDependencies, tenantId: string) =>
+  async (target: PullRequestBodyTarget): Promise<string | null> => {
+    const record = await dependencies.pullRequests?.findByNumber(tenantId, target.repositorySlug, target.pullRequestNumber);
+    if (record === undefined || record === null) return null;
+    return record.previewUrl !== null && record.previewHeadSha === target.commitSha ? record.previewUrl : null;
+  };
+
 export const createProofPackActivities = (dependencies: ProofPackActivityDependencies) => ({
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.220. The PR workflow took a deployment of the head: the
+   * record holds its preview. When the head is the verified head and its run holds a stored proof
+   * pack input, the owned block is written again with Needs your eye linking the preview. A
+   * preview of an unverified head, or a run from before the stored body targets, writes nothing.
+   */
+  async writePullRequestPreviewBody(input: { tenantId: string; pullRequestId: string }): Promise<{ written: boolean }> {
+    const record = await dependencies.pullRequests?.find(input.tenantId, input.pullRequestId);
+    if (record === undefined || record === null || record.state !== "open") return { written: false };
+    if (record.previewUrl === null || record.previewHeadSha !== record.headSha || record.headSha !== record.verifiedHeadSha) return { written: false };
+    const runId = record.verifiedRunId ?? record.originRunId;
+    const run = await dependencies.runs.findById(input.tenantId, runId);
+    const stored = (run?.proofPackInput ?? null) as ProofPackInput | null;
+    const target = stored?.bodyTargets?.find(
+      (candidate) => candidate.repositorySlug.toLowerCase() === record.repositoryFullName.toLowerCase() && candidate.pullRequestNumber === record.number,
+    );
+    if (run === null || stored === null || target === undefined || target.commitSha !== record.headSha) return { written: false };
+    await registerProjectSecrets(dependencies.redactor, dependencies.secrets, input.tenantId, run.productId, dependencies.logger);
+    const written = await writePullRequestBodies(
+      dependencies,
+      { tenantId: input.tenantId, runId, step: "pull_request_preview" },
+      stored,
+      // A change set writes every body of the set, so each keeps its own preview.
+      stored.bodyTargets ?? [target],
+      storedPreviewOf(dependencies, input.tenantId),
+    );
+    return { written: written > 0 };
+  },
+
   async publishProofPack(
     input: PublishProofPackActivityInput,
   ): Promise<PublishProofPackActivityOutput> {
@@ -637,6 +758,9 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       })),
       ...(draft === undefined ? {} : { draft: { reviewed: draft.reviewed } }),
       ...(input.pullRequestFollowUp === undefined ? {} : { pullRequestFollowUp: input.pullRequestFollowUp }),
+      // DI-21.220. A preview after the proof pack rewrites the body from this stored input.
+      ...(input.whereToLook === undefined ? {} : { whereToLook: input.whereToLook }),
+      ...(input.pullRequestBodies === undefined ? {} : { bodyTargets: input.pullRequestBodies }),
     };
 
     // docs/specs/proof-pack-and-visual-evidence.md. An agent reads the full record as typed data.
@@ -676,6 +800,9 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       }
     }
     await dependencies.agentSession.respond(input.sessionId, body);
+    if (input.pullRequestBodies !== undefined) {
+      await writePullRequestBodies(dependencies, { tenantId: input.tenantId, runId: input.runId, step: "proof_pack" }, proofPackInput, input.pullRequestBodies, storedPreviewOf(dependencies, input.tenantId));
+    }
 
     dependencies.logger.info("proof pack posted", {
       tenant_id: input.tenantId,
@@ -694,7 +821,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
 
   /**
    * docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.123. Amends the proof pack of a run after
-   * publication: a deploy result, a plain comment or the PR reviewer suggestions on a passed check.
+   * publication: a deploy result (docs/specs/pr-feedback-loop.md, DI-21.213: no PR comment).
    * The amendment renders the whole proof pack again from its stored input with the "After
    * publication" section and stores the new document and hash. DI-21.126: it posts nothing in the
    * agent session. The caller posts at most one short line, and the run page shows the proof pack. A
@@ -713,8 +840,6 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       stored?.afterPublication ?? ((run.proofPackDocument["afterPublication"] ?? null) as ProofPackAfterPublication | null) ?? null;
     const after: ProofPackAfterPublication = {
       amendedFor: input.afterPublication.amendedFor,
-      comments: input.afterPublication.comments ?? before?.comments ?? [],
-      suggestions: input.afterPublication.suggestions ?? before?.suggestions ?? [],
       deploys: input.afterPublication.deploys ?? before?.deploys ?? [],
     };
     const postedAt = new Date();

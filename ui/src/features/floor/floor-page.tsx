@@ -937,7 +937,7 @@ const LEAD_MS = 20_000;
  * in it, the spans while a run is on the line, and every change time in order.
  */
 function replayTimeline(floor: FloorJson, from: number, to: number) {
-  const ended = new Set(["READY_FOR_HUMAN", "REPORTED", "DRAFT_PUBLISHED", "FAILED", "FAILED_REVIEW", "FAILED_CONFIGURATION", "STALE_BASE", "BLOCKED_ROUTING", "CANCELLED"]);
+  const ended = new Set(["READY_FOR_HUMAN", "REPORTED", "ANSWERED", "DRAFT_PUBLISHED", "FAILED", "FAILED_REVIEW", "FAILED_CONFIGURATION", "STALE_BASE", "BLOCKED_ROUTING", "CANCELLED"]);
   const runs: Array<{ id: string; title: string; start: number; tone: "ok" | "warn" | "bad" }> = [];
   const busy: Array<[number, number]> = [];
   const changes: number[] = [];

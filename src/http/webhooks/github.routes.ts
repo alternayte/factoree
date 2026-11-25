@@ -7,11 +7,14 @@ import {
   FACTOREE_CONFIG_PATH,
   installationEventSchema,
   installationRepositoriesEventSchema,
+  issueCommentEventSchema,
   pullRequestEventSchema,
+  pullRequestReviewCommentEventSchema,
   pullRequestReviewEventSchema,
+  pullRequestReviewThreadEventSchema,
   pushEventSchema,
 } from "~/adapters/github/webhook-schemas.js";
-import type { PullRequestEvent, PullRequestReviewEvent } from "~/domain/pull-requests/pull-request-event.js";
+import { mentionsApp, type PullRequestEvent, type PullRequestReviewEvent } from "~/domain/pull-requests/pull-request-event.js";
 import type { PullRequestEventRouter, PullRequestRouteOutcome } from "~/domain/pull-requests/pull-request-router.js";
 import type { DiscoveryOutcome, DiscoveryService } from "~/domain/products/discovery-service.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
@@ -62,6 +65,11 @@ export interface GitHubWebhookDependencies {
    * workflow. A close of a pull request with no record takes `pullRequestClosed`.
    */
   pullRequestEvents?: Pick<PullRequestEventRouter, "byNumber" | "byCommit" | "byBase" | "byDeployment">;
+  /**
+   * docs/specs/pr-feedback-loop.md. The slug of Factoree's own GitHub App, from the install settings,
+   * or null before setup. A comment mentions Factoree by it, and Factoree skips its own comments.
+   */
+  factoreeAppSlug?: () => Promise<string | null>;
 }
 
 /** The reply of a routed event. */
@@ -69,6 +77,9 @@ const routedReply = (outcome: PullRequestRouteOutcome) =>
   outcome === "unmatched" ? { status: "ignored", reason: "no run published this pull request" } : { status: "handled" };
 
 const REVIEW_ACTIONS = ["submitted", "edited", "dismissed"] as const;
+
+/** docs/specs/pr-feedback-loop.md. A comment by Factoree's own app bot is no event of the PR workflow. */
+const byFactoree = (login: string, appSlug: string | null): boolean => appSlug !== null && login.toLowerCase() === `${appSlug.toLowerCase()}[bot]`;
 const REVIEW_STATES = ["approved", "changes_requested", "commented", "dismissed"] as const;
 
 /**
@@ -343,6 +354,8 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
       }
       const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
       if (tenantId === null) return reply.code(200).send({ status: "handled" });
+      // docs/specs/pr-feedback-loop.md. A review body that mentions Factoree is a human decision.
+      const reviewAppSlug = (await dependencies.factoreeAppSlug?.()) ?? null;
       const routed = await dependencies.pullRequestEvents.byNumber(tenantId, repository.full_name, pullRequest.number, {
         kind: "review",
         deliveryId: deliveryIdOr(`pull_request_review:${repository.full_name}#${String(pullRequest.number)}:${String(review.id)}:${action}`),
@@ -354,6 +367,7 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
         reviewerType: review.user.type,
         authorAssociation: review.author_association,
         body: review.body ?? null,
+        mentions: mentionsApp(review.body ?? "", reviewAppSlug),
       });
       return reply.code(200).send(routedReply(routed));
     }
@@ -394,6 +408,84 @@ export const registerGitHubWebhookRoutes = (app: FastifyInstance, dependencies: 
         context,
         state,
         targetUrl: parsed.data.target_url ?? null,
+        senderLogin: parsed.data.sender?.login ?? null,
+      });
+      return reply.code(200).send(routedReply(routed));
+    }
+
+    // docs/specs/pr-feedback-loop.md. A comment on the conversation of a recorded pull request.
+    if (event === "issue_comment") {
+      const parsed = issueCommentEventSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
+      const { action, issue, comment, repository } = parsed.data;
+      if (action !== "created" || issue.pull_request == null || dependencies.pullRequestEvents === undefined) {
+        return reply.code(200).send({ status: "ignored", reason: "unsupported action" });
+      }
+      const appSlug = (await dependencies.factoreeAppSlug?.()) ?? null;
+      if (byFactoree(comment.user.login, appSlug)) return reply.code(200).send({ status: "ignored", reason: "a comment of Factoree" });
+      const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
+      if (tenantId === null) return reply.code(200).send({ status: "handled" });
+      const body = comment.body ?? "";
+      const routed = await dependencies.pullRequestEvents.byNumber(tenantId, repository.full_name, issue.number, {
+        kind: "comment",
+        deliveryId: deliveryIdOr(`issue_comment:${repository.full_name}#${String(issue.number)}:${String(comment.id)}`),
+        commentId: comment.id,
+        authorLogin: comment.user.login,
+        authorType: comment.user.type,
+        body,
+        mentions: mentionsApp(body, appSlug),
+        url: comment.html_url ?? null,
+      });
+      return reply.code(200).send(routedReply(routed));
+    }
+
+    // docs/specs/pr-feedback-loop.md. A comment on a line of the diff of a recorded pull request.
+    if (event === "pull_request_review_comment") {
+      const parsed = pullRequestReviewCommentEventSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
+      const { action, comment, pull_request: pullRequest, repository } = parsed.data;
+      if (action !== "created" || dependencies.pullRequestEvents === undefined) {
+        return reply.code(200).send({ status: "ignored", reason: "unsupported action" });
+      }
+      const appSlug = (await dependencies.factoreeAppSlug?.()) ?? null;
+      if (byFactoree(comment.user.login, appSlug)) return reply.code(200).send({ status: "ignored", reason: "a comment of Factoree" });
+      const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
+      if (tenantId === null) return reply.code(200).send({ status: "handled" });
+      const body = comment.body ?? "";
+      const routed = await dependencies.pullRequestEvents.byNumber(tenantId, repository.full_name, pullRequest.number, {
+        kind: "review_comment",
+        deliveryId: deliveryIdOr(`pull_request_review_comment:${repository.full_name}#${String(pullRequest.number)}:${String(comment.id)}`),
+        commentId: comment.id,
+        reviewId: comment.pull_request_review_id ?? null,
+        inReplyToId: comment.in_reply_to_id ?? null,
+        path: comment.path,
+        line: comment.line ?? comment.original_line ?? null,
+        commitSha: comment.commit_id ?? null,
+        authorLogin: comment.user.login,
+        authorType: comment.user.type,
+        body,
+        mentions: mentionsApp(body, appSlug),
+        url: comment.html_url ?? null,
+      });
+      return reply.code(200).send(routedReply(routed));
+    }
+
+    // docs/specs/pr-feedback-loop.md. A review thread of a recorded pull request was resolved or unresolved.
+    if (event === "pull_request_review_thread") {
+      const parsed = pullRequestReviewThreadEventSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(200).send({ status: "ignored", reason: "unsupported payload" });
+      const { action, thread, pull_request: pullRequest, repository } = parsed.data;
+      if ((action !== "resolved" && action !== "unresolved") || dependencies.pullRequestEvents === undefined) {
+        return reply.code(200).send({ status: "ignored", reason: "unsupported action" });
+      }
+      const tenantId = await resolveTenantId(dependencies, parsed.data.installation.id, undefined);
+      if (tenantId === null) return reply.code(200).send({ status: "handled" });
+      const commentId = thread.comments?.[0]?.id ?? null;
+      const routed = await dependencies.pullRequestEvents.byNumber(tenantId, repository.full_name, pullRequest.number, {
+        kind: "review_thread",
+        deliveryId: deliveryIdOr(`pull_request_review_thread:${repository.full_name}#${String(pullRequest.number)}:${String(commentId)}:${action}`),
+        action,
+        commentId,
         senderLogin: parsed.data.sender?.login ?? null,
       });
       return reply.code(200).send(routedReply(routed));

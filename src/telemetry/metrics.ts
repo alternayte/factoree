@@ -26,6 +26,13 @@ export const metrics = {
     labelNames,
     registers: [registry],
   }),
+  // docs/specs/pr-feedback-loop.md. PR follow-up runs that answered questions and pushed nothing.
+  runsAnswered: new Counter({
+    name: "factoree_runs_answered_total",
+    help: "PR follow-up Runs that answered every human decision and ended ANSWERED",
+    labelNames,
+    registers: [registry],
+  }),
   // docs/specs/draft-of-failed-run.md. A draft keeps its failure, so a failed run counted once in
   // runsFailed counts here too when a human asks for its draft.
   runsDraftPublished: new Counter({

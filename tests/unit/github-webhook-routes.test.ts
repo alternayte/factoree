@@ -95,6 +95,7 @@ const build = (options: { signatureValid?: boolean; tenantBound?: boolean } = {}
   });
 
   registerGitHubWebhookRoutes(app, {
+    factoreeAppSlug: () => Promise.resolve("factoreetemp"),
     discovery: discovery as unknown as DiscoveryService,
     tenants,
     verifySignature: () => signatureValid,
@@ -532,6 +533,61 @@ describe("GitHub webhook route", () => {
     expect(routed.map((entry) => entry.event.kind)).toEqual(["auto_merge_disabled"]);
   });
 
+  // docs/specs/pr-feedback-loop.md. A conversation comment on a pull request carries whether it mentions
+  // Factoree. A comment on an issue and a comment of Factoree itself reach no PR workflow.
+  it("routes a pull request comment with its mention, and skips issue comments and Factoree's own", async () => {
+    const { app, routed } = build({});
+    const comment = (login: string, body: string, onPullRequest: boolean, id: number) =>
+      app.inject({
+        method: "POST",
+        url: "/webhooks/github",
+        headers: { "x-github-event": "issue_comment", "x-github-delivery": `delivery-c${String(id)}` },
+        payload: {
+          action: "created",
+          issue: { number: 12, ...(onPullRequest ? { pull_request: { url: "https://api.github.com/x" } } : {}) },
+          comment: { id, body, html_url: `https://github.com/Acme/API/pull/12#issuecomment-${String(id)}`, user: { login, type: login.endsWith("[bot]") ? "Bot" : "User" } },
+          repository: { full_name: "Acme/API" },
+          installation: { id: 42 },
+        },
+      });
+    expect((await comment("dana", "@factoreetemp rename the prop to label", true, 1)).json()).toEqual({ status: "handled" });
+    expect((await comment("dana", "Looks odd to me.", true, 2)).json()).toEqual({ status: "handled" });
+    expect((await comment("dana", "@factoreetemp rename", false, 3)).json()).toEqual({ status: "ignored", reason: "unsupported action" });
+    expect((await comment("factoreetemp[bot]", "Fixed in abc.", true, 4)).json()).toEqual({ status: "ignored", reason: "a comment of Factoree" });
+    expect(routed.map((entry) => entry.event)).toEqual([
+      expect.objectContaining({ kind: "comment", commentId: 1, authorLogin: "dana", mentions: true }),
+      expect.objectContaining({ kind: "comment", commentId: 2, mentions: false }),
+    ]);
+  });
+
+  it("routes a review comment with its thread and place", async () => {
+    const { app, routed } = build({});
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/github",
+      headers: { "x-github-event": "pull_request_review_comment", "x-github-delivery": "delivery-rc" },
+      payload: {
+        action: "created",
+        comment: {
+          id: 501,
+          pull_request_review_id: 77,
+          in_reply_to_id: 500,
+          path: "src/a.ts",
+          line: 12,
+          commit_id: "pr-head-sha",
+          body: "@factoreetemp use the shared button here",
+          html_url: "https://github.com/Acme/API/pull/12#discussion_r501",
+          user: { login: "dana", type: "User" },
+        },
+        pull_request: { number: 12 },
+        repository: { full_name: "Acme/API" },
+        installation: { id: 42 },
+      },
+    });
+    expect(response.json()).toEqual({ status: "handled" });
+    expect(routed[0]?.event).toMatchObject({ kind: "review_comment", commentId: 501, inReplyToId: 500, path: "src/a.ts", line: 12, mentions: true });
+  });
+
   it("routes a human request-changes review with the reviewer facts", async () => {
     const { app, routed } = build({});
     const response = await app.inject({
@@ -565,6 +621,7 @@ describe("GitHub webhook route", () => {
       reviewerType: "User",
       authorAssociation: "MEMBER",
       body: "Rename the handler.",
+      mentions: false,
     });
   });
 

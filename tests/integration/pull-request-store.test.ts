@@ -91,4 +91,51 @@ describe("PrismaPullRequestStore", () => {
       expect(run?.pullRequestStates).toEqual(["merged"]);
     });
   });
+
+  it("keeps the preview of the head from its successful deployment, and a new head clears it (DI-21.220)", async () => {
+    await withDatabase(async (prisma) => {
+      const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
+      const repository = await prisma.repository.create({
+        data: { tenantId, productId, fullName: "acme/web", configSha: "c", githubInstallationId: "42" },
+      });
+      const store = new PrismaPullRequestStore(prisma);
+      const recorded = await store.recordPublished({
+        tenantId,
+        runId,
+        repositoryId: repository.id,
+        number: 7,
+        url: "https://github.com/acme/web/pull/7",
+        headBranch: "factoree/run-7",
+        headSha: "head-1",
+        baseBranch: "main",
+        autonomyLevel: "L3",
+        baseSha: "base-1",
+      });
+      const deployment = (deliveryId: string, sha: string, state: string, environmentUrl: string | null): PullRequestEvent => ({
+        kind: "deployment_status",
+        deliveryId,
+        deploymentId: 1,
+        environment: "preview",
+        state,
+        sha,
+        ref: "factoree/run-7",
+        environmentUrl,
+        logUrl: null,
+      });
+
+      // A deployment of another commit, a failed one, and one with no URL are no preview.
+      for (const event of [
+        deployment("github:p-1", "other", "success", "https://old.example"),
+        deployment("github:p-2", "head-1", "failure", "https://bad.example"),
+        deployment("github:p-3", "head-1", "success", null),
+      ]) {
+        expect((await store.recordEvent(tenantId, recorded.id, event)).pullRequest.previewUrl).toBeNull();
+      }
+      const taken = await store.recordEvent(tenantId, recorded.id, deployment("github:p-4", "head-1", "success", "https://pr-7.preview.example"));
+      expect(taken.pullRequest).toMatchObject({ previewUrl: "https://pr-7.preview.example", previewHeadSha: "head-1" });
+
+      const moved = await store.recordEvent(tenantId, recorded.id, synchronize("github:p-5", "head-2"));
+      expect(moved.pullRequest).toMatchObject({ headSha: "head-2", previewUrl: null, previewHeadSha: null });
+    });
+  });
 });

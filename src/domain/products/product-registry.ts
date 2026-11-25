@@ -44,20 +44,27 @@ export interface ProductRecord {
   maxConcurrentRuns: number;
   /** docs/specs/setup-app-change-issues.md. How many app-change issues a merged setup creates. */
   appChangeIssues: AppChangeIssueMode;
-  /** docs/specs/pr-review-merge-and-deploy.md. The PR reviewer, or null when the product names none. */
-  prReviewer: PrReviewer | null;
+  /**
+   * docs/specs/pr-feedback-loop.md. The GitHub App slugs of the review apps whose findings Factoree
+   * does not act on. Lower case. Empty mutes none.
+   */
+  reviewAppDenyList: string[];
+  /**
+   * docs/specs/pr-feedback-loop.md. The most PR follow-up runs that review apps and CI checks start
+   * on one pull request together. A human decision has no limit.
+   */
+  automaticFollowUpLimit: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
-/**
- * docs/specs/pr-review-merge-and-deploy.md. An external review app: its GitHub App slug, and the name
- * of the check run or commit status it reports on the pull request head.
- */
-export interface PrReviewer {
-  appSlug: string;
-  checkName: string;
-}
+/** docs/specs/pr-feedback-loop.md, DI-21.203. A GitHub App slug: letters, digits and hyphens. */
+export const GITHUB_APP_SLUG = /^[a-z0-9][a-z0-9-]{0,99}$/i;
+
+/** docs/specs/pr-feedback-loop.md, DI-21.203. The bounds and the default of `automaticFollowUpLimit`. */
+export const AUTOMATIC_FOLLOW_UP_LIMIT_MIN = 1;
+export const AUTOMATIC_FOLLOW_UP_LIMIT_MAX = 20;
+export const AUTOMATIC_FOLLOW_UP_LIMIT_DEFAULT = 3;
 
 export interface ProductEffort {
   implementer: string | null;
@@ -85,8 +92,8 @@ export interface ProductSettingsUpdate {
   sandboxProviderIds?: string[];
   maxConcurrentRuns?: number;
   appChangeIssues?: AppChangeIssueMode;
-  /** Null clears the PR reviewer. */
-  prReviewer?: PrReviewer | null;
+  reviewAppDenyList?: string[];
+  automaticFollowUpLimit?: number;
 }
 
 export interface CreateProductInput {

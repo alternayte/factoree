@@ -60,6 +60,7 @@ const build = (existing: Record<string, PullRequestRecord | null>) => {
   const port: PullRequestPort = {
     findByHead: (slug) => Promise.resolve(existing[slug] ?? null),
     create: () => Promise.reject(new Error("the preflight and the rollback open nothing")),
+    body: () => Promise.resolve(null),
     updateBody: (slug, number) => {
       calls.push(`body ${slug}#${String(number)}`);
       return Promise.resolve();

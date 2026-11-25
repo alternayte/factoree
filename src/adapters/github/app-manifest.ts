@@ -24,13 +24,27 @@ export const GITHUB_APP_PERMISSIONS = {
   // docs/specs/change-sets.md, DI-21.155. Factoree sets the factoree/change-set status on each
   // consumer head of a change set.
   statuses: "write",
+  // docs/specs/pr-feedback-loop.md. A failed CI check of GitHub Actions names its job log tail as
+  // the finding of a PR follow-up run.
+  actions: "read",
 } as const;
 
 // docs/specs/egress-honesty-and-issue-status.md. A close without a merge makes no push, so the
 // pull_request event says when a pull request of a run merged or closed.
 // docs/specs/pr-review-merge-and-deploy.md. The PR workflow takes reviews, check runs and commit
-// statuses.
-export const GITHUB_APP_EVENTS = ["push", "deployment_status", "pull_request", "pull_request_review", "check_run", "status"] as const;
+// statuses. docs/specs/pr-feedback-loop.md adds the conversation comments, the review comments and
+// the review threads: a mention is a human decision, and a thread names a review app finding.
+export const GITHUB_APP_EVENTS = [
+  "push",
+  "deployment_status",
+  "pull_request",
+  "pull_request_review",
+  "check_run",
+  "status",
+  "issue_comment",
+  "pull_request_review_comment",
+  "pull_request_review_thread",
+] as const;
 
 /** The access GitHub ranks above each level. */
 const LEVEL_RANK: Record<string, number> = { read: 1, write: 2, admin: 3 };

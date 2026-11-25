@@ -712,11 +712,11 @@ model Product {
   skillRegistryKind            String?                      @map("skill_registry_kind")
   skillRegistryUrl             String?                      @map("skill_registry_url")
   skillRegistrySet             String?                      @map("skill_registry_set")
-  // docs/specs/pr-review-merge-and-deploy.md. The PR reviewer: the GitHub App slug and the check
-  // name of an external review app. Both null means the product names none. Only the product sets
-  // it, never .factoree/config.yaml (R-4).
-  prReviewerAppSlug            String?                      @map("pr_reviewer_app_slug")
-  prReviewerCheckName          String?                      @map("pr_reviewer_check_name")
+  // docs/specs/pr-feedback-loop.md. The review apps whose findings Factoree does not act on, by
+  // GitHub App slug in lower case, and the most PR follow-up runs that review apps and CI checks
+  // start on one pull request. Only the product sets them, never .factoree/config.yaml (R-4).
+  reviewAppDenyList            String[]                     @default([]) @map("review_app_deny_list")
+  automaticFollowUpLimit       Int                          @default(3) @map("automatic_follow_up_limit")
   createdAt                    DateTime                     @default(now())
   updatedAt                    DateTime                     @updatedAt
   repositories                 Repository[]
@@ -1189,6 +1189,17 @@ model PullRequest {
   // DI-21.118. The head commit of the last bring-current update that pushed nothing. Factoree
   // starts no other one on that head until the base branch moves.
   bringCurrentHeadSha  String?             @map("bring_current_head_sha")
+  // docs/specs/pr-feedback-loop.md, DI-21.214. The SHA-256 fingerprints of the review app findings
+  // with no thread (annotations and review bodies) that Factoree answered. A later plan skips them
+  // until their text changes.
+  answeredFindingFingerprints String[]     @default([]) @map("answered_finding_fingerprints")
+  // DI-21.212. The head and the review apps of the last "Needs your attention" post about review
+  // apps that hold back an L4 merge, so one head posts it once.
+  reviewAppNoticeKey   String?             @map("review_app_notice_key")
+  // docs/specs/pr-body-for-humans.md, DI-21.220. The environment URL of the last successful
+  // deployment on the head, and that head. A new head clears both until its own deployment.
+  previewUrl           String?             @map("preview_url")
+  previewHeadSha       String?             @map("preview_head_sha")
   // docs/specs/change-sets.md, DI-21.155. The last factoree/change-set commit status Factoree set on
   // this consumer pull request, as `<sha> <state> <description>`, so an unchanged status is not set again.
   changeSetStatusKey   String?             @map("change_set_status_key")

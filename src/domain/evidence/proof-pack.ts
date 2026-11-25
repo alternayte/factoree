@@ -258,8 +258,7 @@ export interface ProofPackInput {
   draft?: { reviewed: boolean };
   /**
    * docs/specs/pr-review-merge-and-deploy.md. Present for a PR follow-up run: the contract revision of
-   * the new head commit, what started the run, the triage of the PR reviewer findings, and the plain
-   * comments on the pull request that started nothing.
+   * the new head commit, what started the run, and the triage of the review app findings.
    */
   pullRequestFollowUp?: ProofPackPullRequestFollowUp;
   /**
@@ -267,6 +266,21 @@ export interface ProofPackInput {
    * after the proof pack was first posted. An amendment renders the whole proof pack again with it.
    */
   afterPublication?: ProofPackAfterPublication;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.220. The reviewer's reading guide and the pull requests
+   * of the run, so a later preview rewrites each body from this input. The proof pack shows neither.
+   */
+  whereToLook?: Array<{ path: string; startLine: number | null; endLine: number | null; reason: string }>;
+  bodyTargets?: Array<{
+    repositorySlug: string;
+    pullRequestNumber: number;
+    pullRequestUrl: string;
+    githubInstallationId: string;
+    baseSha: string;
+    patchSha256: string;
+    changedFileCount: number;
+    commitSha: string;
+  }>;
 }
 
 /** DI-21.122. One deploy result of the merged change, as the repository CI reported it. */
@@ -286,21 +300,29 @@ export interface ProofPackDeploy {
 export interface ProofPackAfterPublication {
   /** One sentence: why Factoree posted the proof pack again. */
   amendedFor: string;
-  /** The plain comments on the pull request that started nothing, newest last. */
-  comments: string[];
-  /** The PR reviewer's comments on a head whose check passed. They started nothing. */
-  suggestions: string[];
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.213. The deploys of the merged change. The proof pack lists
+   * no PR comment and no suggestion of a passed check any more: a stored input from before still holds
+   * `comments` and `suggestions`, and the render ignores them.
+   */
   deploys: ProofPackDeploy[];
 }
 
 export interface ProofPackPullRequestFollowUp {
   contractRevision: number;
-  trigger: "reviewer" | "human" | "base";
-  /** The human who requested changes, the PR reviewer as `slug (check name)`, or the base branch. */
+  /** docs/specs/pr-feedback-loop.md. automatic and human replace reviewer, which a run from before the review apps holds. */
+  trigger: "reviewer" | "automatic" | "human" | "base";
+  /**
+   * The humans who decided, the review apps and checks, the PR reviewer as `slug (check name)` of a
+   * run from before the review apps, or the base branch.
+   */
   startedBy: string;
   kept: Array<{ evidence: string; defect: string; rule: string }>;
   dropped: number;
-  plainComments: string[];
+  /** docs/specs/pr-feedback-loop.md. Each dropped review app finding, with its place and the reason. Absent before the review apps. */
+  droppedFindings?: Array<{ place: string; reason: string }>;
+  /** DI-21.208. The CI checks that failed on the head the run read. They skip triage. */
+  ciFailures?: string[];
 }
 
 /**
@@ -352,7 +374,7 @@ export interface ProofPackDocument {
   status: "READY_FOR_HUMAN" | "DRAFT_PUBLISHED";
   /** docs/specs/pr-review-merge-and-deploy.md. The PR follow-up run, or null for any other run. */
   pullRequestFollowUp: ProofPackPullRequestFollowUp | null;
-  /** DI-21.123. The comments, suggestions and deploys after publication, or null before any amendment. */
+  /** DI-21.123. The deploys after publication, or null before any amendment. */
   afterPublication: ProofPackAfterPublication | null;
   workItem: { title: string; url: string | null };
   pullRequestUrl: string;
@@ -688,29 +710,39 @@ export const skillLines = (input: ProofPackInput): string[] => {
 };
 
 /**
- * docs/specs/pr-review-merge-and-deploy.md. The PR follow-up section: the contract revision of the
- * head commit, what started the run, and the comments that started nothing.
+ * docs/specs/pr-review-merge-and-deploy.md, docs/specs/pr-feedback-loop.md. The PR follow-up section:
+ * the commit and its contract revision, what started the run, and what happened to each finding:
+ * fixed, or dropped with the reason.
  */
 const followUpLines = (input: ProofPackInput): string[] => {
   const followUp = input.pullRequestFollowUp;
   if (followUp === undefined) return [];
+  const kept = followUp.kept.length;
+  const findings = (count: number) => `${String(count)} ${count === 1 ? "finding" : "findings"}`;
+  const ciFailures = followUp.ciFailures ?? [];
+  const dropped = followUp.droppedFindings;
   return [
     "### PR follow-up",
     "",
-    `The head commit \`${input.commitSha.slice(0, 7)}\` holds contract revision ${String(followUp.contractRevision)}.`,
+    `The commit \`${input.commitSha.slice(0, 7)}\` holds contract revision ${String(followUp.contractRevision)}.`,
     followUp.trigger === "human"
-      ? `${line(followUp.startedBy)} requested changes. Factoree followed the review as a decision, with no triage.`
+      ? `${line(followUp.startedBy)} decided on the pull request. Factoree followed each human decision, with no triage.`
       : followUp.trigger === "base"
         ? `Factoree brought the pull request current with ${line(followUp.startedBy)}, and the update conflicted or failed its check. ` +
           "This commit merges the new base into the branch."
-        : `The PR reviewer ${line(followUp.startedBy)} failed its check. Factoree kept ${String(followUp.kept.length)} ` +
-        `${followUp.kept.length === 1 ? "finding" : "findings"} and dropped ${String(followUp.dropped)}, with a reply on the pull request to each dropped one.`,
-    ...followUp.kept.map((kept) => `- ${line(kept.evidence)}: ${line(kept.defect)} Rule: ${line(kept.rule)}.`),
-    "",
-    // DI-21.123. An amendment lists the comments of the whole pull request below, so they stand once.
-    ...(followUp.plainComments.length === 0 || input.afterPublication !== undefined
+        : followUp.trigger === "reviewer"
+          ? `The PR reviewer ${line(followUp.startedBy)} failed its check. Factoree fixed ${findings(kept)} and dropped ${String(followUp.dropped)}.`
+          : `The reviews of the head settled, and ${line(followUp.startedBy)} did not pass. Factoree fixed ${findings(kept)} of the review apps and dropped ${String(followUp.dropped)}.`,
+    ...(followUp.trigger === "human" && (kept > 0 || followUp.dropped > 0)
+      ? [`Factoree also triaged the review app findings of the same head: it fixed ${String(kept)} and dropped ${String(followUp.dropped)}.`]
+      : []),
+    ...(ciFailures.length === 0
       ? []
-      : ["**Comments that started nothing:**", ...followUp.plainComments.map((comment) => `- ${line(comment)}`), ""]),
+      : [`The CI ${ciFailures.length === 1 ? "check" : "checks"} ${ciFailures.map(line).join(", ")} failed on the head, and this commit repairs ${ciFailures.length === 1 ? "it" : "them"}.`]),
+    ...followUp.kept.map((finding) => `- Fixed at ${line(finding.evidence)}: ${line(finding.defect)} Rule: ${line(finding.rule)}.`),
+    ...(dropped ?? []).map((finding) => `- Dropped at ${line(finding.place)}: ${line(finding.reason)}`),
+    ...(dropped === undefined && followUp.dropped > 0 ? ["Factoree answered each dropped finding on the pull request with the reason."] : []),
+    "",
   ];
 };
 
@@ -727,23 +759,10 @@ export const deployLine = (deploy: ProofPackDeploy): string => {
   );
 };
 
-/**
- * docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The section an amendment adds: the deploys of
- * the merged change, the comments that started nothing and the PR reviewer suggestions on a passed
- * check.
- */
+/** docs/specs/pr-review-merge-and-deploy.md, DI-21.123. The section an amendment adds: the deploys of the merged change. */
 export const afterPublicationLines = (after: ProofPackAfterPublication | undefined): string[] => {
   if (after === undefined) return [];
-  return [
-    "### After publication",
-    "",
-    ...(after.deploys.length === 0 ? [] : ["**Deploys:**", ...after.deploys.map(deployLine), ""]),
-    ...(after.comments.length === 0 ? [] : ["**Comments that started nothing:**", ...after.comments.map((comment) => `- ${line(comment)}`), ""]),
-    ...(after.suggestions.length === 0
-      ? []
-      : ["**PR reviewer suggestions on a passed check, which started nothing:**", ...after.suggestions.map((suggestion) => `- ${line(suggestion)}`), ""]),
-    ...(after.deploys.length + after.comments.length + after.suggestions.length === 0 ? ["Nothing yet.", ""] : []),
-  ];
+  return ["### After publication", "", ...(after.deploys.length === 0 ? ["Nothing yet.", ""] : ["**Deploys:**", ...after.deploys.map(deployLine), ""])];
 };
 
 const footer = (input: ProofPackInput, documentUrl: string | null): string =>

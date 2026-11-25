@@ -162,6 +162,7 @@ const STATUS_WORDS: Record<string, string> = {
   PUBLISHING: "Publishing",
   READY_FOR_HUMAN: "Ready for review",
   REPORTED: "Reported",
+  ANSWERED: "Answered",
   DRAFT_PUBLISHED: "Draft published",
   STALE_BASE: "Stale base",
   FAILED_CONFIGURATION: "Failed: configuration",
@@ -228,7 +229,7 @@ export const crateAt = (run: FloorRunJson, at: number): CrateState | null => {
   }
   if (at - since > ENDED_VISIBLE_MS) return null;
   if (closed.length > 0) return { ...base, from: "yard", repair: false, place: "bin", label: "PR closed", tone: "danger", human: false };
-  if (status === "REPORTED" || status === "DRAFT_PUBLISHED" || status === "READY_FOR_HUMAN") {
+  if (status === "REPORTED" || status === "ANSWERED" || status === "DRAFT_PUBLISHED" || status === "READY_FOR_HUMAN") {
     return {
       ...base,
       ...fromDock,

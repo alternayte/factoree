@@ -743,10 +743,8 @@ export type CreateSetupProductResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
-    prReviewer: {
-      appSlug: string;
-      checkName: string;
-    } | null;
+    reviewAppDenyList: Array<string>;
+    automaticFollowUpLimit: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -913,10 +911,8 @@ export type ListProductsResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
-    prReviewer: {
-      appSlug: string;
-      checkName: string;
-    } | null;
+    reviewAppDenyList: Array<string>;
+    automaticFollowUpLimit: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1018,10 +1014,8 @@ export type CreateProductResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
-    prReviewer: {
-      appSlug: string;
-      checkName: string;
-    } | null;
+    reviewAppDenyList: Array<string>;
+    automaticFollowUpLimit: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1123,10 +1117,8 @@ export type CopyProductResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
-    prReviewer: {
-      appSlug: string;
-      checkName: string;
-    } | null;
+    reviewAppDenyList: Array<string>;
+    automaticFollowUpLimit: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1261,10 +1253,8 @@ export type GetProductResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
-    prReviewer: {
-      appSlug: string;
-      checkName: string;
-    } | null;
+    reviewAppDenyList: Array<string>;
+    automaticFollowUpLimit: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1318,10 +1308,8 @@ export type UpdateProductData = {
     sandboxProviderIds?: Array<string>;
     maxConcurrentRuns?: number;
     appChangeIssues?: "one_per_change" | "one_for_all";
-    prReviewer?: {
-      appSlug: string;
-      checkName: string;
-    } | null;
+    reviewAppDenyList?: Array<string>;
+    automaticFollowUpLimit?: number;
   };
   path: {
     id: string;
@@ -1416,10 +1404,8 @@ export type UpdateProductResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
-    prReviewer: {
-      appSlug: string;
-      checkName: string;
-    } | null;
+    reviewAppDenyList: Array<string>;
+    automaticFollowUpLimit: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1519,10 +1505,8 @@ export type ActivateProductResponses = {
     sandboxProviderIds: Array<string>;
     maxConcurrentRuns: number;
     appChangeIssues: "one_per_change" | "one_for_all";
-    prReviewer: {
-      appSlug: string;
-      checkName: string;
-    } | null;
+    reviewAppDenyList: Array<string>;
+    automaticFollowUpLimit: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;

@@ -1,22 +1,28 @@
 import { createHash } from "node:crypto";
 import type { Logger } from "~/telemetry/logger.js";
-import { eventHeadSha, type PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
+import type { PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
 import {
+  automaticLimitNotice,
+  type DecisionEvent,
+  type HumanDecision,
+  type ReviewAppFinding,
   droppedFindingReply,
+  droppedUnthreadedReply,
   findingPlace,
   MAX_FINDINGS,
-  MAX_PLAIN_COMMENTS,
-  MAX_REVIEWER_FOLLOW_UPS,
-  reviewerLimitNotice,
-  reviewerVerdictOfEvent,
   type PrChangeSet,
   type PrFollowUpInput,
   type PrFollowUpTrigger,
   type PrReviewFinding,
   type PullRequestReviewPort,
   type TriagedFinding,
+  decisionAnswerReply,
+  decisionPlace,
+  doneDecisionReply,
+  fixedFindingReply,
+  handledUnthreadedComment,
+  type HandledUnthreaded,
 } from "~/domain/pull-requests/pr-follow-up.js";
-import type { PrReviewer } from "~/domain/products/product-registry.js";
 import type { RepositoryRegistry } from "~/domain/products/repository-registry.js";
 import type { WorkItemPort } from "~/domain/runs/ports.js";
 import { agentRunProductInput } from "~/domain/runs/agent-run-product.js";
@@ -40,6 +46,7 @@ import {
   mergeabilityOf,
   mergeMethodOf,
   openChangeRequests,
+  reviewAppHoldNotice,
   unmetConditions,
   type AutoMergeGate,
   type AutoMergePort,
@@ -66,6 +73,21 @@ import {
   type CommitStatusPort,
 } from "~/domain/pull-requests/change-set-status.js";
 import type { AmendProofPackActivityInput } from "./evidence.activities.js";
+import {
+  actingCheckRunsOf,
+  actionsJobIdOf,
+  failedCiChecks,
+  logTailOf,
+  reviewAppHolds,
+  reviewAppsOf,
+  reviewAppVerdict,
+  unansweredThreadsOf,
+  unthreadedFindingFingerprintText,
+  type CheckOnCommit,
+  type CiFinding,
+  type ReviewAppHold,
+  type ReviewThreadOnGitHub,
+} from "~/domain/pull-requests/review-apps.js";
 
 export interface PullRequestActivityDependencies {
   pullRequests: PullRequestStore;
@@ -88,6 +110,10 @@ export interface PullRequestActivityDependencies {
   changeSets: ChangeSetStore;
   /** docs/specs/change-sets.md, slice 8. The `factoree/change-set` commit status. */
   commitStatuses: CommitStatusPort;
+  /** docs/specs/pr-feedback-loop.md. The slug of Factoree's own GitHub App, from the install settings. */
+  factoreeAppSlug?: () => Promise<string | null>;
+  /** DI-21.208. Redacts a CI job log before it leaves the control plane. */
+  redactText?: (text: string) => string;
 }
 
 /**
@@ -119,6 +145,34 @@ export type PullRequestFollowUpPlan =
   | { kind: "start"; workflowId: string; input: AgentRunWorkflowInput; changeSet?: boolean };
 
 /** DI-21.158. A PR workflow that held the set longer than this died with it, so another one may take it. */
+/**
+ * docs/specs/pr-feedback-loop.md, DI-21.212. The review apps that hold back an L4 merge of one head:
+ * the apps of the pull request, other than Factoree and the product deny list, whose checks did not
+ * all pass, or that have no check and an unanswered open thread.
+ */
+const reviewAppHoldsOn = async (
+  dependencies: PullRequestActivityDependencies,
+  record: PublishedPullRequest,
+  productId: string,
+  headSha: string,
+  installationId: string,
+): Promise<ReviewAppHold[]> => {
+  const product = await dependencies.products.findById(record.tenantId, productId);
+  const self = (await dependencies.factoreeAppSlug?.()) ?? null;
+  const reviews = await dependencies.reviews.reviews(record.repositoryFullName, record.number, installationId);
+  const apps = reviewAppsOf(reviews, self, product?.reviewAppDenyList ?? []);
+  if (apps.length === 0) return [];
+  const checks = await dependencies.reviews.checksOnCommit(record.repositoryFullName, headSha, installationId);
+  const threads = apps.some((app) => reviewAppVerdict(checks, app) === "none")
+    ? await dependencies.reviews.reviewThreads(record.repositoryFullName, record.number, installationId)
+    : [];
+  return reviewAppHolds({ apps, checks, threads, factoreeSlug: self });
+};
+
+/** DI-21.214. The SHA-256 fingerprint of a review app finding with no thread. */
+const fingerprintOf = (finding: ReviewAppFinding): string =>
+  createHash("sha256").update(unthreadedFindingFingerprintText(finding)).digest("hex");
+
 const CHANGE_SET_LOCK_STALE_MS = 24 * 60 * 60_000;
 
 /**
@@ -172,23 +226,6 @@ const setReviewerFollowUps = (set: ChangeSet): number => {
 const oneLine = (text: string, limit: number): string => {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length <= limit ? flat : `${flat.slice(0, limit)}…`;
-};
-
-/**
- * The plain comments of a pull request that started nothing: each COMMENTED review, newest last.
- * The PR reviewer's own reviews on the head it fails are its findings, not plain comments.
- */
-const plainCommentLines = (events: readonly PullRequestEvent[], exclude: { login: string; sha: string | null } | null): string[] => {
-  const reviews = new Map<number, string>();
-  for (const event of events) {
-    if (event.kind !== "review" || event.state !== "commented" || event.action === "dismissed") continue;
-    // A null SHA excludes every review of that login: the PR reviewer's comments are findings or suggestions.
-    if (exclude !== null && event.reviewerLogin.toLowerCase() === exclude.login && (exclude.sha === null || event.commitSha === exclude.sha)) continue;
-    const at = event.commitSha === null ? "" : ` on ${event.commitSha.slice(0, 12)}`;
-    const body = event.body === null || event.body.trim() === "" ? "left review comments on the changed lines." : oneLine(event.body, 300);
-    reviews.set(event.reviewId, `${event.reviewerLogin}${at}: ${body}`);
-  }
-  return [...reviews.values()].slice(-MAX_PLAIN_COMMENTS);
 };
 
 /**
@@ -289,6 +326,59 @@ const runStartOf = async (
       delegatedAt: new Date().toISOString(),
       ...input.extra,
     },
+  };
+};
+
+/**
+ * DI-21.208. One failed CI check as a finding: its output, its annotations, and the redacted tail of
+ * its job log for a GitHub Actions check. A log or an annotation GitHub does not answer leaves only
+ * that part out: the check output still names the failure.
+ */
+const ciFindingOf = async (
+  dependencies: PullRequestActivityDependencies,
+  slug: string,
+  check: CheckOnCommit,
+  installationId: string,
+  log: Record<string, unknown>,
+): Promise<CiFinding> => {
+  let annotations: string[] = [];
+  if (check.kind === "check_run" && check.id !== null) {
+    try {
+      annotations = (await dependencies.reviews.annotations(slug, check.id, installationId)).map(
+        (annotation) =>
+          `${annotation.path === null ? "" : `${annotation.path}${annotation.startLine === null ? "" : `:${String(annotation.startLine)}`}: `}` +
+          `${annotation.title === null ? "" : `${annotation.title}: `}${annotation.message}`,
+      );
+    } catch (error) {
+      dependencies.logger.warn("the annotations of a failed CI check were not read", { ...log, check: check.name, error: String(error) });
+    }
+  }
+  let logTail: string | null = null;
+  const jobId = check.kind === "check_run" && check.appSlug === "github-actions" ? actionsJobIdOf(check.detailsUrl) : null;
+  if (jobId !== null) {
+    try {
+      const jobLog = await dependencies.reviews.jobLog(slug, jobId, installationId);
+      if (jobLog !== null) {
+        const tail = logTailOf(jobLog);
+        logTail = dependencies.redactText === undefined ? tail : dependencies.redactText(tail);
+      }
+    } catch (error) {
+      // An install that has not accepted Actions read answers 403 here.
+      dependencies.logger.warn("the job log of a failed CI check was not read", { ...log, check: check.name, error: String(error) });
+    }
+  }
+  return {
+    key: check.kind === "check_run" ? `check-${String(check.id)}` : `status-${check.name}`,
+    name: check.name,
+    appSlug: check.appSlug,
+    conclusion: check.conclusion ?? "failure",
+    summary: [check.title, check.summary, check.text]
+      .filter((part): part is string => part !== null && part.trim() !== "")
+      .join("\n\n")
+      .slice(0, 4_000),
+    annotations: annotations.slice(0, 50),
+    logTail,
+    detailsUrl: check.detailsUrl,
   };
 };
 
@@ -495,45 +585,17 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
   },
 
   /**
-   * docs/specs/pr-review-merge-and-deploy.md, DI-21.123. A plain comment, or a passed PR reviewer
-   * check with review comments on the verified head, starts nothing. The proof pack of the run of the
-   * verified head lists it: the answer is the amendment, or null.
+   * docs/specs/pr-feedback-loop.md, DI-21.213. The proof pack lists no PR comment and no suggestion
+   * of a passed check any more. A PR workflow from before the patch `no-comment-amendments` still
+   * schedules this activity on replay, so it stays, and it amends nothing.
    */
-  async planProofPackAmendment(input: { tenantId: string; pullRequestId: string; event: PullRequestEvent }): Promise<{ amend: AmendProofPackActivityInput | null }> {
-    const event = input.event;
-    if (event.kind !== "review" && event.kind !== "check_run" && event.kind !== "commit_status") return { amend: null };
-    const store = dependencies.pullRequests;
-    const record = await store.find(input.tenantId, input.pullRequestId);
-    if (record === null || record.state !== "open") return { amend: null };
-    const origin = await store.originFacts(input.tenantId, record.id);
-    const product = await dependencies.products.findById(input.tenantId, origin.productId);
-    const reviewer = product?.prReviewer ?? null;
-    const bot = reviewer === null ? null : `${reviewer.appSlug}[bot]`;
-    const base = { tenantId: input.tenantId, productId: origin.productId, runId: record.verifiedRunId ?? record.originRunId };
-    if (event.kind === "review") {
-      if (event.action !== "submitted" || event.state !== "commented") return { amend: null };
-      // The PR reviewer's own reviews are findings of a failed check, or suggestions of a passed one.
-      if (bot !== null && event.reviewerLogin.toLowerCase() === bot) return { amend: null };
-      const comments = plainCommentLines(await store.listEvents(input.tenantId, record.id, "review"), bot === null ? null : { login: bot, sha: null });
-      return { amend: { ...base, afterPublication: { amendedFor: `${event.reviewerLogin} commented on ${record.url}, which started nothing.`, comments } } };
-    }
-    if (reviewer === null || reviewerVerdictOfEvent(event, reviewer) !== "passed") return { amend: null };
-    const sha = eventHeadSha(event);
-    // Only the verified head has a proof pack that describes it.
-    if (sha === null || sha !== record.verifiedHeadSha) return { amend: null };
-    const findings = await dependencies.reviews.reviewerFindings(record.repositoryFullName, record.number, sha, reviewer.appSlug, origin.githubInstallationId);
-    if (findings.length === 0) return { amend: null };
-    const suggestions = findings.slice(0, MAX_FINDINGS).map((finding) => `${findingPlace(finding)}: ${oneLine(finding.body, 300)}`);
-    if (findings.length > MAX_FINDINGS) suggestions.push(`${String(findings.length - MAX_FINDINGS)} more on the pull request.`);
-    return {
-      amend: {
-        ...base,
-        afterPublication: {
-          amendedFor: `the PR reviewer check "${reviewer.checkName}" passed on ${sha.slice(0, 12)} with ${String(findings.length)} ${findings.length === 1 ? "comment" : "comments"}, which started nothing.`,
-          suggestions,
-        },
-      },
-    };
+  planProofPackAmendment(input: { tenantId: string; pullRequestId: string; event: PullRequestEvent }): Promise<{ amend: AmendProofPackActivityInput | null }> {
+    dependencies.logger.info("a PR workflow from before no-comment-amendments planned a comment amendment, which amends nothing", {
+      pull_request_id: input.pullRequestId,
+      delivery_id: input.event.deliveryId,
+      step: "proof_pack_amend",
+    });
+    return Promise.resolve({ amend: null });
   },
 
   /** Slice 5. One notice in the agent session of the origin run. */
@@ -598,70 +660,26 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
     // docs/specs/change-sets.md, slice 9. A PR follow-up run on any open pull request of a set runs as a set.
     const changeSet = await dependencies.changeSets.changeSetOfPullRequest(input.tenantId, record.id);
 
-    let trigger: PrFollowUpTrigger;
-    let reviewer: PrReviewer | null = null;
-    let reviewerLogin: string | null = null;
-    let findings: PrReviewFinding[];
-    // DI-21.108. The failed check this event names. The record marks it once the plan is complete,
-    // so a retry after a fault plans again, and a second delivery of the check starts nothing.
-    let handledKey: string | null = null;
-    if (event.kind === "review") {
-      // The spec: only a "request changes" review from a human with write access is a decision. A
-      // bot's verdict reaches Factoree through its check, and a COMMENTED review starts nothing.
-      if (event.action !== "submitted" || event.state !== "changes_requested") return { kind: "none", reason: "no change request" };
-      if (event.reviewerType !== "User") return { kind: "none", reason: "the reviewer is no human" };
-      if (!(await dependencies.reviews.canWrite(slug, event.reviewerLogin, installationId))) {
-        dependencies.logger.info("a change request from a user without write access starts nothing", { ...log, reviewer: event.reviewerLogin });
-        return { kind: "none", reason: "the reviewer holds no write access" };
-      }
-      const review = await dependencies.reviews.review(slug, record.number, event.reviewId, installationId);
-      if (review.findings.length === 0) {
-        await say(`${review.reviewerLogin} requested changes on ${record.url} without a comment, so Factoree has nothing to act on and starts no run.`);
-        return { kind: "none", reason: "the review holds no text" };
-      }
-      trigger = "human";
-      reviewerLogin = review.reviewerLogin;
-      findings = review.findings;
-    } else {
-      reviewer = product.prReviewer;
-      if (reviewer === null) return { kind: "none", reason: "the product names no PR reviewer" };
-      const verdict = reviewerVerdictOfEvent(event, reviewer);
-      if (verdict === null) return { kind: "none", reason: "another check" };
-      if (verdict === "pending") {
-        dependencies.logger.info("the PR reviewer reviews the head", log);
-        return { kind: "none", reason: "the review is in progress" };
-      }
-      if (verdict !== "failed") return { kind: "none", reason: `the PR reviewer check is ${verdict}` };
-      const sha = eventHeadSha(event);
-      // An old head has a newer commit on the branch already, and the newer commit gets its own check.
-      if (sha !== record.headSha) return { kind: "none", reason: "the check names an old head" };
-      handledKey = event.kind === "check_run" ? `check_run:${String(event.checkRunId)}` : `status:${sha}:${event.context}`;
-      if (record.reviewerHandledKey === handledKey) return { kind: "none", reason: "the check already started a triage" };
-      // docs/specs/change-sets.md, DI-21.160. In a change set the limit counts per set.
-      const counted = changeSet === null ? record.reviewerFollowUps : setReviewerFollowUps(changeSet);
-      if (counted >= MAX_REVIEWER_FOLLOW_UPS) {
-        if (!(await store.markReviewerHandled(input.tenantId, record.id, handledKey))) return { kind: "none", reason: "the check was handled" };
-        const notice = reviewerLimitNotice(record.url, reviewer.checkName, changeSet !== null);
-        dependencies.logger.info("the PR reviewer follow-up limit holds", log);
-        await say(notice);
-        try {
-          await dependencies.reviews.comment(slug, record.number, notice, installationId);
-        } catch (error) {
-          dependencies.logger.warn("the limit notice did not reach the pull request", { ...log, error: String(error) });
-        }
-        return { kind: "none", reason: "the PR reviewer follow-up limit holds" };
-      }
-      findings = await dependencies.reviews.reviewerFindings(slug, record.number, sha, reviewer.appSlug, installationId);
-      if (findings.length === 0) {
-        if (!(await store.markReviewerHandled(input.tenantId, record.id, handledKey))) return { kind: "none", reason: "the check was handled" };
-        await say(
-          `The PR reviewer check "${reviewer.checkName}" failed on ${record.url} at ${sha.slice(0, 12)}, and the PR reviewer left no review comment on that head. ` +
-            "Factoree has no finding to triage, so it starts no run.",
-        );
-        return { kind: "none", reason: "the PR reviewer left no finding" };
-      }
-      trigger = "reviewer";
+    // docs/specs/pr-feedback-loop.md, DI-21.209. A history from before the settle takes only a
+    // "request changes" review here. No product names a PR reviewer any more, so a check starts
+    // nothing on this path: the settled plan acts on review apps.
+    if (event.kind !== "review") return { kind: "none", reason: "no product names a PR reviewer" };
+    // The spec: only a "request changes" review from a human with write access is a decision. A
+    // bot's verdict reaches Factoree through its check, and a COMMENTED review starts nothing.
+    if (event.action !== "submitted" || event.state !== "changes_requested") return { kind: "none", reason: "no change request" };
+    if (event.reviewerType !== "User") return { kind: "none", reason: "the reviewer is no human" };
+    if (!(await dependencies.reviews.canWrite(slug, event.reviewerLogin, installationId))) {
+      dependencies.logger.info("a change request from a user without write access starts nothing", { ...log, reviewer: event.reviewerLogin });
+      return { kind: "none", reason: "the reviewer holds no write access" };
     }
+    const review = await dependencies.reviews.review(slug, record.number, event.reviewId, installationId);
+    if (review.findings.length === 0) {
+      await say(`${review.reviewerLogin} requested changes on ${record.url} without a comment, so Factoree has nothing to act on and starts no run.`);
+      return { kind: "none", reason: "the review holds no text" };
+    }
+    const trigger: PrFollowUpTrigger = "human";
+    const reviewerLogin = review.reviewerLogin;
+    const findings = review.findings;
 
     if (record.verifiedBaseSha === null) {
       dependencies.logger.warn("the pull request holds no verified base, so no PR follow-up run starts", log);
@@ -680,14 +698,10 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       baseBranch: record.baseBranch,
       contractRevision: record.contractRevision + 1,
       trigger,
-      reviewer,
+      reviewer: null,
       reviewerLogin,
       findings: findings.slice(0, MAX_FINDINGS),
       omittedFindings: Math.max(0, findings.length - MAX_FINDINGS),
-      plainComments: plainCommentLines(
-        await store.listEvents(input.tenantId, record.id, "review"),
-        reviewer === null ? null : { login: `${reviewer.appSlug}[bot]`, sha: record.headSha },
-      ),
     };
     const setRun = changeSet === null ? null : setRunOf(changeSet);
     if (setRun !== null && "problem" in setRun) {
@@ -696,9 +710,6 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       return { kind: "none", reason: setRun.problem };
     }
     if (setRun !== null) followUp.changeSet = setRun.changeSet;
-    if (handledKey !== null && !(await store.markReviewerHandled(input.tenantId, record.id, handledKey))) {
-      return { kind: "none", reason: "the check already started a triage" };
-    }
     const start = await runStartOf(dependencies, {
       tenantId: input.tenantId,
       record,
@@ -714,6 +725,298 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       workflow_id: start.workflowId,
       findings: findings.length,
       change_set: setRun === null ? 0 : setRun.changeSet.members.length,
+    });
+    return { kind: "start", ...start, ...(changeSet === null ? {} : { changeSet: true }) };
+  },
+
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.209. Whether a review app check on the head still runs. The
+   * PR workflow waits while one does, up to the upper wait. A pull request with no review app has
+   * nothing pending.
+   */
+  async readReviewSettle(input: { tenantId: string; pullRequestId: string }): Promise<{ pending: boolean }> {
+    const record = await dependencies.pullRequests.find(input.tenantId, input.pullRequestId);
+    if (record === null || record.state !== "open") return { pending: false };
+    const origin = await dependencies.pullRequests.originFacts(input.tenantId, record.id);
+    const product = await dependencies.products.findById(input.tenantId, origin.productId);
+    const self = (await dependencies.factoreeAppSlug?.()) ?? null;
+    const installationId = origin.githubInstallationId;
+    const reviews = await dependencies.reviews.reviews(record.repositoryFullName, record.number, installationId);
+    const apps = reviewAppsOf(reviews, self, product?.reviewAppDenyList ?? []);
+    if (apps.length === 0) return { pending: false };
+    const checks = await dependencies.reviews.checksOnCommit(record.repositoryFullName, record.headSha, installationId);
+    return { pending: apps.some((app) => reviewAppVerdict(checks, app) === "pending") };
+  },
+
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.211. Takes one event that may be a human decision. A GitHub
+   * decision counts only from a human (account type User) with write access, and a mention gets 👀.
+   * A Linear reply always counts: the agent session belongs to the issue's workspace. Factoree
+   * comments on the pull request with a link to it, so GitHub readers see why the next commit came.
+   */
+  async acknowledgeHumanDecision(input: { tenantId: string; pullRequestId: string; event: DecisionEvent }): Promise<{ accepted: boolean }> {
+    const record = await dependencies.pullRequests.find(input.tenantId, input.pullRequestId);
+    if (record === null || record.state !== "open") return { accepted: false };
+    const origin = await dependencies.pullRequests.originFacts(input.tenantId, record.id);
+    const slug = record.repositoryFullName;
+    const installationId = origin.githubInstallationId;
+    const event = input.event;
+    const log = { pull_request: `${slug}#${String(record.number)}`, step: "human_decision", event: event.kind, delivery_id: event.deliveryId };
+    if (event.kind === "linear_reply") {
+      const author = event.authorName ?? "A human";
+      try {
+        await dependencies.reviews.comment(
+          slug,
+          record.number,
+          [
+            `${author} replied in the Linear agent session${event.url === null ? "" : ` (${event.url})`}. Factoree takes the reply as a decision on this pull request:`,
+            "",
+            `> ${oneLine(event.body, 500)}`,
+          ].join("\n"),
+          installationId,
+        );
+      } catch (error) {
+        dependencies.logger.warn("the link to the Linear reply did not reach the pull request", { ...log, error: String(error) });
+      }
+      return { accepted: true };
+    }
+    const login = event.kind === "review" ? event.reviewerLogin : event.authorLogin;
+    const type = event.kind === "review" ? event.reviewerType : event.authorType;
+    if (type !== "User") return { accepted: false };
+    if (!(await dependencies.reviews.canWrite(slug, login, installationId))) {
+      dependencies.logger.info("a decision from a user without write access starts nothing", { ...log, author: login });
+      return { accepted: false };
+    }
+    if (event.kind === "comment" || event.kind === "review_comment") {
+      try {
+        await dependencies.reviews.react(slug, { kind: event.kind, commentId: event.commentId }, installationId);
+      } catch (error) {
+        dependencies.logger.warn("the 👀 reaction did not reach the comment", { ...log, error: String(error) });
+      }
+    }
+    return { accepted: true };
+  },
+
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.206 to DI-21.210. Plans one PR follow-up run once the
+   * reviews of the head settled. It reads every fact fresh: the review apps and their verdicts on the
+   * head, the unanswered threads, annotations and review bodies of each app that acts, the CI checks
+   * that failed on the head and pass on the base, and the human decisions the PR workflow held. A
+   * run with no human decision counts toward the product limit of automatic follow-up runs.
+   */
+  async planSettledFollowUp(input: {
+    tenantId: string;
+    pullRequestId: string;
+    decisions: DecisionEvent[];
+    /** The delivery of the last event of the settle. It keys the run, so a retry names the same run. */
+    settleKey: string;
+  }): Promise<PullRequestFollowUpPlan> {
+    const store = dependencies.pullRequests;
+    const record = await store.find(input.tenantId, input.pullRequestId);
+    if (record === null || record.state !== "open") return { kind: "none", reason: "the pull request is not open" };
+    const slug = record.repositoryFullName;
+    const label = `${slug}#${String(record.number)}`;
+    const log = { pull_request: label, step: "pr_follow_up", settle: input.settleKey };
+    const origin = await store.originFacts(input.tenantId, record.id);
+    const product = await dependencies.products.findById(input.tenantId, origin.productId);
+    if (product === null) return { kind: "none", reason: "the product is gone" };
+    const installationId = origin.githubInstallationId;
+    const self = (await dependencies.factoreeAppSlug?.()) ?? null;
+    const say = async (body: string) => {
+      try {
+        await dependencies.agentSession.respond(origin.linearAgentSessionId, body);
+      } catch (error) {
+        dependencies.logger.warn("the PR follow-up notice did not reach Linear", { ...log, error: String(error) });
+      }
+    };
+
+    /**
+     * DI-21.212. A settled L4 head that review apps hold back, and that leaves Factoree nothing to act
+     * on, needs a human: the post names each app once per head and set of apps.
+     */
+    const holdNotice = async (apps: readonly string[], checks: readonly CheckOnCommit[], threads: readonly ReviewThreadOnGitHub[]) => {
+      if (record.autonomyLevel !== "L4" || record.verifiedHeadSha !== record.headSha) return;
+      const holds = reviewAppHolds({ apps, checks, threads, factoreeSlug: self });
+      if (holds.length === 0) return;
+      const key = `${record.headSha}:${holds.map((hold) => `${hold.appSlug}=${hold.reason}`).join(",")}`;
+      if (record.reviewAppNoticeKey === key || !(await store.markReviewAppNotice(input.tenantId, record.id, key))) return;
+      const notice = reviewAppHoldNotice(record.url, holds);
+      await say(notice);
+      try {
+        await dependencies.reviews.comment(slug, record.number, notice, installationId);
+      } catch (error) {
+        dependencies.logger.warn("the review app notice did not reach the pull request", { ...log, error: String(error) });
+      }
+    };
+
+    // The human decisions, each once, oldest first.
+    const decisions: HumanDecision[] = [];
+    const add = (decision: HumanDecision) => {
+      if (!decisions.some((known) => known.key === decision.key)) decisions.push(decision);
+    };
+    for (const event of input.decisions) {
+      if (event.kind === "linear_reply") {
+        add({ key: `linear-${event.replyId}`, source: "linear", author: event.authorName ?? "A human", body: event.body, path: null, line: null, commentId: null, url: event.url });
+      } else if (event.kind === "comment") {
+        add({ key: `issue-comment-${String(event.commentId)}`, source: "github", author: event.authorLogin, body: event.body, path: null, line: null, commentId: null, url: event.url });
+      } else if (event.kind === "review_comment") {
+        // GitHub takes a reply to the first comment of a thread only.
+        add({
+          key: `review-comment-${String(event.commentId)}`,
+          source: "github",
+          author: event.authorLogin,
+          body: event.body,
+          path: event.path,
+          line: event.line,
+          commentId: event.inReplyToId ?? event.commentId,
+          url: event.url,
+        });
+      } else {
+        const review = await dependencies.reviews.review(slug, record.number, event.reviewId, installationId);
+        if (review.findings.length === 0) {
+          await say(`${review.reviewerLogin} requested changes on ${record.url} without a comment, so Factoree has nothing to act on from that review.`);
+          continue;
+        }
+        for (const finding of review.findings) {
+          add({ key: finding.key, source: "github", author: review.reviewerLogin, body: finding.body, path: finding.path, line: finding.line, commentId: finding.commentId, url: null });
+        }
+      }
+    }
+
+    // DI-21.206, DI-21.207. The review apps and the findings of each one that acts.
+    const reviews = await dependencies.reviews.reviews(slug, record.number, installationId);
+    const apps = reviewAppsOf(reviews, self, product.reviewAppDenyList);
+    const checks = await dependencies.reviews.checksOnCommit(slug, record.headSha, installationId);
+    const threads = apps.length === 0 ? [] : await dependencies.reviews.reviewThreads(slug, record.number, installationId);
+    const reviewAppFindings: ReviewAppFinding[] = [];
+    const actingApps: string[] = [];
+    // DI-21.214. A finding with no thread that Factoree answered starts nothing until its text changes.
+    const answered = new Set(record.answeredFindingFingerprints);
+    const unthreaded = (finding: ReviewAppFinding) => {
+      const fingerprint = fingerprintOf(finding);
+      if (answered.has(fingerprint) || reviewAppFindings.some((known) => known.fingerprint === fingerprint)) return;
+      reviewAppFindings.push({ ...finding, fingerprint });
+    };
+    for (const app of apps) {
+      const verdict = reviewAppVerdict(checks, app);
+      const unanswered = unansweredThreadsOf(threads, app, self);
+      if (!(verdict === "acts" || (verdict === "none" && unanswered.length > 0))) continue;
+      actingApps.push(app);
+      const bot = `${app}[bot]`;
+      for (const thread of unanswered) {
+        const first = thread.comments[0];
+        if (first === undefined) continue;
+        reviewAppFindings.push({
+          key: `comment-${String(first.commentId)}`,
+          appSlug: app,
+          reviewId: 0,
+          commentId: first.commentId,
+          author: bot,
+          path: thread.path,
+          line: thread.line,
+          body: thread.comments.map((comment) => (comment.authorLogin.toLowerCase() === bot ? comment.body : `${comment.authorLogin}: ${comment.body}`)).join("\n\n"),
+        });
+      }
+      for (const run of actingCheckRunsOf(checks, app)) {
+        const annotations = await dependencies.reviews.annotations(slug, run.id as number, installationId);
+        annotations.forEach((annotation, index) => {
+          unthreaded({
+            key: `annotation-${String(run.id)}-${String(index)}`,
+            appSlug: app,
+            reviewId: 0,
+            commentId: null,
+            author: bot,
+            path: annotation.path,
+            line: annotation.startLine,
+            body: annotation.title === null ? annotation.message : `${annotation.title}: ${annotation.message}`,
+          });
+        });
+      }
+      for (const review of reviews) {
+        if (review.authorLogin.toLowerCase() !== bot || review.commitSha !== record.headSha || review.body.trim() === "") continue;
+        unthreaded({ key: `review-${String(review.reviewId)}`, appSlug: app, reviewId: review.reviewId, commentId: null, author: bot, path: null, line: null, body: review.body.trim() });
+      }
+    }
+
+    // DI-21.208. The CI checks that failed on the head and pass on the base.
+    const base = record.verifiedBaseSha === null ? [] : await dependencies.reviews.checksOnCommit(slug, record.verifiedBaseSha, installationId);
+    const ciFindings: CiFinding[] = [];
+    for (const check of failedCiChecks({ head: checks, base, reviewApps: apps, factoreeSlug: self })) {
+      ciFindings.push(await ciFindingOf(dependencies, slug, check, installationId, log));
+    }
+
+    const automatic = reviewAppFindings.length + ciFindings.length;
+    const changeSet = await dependencies.changeSets.changeSetOfPullRequest(input.tenantId, record.id);
+    if (decisions.length === 0) {
+      if (automatic === 0) {
+        await holdNotice(apps, checks, threads);
+        return { kind: "none", reason: "nothing to act on" };
+      }
+      // DI-21.210. The product limit counts the automatic runs, per set in a change set (DI-21.160).
+      const counted = changeSet === null ? record.reviewerFollowUps : setReviewerFollowUps(changeSet);
+      if (counted >= product.automaticFollowUpLimit) {
+        const key = `limit:${record.headSha}`;
+        if (record.reviewerHandledKey === key || !(await store.markReviewerHandled(input.tenantId, record.id, key))) {
+          return { kind: "none", reason: "the limit notice of this head was posted" };
+        }
+        const notice = automaticLimitNotice(record.url, product.automaticFollowUpLimit, [...actingApps, ...ciFindings.map((finding) => finding.name)], changeSet !== null);
+        dependencies.logger.info("the automatic follow-up limit holds", log);
+        await say(notice);
+        try {
+          await dependencies.reviews.comment(slug, record.number, notice, installationId);
+        } catch (error) {
+          dependencies.logger.warn("the limit notice did not reach the pull request", { ...log, error: String(error) });
+        }
+        return { kind: "none", reason: "the automatic follow-up limit holds" };
+      }
+    }
+    if (record.verifiedBaseSha === null) {
+      dependencies.logger.warn("the pull request holds no verified base, so no PR follow-up run starts", log);
+      await say(`Factoree cannot start a PR follow-up run on ${record.url}, because it holds no verified base for it.`);
+      return { kind: "none", reason: "no verified base" };
+    }
+    const carried = reviewAppFindings.slice(0, MAX_FINDINGS);
+    const followUp: PrFollowUpInput = {
+      pullRequestId: record.id,
+      repositoryId: record.repositoryId,
+      repositoryFullName: slug,
+      number: record.number,
+      url: record.url,
+      headBranch: record.headBranch,
+      headSha: record.headSha,
+      baseSha: record.verifiedBaseSha,
+      baseBranch: record.baseBranch,
+      contractRevision: record.contractRevision + 1,
+      trigger: decisions.length > 0 ? "human" : "automatic",
+      omittedFindings: Math.max(0, reviewAppFindings.length - MAX_FINDINGS),
+      reviewAppFindings: carried,
+      ciFindings,
+      decisions: decisions.slice(0, MAX_FINDINGS),
+    };
+    const setRun = changeSet === null ? null : setRunOf(changeSet);
+    if (setRun !== null && "problem" in setRun) {
+      dependencies.logger.warn("the change set of the pull request cannot run as a set, so no PR follow-up run starts", { ...log, problem: setRun.problem });
+      await say(`Factoree cannot start a PR follow-up run on ${record.url}, which runs as its whole change set. ${setRun.problem}`);
+      return { kind: "none", reason: setRun.problem };
+    }
+    if (setRun !== null) followUp.changeSet = setRun.changeSet;
+    const start = await runStartOf(dependencies, {
+      tenantId: input.tenantId,
+      record,
+      origin,
+      product,
+      key: `${record.id}\nsettle\n${input.settleKey}`,
+      log,
+      extra: { prFollowUp: followUp },
+    });
+    dependencies.logger.info("a PR follow-up run starts", {
+      ...log,
+      trigger: followUp.trigger,
+      workflow_id: start.workflowId,
+      review_apps: actingApps.join(","),
+      review_app_findings: carried.length,
+      ci_findings: ciFindings.length,
+      decisions: decisions.length,
     });
     return { kind: "start", ...start, ...(changeSet === null ? {} : { changeSet: true }) };
   },
@@ -849,7 +1152,6 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       reviewerLogin: null,
       findings: [],
       omittedFindings: 0,
-      plainComments: plainCommentLines(await store.listEvents(input.tenantId, record.id, "review"), null),
       baseUpdate: {
         previousBaseSha: record.verifiedBaseSha,
         conflicts: input.conflicts.slice(0, MAX_CONFLICT_FILES),
@@ -882,31 +1184,152 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
 
   /**
    * The spec: Factoree replies on the pull request to each finding the triage dropped, with the
-   * reason. A reply that fails is logged, and the others still go.
+   * reason. A finding in a review thread gets its reply in the thread. DI-21.214: the dropped
+   * findings with no thread (annotations and review bodies) of one triage get one combined comment,
+   * and their fingerprints join the record, so a later plan skips them until their text changes. A
+   * reply that fails is logged, and the others still go.
    */
   async answerDroppedFindings(input: {
     tenantId: string;
     pullRequestId: string;
-    findings: PrReviewFinding[];
+    findings: Array<PrReviewFinding & { fingerprint?: string }>;
     dropped: TriagedFinding[];
   }): Promise<{ answered: number }> {
     const record = await dependencies.pullRequests.find(input.tenantId, input.pullRequestId);
     if (record === null) return { answered: 0 };
     const origin = await dependencies.pullRequests.originFacts(input.tenantId, record.id);
+    const label = `${record.repositoryFullName}#${String(record.number)}`;
     const byKey = new Map(input.findings.map((finding) => [finding.key, finding]));
     let answered = 0;
+    const unthreaded: Array<{ finding: PrReviewFinding & { fingerprint?: string }; dropped: TriagedFinding }> = [];
     for (const dropped of input.dropped) {
       const finding = byKey.get(dropped.key);
       if (finding === undefined) continue;
+      if (finding.commentId === null) {
+        unthreaded.push({ finding, dropped });
+        continue;
+      }
       try {
         await dependencies.reviews.reply(record.repositoryFullName, record.number, finding, droppedFindingReply(dropped), origin.githubInstallationId);
         answered += 1;
       } catch (error) {
-        dependencies.logger.warn("the reply to a dropped finding did not reach the pull request", {
-          pull_request: `${record.repositoryFullName}#${String(record.number)}`,
-          finding: dropped.key,
+        dependencies.logger.warn("the reply to a dropped finding did not reach the pull request", { pull_request: label, finding: dropped.key, error: String(error), step: "triage" });
+      }
+    }
+    if (unthreaded.length > 0) {
+      try {
+        await dependencies.reviews.comment(
+          record.repositoryFullName,
+          record.number,
+          droppedUnthreadedReply(unthreaded.map(({ finding, dropped }) => ({ author: finding.author, place: findingPlace(finding), body: finding.body, reason: dropped.reason }))),
+          origin.githubInstallationId,
+        );
+        answered += unthreaded.length;
+        const fingerprints = unthreaded.flatMap(({ finding }) => (finding.fingerprint === undefined ? [] : [finding.fingerprint]));
+        await dependencies.pullRequests.addAnsweredFingerprints(input.tenantId, record.id, fingerprints);
+      } catch (error) {
+        dependencies.logger.warn("the reply to the dropped findings with no thread did not reach the pull request", {
+          pull_request: label,
+          findings: unthreaded.length,
           error: String(error),
           step: "triage",
+        });
+      }
+    }
+    return { answered };
+  },
+
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.215. Answers each human decision on GitHub that asked a
+   * question and changed nothing: in its thread, or as a conversation comment that quotes it. A Linear
+   * decision is answered in the agent session by the run, so it is skipped here. A failed reply costs
+   * only that reply.
+   */
+  async answerHumanDecisions(input: {
+    tenantId: string;
+    pullRequestId: string;
+    answers: Array<{ decision: HumanDecision; answer: string }>;
+  }): Promise<{ answered: number }> {
+    const record = await dependencies.pullRequests.find(input.tenantId, input.pullRequestId);
+    if (record === null) return { answered: 0 };
+    const origin = await dependencies.pullRequests.originFacts(input.tenantId, record.id);
+    const label = `${record.repositoryFullName}#${String(record.number)}`;
+    let answered = 0;
+    for (const { decision, answer } of input.answers) {
+      if (decision.source !== "github") continue;
+      const body = decisionAnswerReply(decision, answer);
+      try {
+        if (decision.commentId === null) {
+          await dependencies.reviews.comment(record.repositoryFullName, record.number, body, origin.githubInstallationId);
+        } else {
+          await dependencies.reviews.reply(record.repositoryFullName, record.number, threadOfDecision(decision), body, origin.githubInstallationId);
+        }
+        answered += 1;
+      } catch (error) {
+        dependencies.logger.warn("the answer to a human decision did not reach the pull request", { pull_request: label, decision: decision.key, error: String(error), step: "answer" });
+      }
+    }
+    return { answered };
+  },
+
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.216. After a PR follow-up run published its commit: a
+   * reply in each thread it handled ("Fixed in" for a kept review app finding, "Done in" for a human
+   * decision), and one comment for the handled items with no thread, whose fingerprints the record
+   * keeps so no later plan triages them again. Factoree never resolves a thread. A failed reply
+   * costs only that reply.
+   */
+  async answerHandledThreads(input: {
+    tenantId: string;
+    pullRequestId: string;
+    commitSha: string;
+    kept: Array<{ finding: PrReviewFinding & { fingerprint?: string }; defect: string }>;
+    decisions: HumanDecision[];
+  }): Promise<{ answered: number }> {
+    const record = await dependencies.pullRequests.find(input.tenantId, input.pullRequestId);
+    if (record === null) return { answered: 0 };
+    const origin = await dependencies.pullRequests.originFacts(input.tenantId, record.id);
+    const label = `${record.repositoryFullName}#${String(record.number)}`;
+    const installationId = origin.githubInstallationId;
+    let answered = 0;
+    const unthreaded: HandledUnthreaded[] = [];
+    const fingerprints: string[] = [];
+    const reply = async (finding: PrReviewFinding, body: string, key: string): Promise<void> => {
+      try {
+        await dependencies.reviews.reply(record.repositoryFullName, record.number, finding, body, installationId);
+        answered += 1;
+      } catch (error) {
+        dependencies.logger.warn("the reply to a handled thread did not reach the pull request", { pull_request: label, item: key, error: String(error), step: "handled_threads" });
+      }
+    };
+    for (const { finding, defect } of input.kept) {
+      if (finding.commentId === null) {
+        unthreaded.push({ kind: "fixed", author: finding.author, place: `at ${findingPlace(finding)}`, text: defect });
+        if (finding.fingerprint !== undefined) fingerprints.push(finding.fingerprint);
+        continue;
+      }
+      await reply(finding, fixedFindingReply(input.commitSha, defect), finding.key);
+    }
+    for (const decision of input.decisions) {
+      // A Linear decision has its link on the pull request already, and its answer in the session.
+      if (decision.source !== "github") continue;
+      if (decision.commentId === null) {
+        unthreaded.push({ kind: "done", author: decision.author, place: `in ${decisionPlace(decision)}`, text: decision.body });
+        continue;
+      }
+      await reply(threadOfDecision(decision), doneDecisionReply(input.commitSha), decision.key);
+    }
+    if (unthreaded.length > 0) {
+      try {
+        await dependencies.reviews.comment(record.repositoryFullName, record.number, handledUnthreadedComment(input.commitSha, unthreaded), installationId);
+        answered += unthreaded.length;
+        if (fingerprints.length > 0) await dependencies.pullRequests.addAnsweredFingerprints(input.tenantId, record.id, fingerprints);
+      } catch (error) {
+        dependencies.logger.warn("the comment on the handled items with no thread did not reach the pull request", {
+          pull_request: label,
+          items: unthreaded.length,
+          error: String(error),
+          step: "handled_threads",
         });
       }
     }
@@ -1094,17 +1517,15 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
     }
     if (state === "unavailable") return { state };
 
-    const product = await dependencies.products.findById(input.tenantId, facts.productId);
-    const reviewer = product?.prReviewer ?? null;
     const verified = pullRequest.headSha === record.verifiedHeadSha;
-    const reviewerVerdict = reviewer !== null && verified ? await port.reviewerVerdict(slug, pullRequest.headSha, reviewer, installationId) : null;
+    // docs/specs/pr-feedback-loop.md, DI-21.212. At L4 every review app must pass the verified head.
+    const reviewAppHolds = verified && record.autonomyLevel === "L4" ? await reviewAppHoldsOn(dependencies, record, facts.productId, pullRequest.headSha, installationId) : [];
     const changeRequests = verified ? openChangeRequests(await port.reviews(slug, record.number, installationId)) : [];
     const unmet = unmetConditions({
       level: record.autonomyLevel,
       verifiedHeadSha: record.verifiedHeadSha,
       pullRequest,
-      reviewer,
-      reviewerVerdict,
+      reviewAppHolds,
       changeRequests,
     });
     // docs/specs/pr-review-merge-and-deploy.md, D7, DI-21.157. In a change set, a consumer pull request
@@ -1194,4 +1615,15 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
       }
     }
   },
+});
+
+/** DI-21.215. The thread a human decision sits in, in the shape the reply port takes. */
+const threadOfDecision = (decision: HumanDecision): PrReviewFinding => ({
+  key: decision.key,
+  reviewId: 0,
+  commentId: decision.commentId,
+  author: decision.author,
+  path: decision.path,
+  line: decision.line,
+  body: decision.body,
 });

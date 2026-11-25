@@ -38,9 +38,11 @@ import {
   type DiffTarget,
 } from "~/domain/review/source-diff.js";
 import {
+  guideOfChangedFiles,
   parseReviewReport,
   ReviewReportInvalidError,
   type ReviewFinding,
+  type ReviewGuideEntry,
 } from "~/domain/review/review-report.js";
 import { decideReview, failureLine } from "~/domain/review/blocking.js";
 import type { ReviewFindingStore } from "~/domain/review/review-finding-store.js";
@@ -115,6 +117,11 @@ export interface ReviewActivityOutput {
    * redacted. Empty when the report was not usable.
    */
   changeDescription: string;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.219. The reviewer's reading guide, redacted, with each
+   * entry whose path is not a changed file dropped. Absent in a history from before it existed.
+   */
+  whereToLook?: ReviewGuideEntry[];
   failures: string[];
   sessionId: string;
   /** False when the report is absent or fails to parse. DI-8.7 owns this path. */
@@ -731,6 +738,10 @@ export const createReviewActivities = (dependencies: ReviewActivityDependencies)
         blockingCount: decision.blocking.length,
         summary: decision.summary,
         changeDescription: dependencies.redactor.redactText(report.changeDescription.trim()),
+        whereToLook: guideOfChangedFiles(report.whereToLook, diff.changedFiles).map((entry) => ({
+          ...entry,
+          reason: dependencies.redactor.redactText(entry.reason.trim()),
+        })),
         failures: redactedFailures,
         sessionId: sessionResult.session.sessionId,
         reportUsable: true,

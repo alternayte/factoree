@@ -143,6 +143,50 @@ export const checkRunEventSchema = z.object({
   installation: z.object({ id: z.number() }),
 });
 
+const commentUserSchema = z.object({ login: z.string(), type: z.string() });
+
+/**
+ * docs/specs/pr-feedback-loop.md. An issue_comment event. GitHub sends it for issues and pull
+ * requests alike. Only an issue that carries `pull_request` is a pull request.
+ */
+export const issueCommentEventSchema = z.object({
+  action: z.string(),
+  issue: z.object({ number: z.number().int(), pull_request: z.object({}).passthrough().nullish() }),
+  comment: z.object({ id: z.number().int(), body: z.string().nullish(), html_url: z.string().nullish(), user: commentUserSchema }),
+  repository: z.object({ full_name: z.string() }),
+  installation: z.object({ id: z.number() }),
+});
+
+/** docs/specs/pr-feedback-loop.md. A pull_request_review_comment event: one comment on a line of the diff. */
+export const pullRequestReviewCommentEventSchema = z.object({
+  action: z.string(),
+  comment: z.object({
+    id: z.number().int(),
+    pull_request_review_id: z.number().int().nullish(),
+    in_reply_to_id: z.number().int().nullish(),
+    path: z.string(),
+    line: z.number().int().nullish(),
+    original_line: z.number().int().nullish(),
+    commit_id: z.string().nullish(),
+    body: z.string().nullish(),
+    html_url: z.string().nullish(),
+    user: commentUserSchema,
+  }),
+  pull_request: z.object({ number: z.number().int() }),
+  repository: z.object({ full_name: z.string() }),
+  installation: z.object({ id: z.number() }),
+});
+
+/** docs/specs/pr-feedback-loop.md. A pull_request_review_thread event: a thread resolved or unresolved. */
+export const pullRequestReviewThreadEventSchema = z.object({
+  action: z.string(),
+  thread: z.object({ comments: z.array(z.object({ id: z.number().int() })).nullish() }).passthrough(),
+  pull_request: z.object({ number: z.number().int() }),
+  repository: z.object({ full_name: z.string() }),
+  installation: z.object({ id: z.number() }),
+  sender: senderSchema,
+});
+
 /** docs/specs/pr-review-merge-and-deploy.md. A status event: one commit status. */
 export const commitStatusEventSchema = z.object({
   sha: z.string(),

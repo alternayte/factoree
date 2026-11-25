@@ -6,6 +6,7 @@ import { WorkflowNotFoundError } from "@temporalio/client";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
 import { HELD_LINE } from "~/domain/runs/drain-mode.js";
 import { Worker } from "@temporalio/worker";
+import { Context } from "@temporalio/activity";
 import { pullRequestEventSignal, pullRequestStateQuery, pullRequestWorkflow } from "~/workflows/pr.workflow.js";
 import type { PullRequestEvent } from "~/domain/pull-requests/pull-request-event.js";
 import type { PullRequestState } from "~/domain/runs/issue-status.js";
@@ -318,4 +319,94 @@ describe("pullRequestWorkflow", () => {
       expect.objectContaining({ headSha: "head-2", baseSha: "base-2", conflicts: ["a.ts"], failure: null, bringCurrentWorkflowId: bringCurrentId }),
     ]);
   });
+
+  // docs/specs/pr-feedback-loop.md, DI-21.209. The reviews of a head settle before the workflow plans.
+  const settleWorker = async (pendingReads: number) => {
+    const taskQueue = `pr-${randomUUID()}`;
+    const times: Record<string, number[]> = { take: [], settle: [], plan: [] };
+    const planned: unknown[][] = [];
+    let reads = 0;
+    const now = () => Context.current().info.scheduledTimestampMs;
+    const worker = await Worker.create({
+      connection: environment.nativeConnection,
+      taskQueue,
+      workflowsPath: new URL("../../src/workflows/pr.workflow.ts", import.meta.url).pathname,
+      activities: {
+        takePullRequestEvent: async () => {
+          times.take?.push(now());
+          return { isNew: true, state: "open", headSha: "head-1" };
+        },
+        steerAutoMerge: async () => ({ state: "off" }),
+        readPullRequestMergeability: async () => ({ mergeability: "clean" }),
+        planProofPackAmendment: async () => ({ amend: null }),
+        acknowledgeHumanDecision: async () => ({ accepted: true }),
+        readReviewSettle: async () => {
+          times.settle?.push(now());
+          reads += 1;
+          return { pending: reads <= pendingReads };
+        },
+        planSettledFollowUp: async (input: { decisions: unknown[] }) => {
+          times.plan?.push(now());
+          planned.push(input.decisions);
+          return { kind: "none", reason: "nothing to act on" };
+        },
+      },
+    });
+    return { worker, taskQueue, times, planned };
+  };
+
+  it("plans once after the quiet window, and waits another window while a review app check runs", async () => {
+    const { worker, taskQueue, times, planned } = await settleWorker(1);
+    const botReview: PullRequestEvent = { ...review, deliveryId: "github:review-bot", reviewerLogin: "sayso[bot]", reviewerType: "Bot", body: "" };
+    await worker.runUntil(async () => {
+      const handle = await environment.client.workflow.signalWithStart(pullRequestWorkflow, {
+        taskQueue,
+        workflowId: `pr:tenant-1:acme/api#${randomUUID()}`,
+        args: [{ tenantId: "tenant-1", pullRequestId: "pr-settle" }],
+        signal: pullRequestEventSignal,
+        signalArgs: [botReview],
+      });
+      await waitFor(() => (times.take?.length ?? 0) === 1, "the review");
+      await environment.sleep("5 minutes");
+      await waitFor(() => planned.length === 1, "the plan");
+      await handle.terminate("test done");
+    });
+    const start = times.take?.[0] ?? 0;
+    expect(times.settle?.map((at) => Math.round((at - start) / 60_000))).toEqual([2, 4]);
+    expect(Math.round(((times.plan?.[0] ?? 0) - start) / 60_000)).toBe(4);
+    expect(planned).toEqual([[]]);
+  });
+
+  it("holds a human decision for the plan, and plans at the upper wait while a check never finishes", async () => {
+    const { worker, taskQueue, times, planned } = await settleWorker(Number.MAX_SAFE_INTEGER);
+    const mention: PullRequestEvent = {
+      kind: "comment",
+      deliveryId: "github:comment-1",
+      commentId: 50,
+      authorLogin: "dana",
+      authorType: "User",
+      body: "@factoreetemp rename the prop",
+      mentions: true,
+      url: null,
+    };
+    await worker.runUntil(async () => {
+      const handle = await environment.client.workflow.signalWithStart(pullRequestWorkflow, {
+        taskQueue,
+        workflowId: `pr:tenant-1:acme/api#${randomUUID()}`,
+        args: [{ tenantId: "tenant-1", pullRequestId: "pr-settle-2" }],
+        signal: pullRequestEventSignal,
+        signalArgs: [mention],
+      });
+      await waitFor(() => (times.take?.length ?? 0) === 1, "the mention");
+      await environment.sleep("35 minutes");
+      await waitFor(() => planned.length === 1, "the plan");
+      await handle.terminate("test done");
+    });
+    const start = times.take?.[0] ?? 0;
+    const planAt = Math.round(((times.plan?.[0] ?? 0) - start) / 60_000);
+    expect(planAt).toBeGreaterThanOrEqual(30);
+    expect(planAt).toBeLessThanOrEqual(32);
+    expect(planned).toEqual([[mention]]);
+  });
 });
+

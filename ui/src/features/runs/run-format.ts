@@ -34,7 +34,7 @@ export type StatusTone = "success" | "warning" | "neutral" | "accent";
  * failure with a draft pull request, not a success (docs/specs/draft-of-failed-run.md).
  */
 export function statusTone(status: string): StatusTone {
-  if (status === "READY_FOR_HUMAN" || status === "REPORTED") return "success";
+  if (status === "READY_FOR_HUMAN" || status === "REPORTED" || status === "ANSWERED") return "success";
   if (
     status.startsWith("FAILED") ||
     status === "STALE_BASE" ||

@@ -206,6 +206,8 @@ export interface ActivityDependencies {
    * follow-up runs. A worker without them starts no PR follow-up run.
    */
   pullRequestReviews?: PullRequestReviewPort | undefined;
+  /** docs/specs/pr-feedback-loop.md. The slug of Factoree's own GitHub App, from the install settings. */
+  factoreeAppSlug?: (() => Promise<string | null>) | undefined;
   /** docs/specs/pr-review-merge-and-deploy.md, slice 5. The deploy reads. A worker without them reports no deploy. */
   deploys?: DeployPort | undefined;
   /** docs/specs/change-sets.md, slices 8 and 9. The pull requests of a change set. A worker without them knows no set. */
@@ -216,6 +218,11 @@ export interface ActivityDependencies {
   productPageUrl?: ((productId: string) => string) | undefined;
   /** docs/specs/run-diagnostics.md. The Run page of a run, linked from its failure post. */
   runPageUrl?: ((runId: string) => string) | undefined;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.217. Reads and writes pull request bodies, with a token
+   * per call. A worker without it leaves each pull request with its first body.
+   */
+  pullRequestBodies?: Pick<PullRequestPort, "body" | "updateBody"> | undefined;
 }
 
 /** A worker without the work item reads finds no comment, no image and no link. */
@@ -254,9 +261,12 @@ const NO_PULL_REQUEST_STORE: PullRequestStore = {
   listAutoMergeUnavailable: () => Promise.reject(new Error("this worker holds no pull request store")),
   originFacts: () => Promise.reject(new Error("this worker holds no pull request store")),
   markReviewerHandled: () => Promise.reject(new Error("this worker holds no pull request store")),
+  addAnsweredFingerprints: () => Promise.reject(new Error("this worker holds no pull request store")),
+  markReviewAppNotice: () => Promise.reject(new Error("this worker holds no pull request store")),
   countReviewerFollowUp: () => Promise.reject(new Error("this worker holds no pull request store")),
   markBringCurrentTried: () => Promise.reject(new Error("this worker holds no pull request store")),
   listOpenByBase: () => Promise.reject(new Error("this worker holds no pull request store")),
+  listOpenByAgentSession: () => Promise.reject(new Error("this worker holds no pull request store")),
   listEvents: () => Promise.reject(new Error("this worker holds no pull request store")),
   listMergedForDeploy: () => Promise.reject(new Error("this worker holds no pull request store")),
   listDeploys: () => Promise.reject(new Error("this worker holds no pull request store")),
@@ -270,11 +280,16 @@ const NO_REVIEWS_REASON = "this worker holds no GitHub review port";
 
 /** A worker built without the review port starts no PR follow-up run, and the PR workflow logs it. */
 const NO_REVIEWS: PullRequestReviewPort = {
-  reviewerFindings: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
   review: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
   canWrite: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
   reply: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
   comment: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  reviews: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  checksOnCommit: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  annotations: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  reviewThreads: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  jobLog: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
+  react: () => Promise.reject(new Error(NO_REVIEWS_REASON)),
 };
 
 const NO_AUTO_MERGE_REASON = "this worker holds no GitHub auto-merge port";
@@ -283,7 +298,6 @@ const NO_AUTO_MERGE_REASON = "this worker holds no GitHub auto-merge port";
 const NO_AUTO_MERGE: AutoMergePort = {
   pullRequest: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   gate: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
-  reviewerVerdict: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   reviews: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   enable: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
   disable: () => Promise.reject(new Error(NO_AUTO_MERGE_REASON)),
@@ -500,6 +514,9 @@ const createActivityTable = (dependencies: ActivityDependencies) => ({
     logger: dependencies.logger,
     skills: dependencies.skills,
     sandboxProviderName: dependencies.sandboxProviderName,
+    pullRequestBodies: dependencies.pullRequestBodies,
+    runPageUrl: dependencies.runPageUrl,
+    pullRequests: dependencies.publishedPullRequests,
   }),
   ...createIssueStatusActivities({
     runs: dependencies.runs,
@@ -620,6 +637,8 @@ const createActivityTable = (dependencies: ActivityDependencies) => ({
     deploys: dependencies.deploys ?? NO_DEPLOYS,
     changeSets: dependencies.changeSets ?? NO_CHANGE_SETS,
     commitStatuses: dependencies.commitStatuses ?? NO_COMMIT_STATUSES,
+    ...(dependencies.factoreeAppSlug === undefined ? {} : { factoreeAppSlug: dependencies.factoreeAppSlug }),
+    redactText: (text: string) => dependencies.redactor.redactText(text),
   }),
   /** docs/specs/drain-mode.md. A PR workflow waits before it starts a run while drain mode is on. */
   async isDrainModeOn(): Promise<boolean> {

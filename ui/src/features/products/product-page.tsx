@@ -385,35 +385,22 @@ function ProductEditor({
           </Section>
 
           <Section
-            title="PR reviewer"
-            description="An external review app that checks each Factoree pull request. Factoree reads its verdict only from its check run or commit status on the pull request head. Leave both empty for none."
+            title="Review apps"
+            description="Factoree acts on the findings of every GitHub App that reviews its pull requests, after triage. Name an app here to mute it. The automatic follow-up limit in Limits counts the runs that review apps and failed CI checks start on one pull request."
           >
-            <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-2">
-              <Field label="GitHub App slug" hint="The slug in the app URL on GitHub.">
-                {(props) => (
-                  <Input
-                    {...props}
-                    mono
-                    disabled={disabled}
-                    placeholder="review-bot"
-                    value={form.prReviewerAppSlug}
-                    onChange={(e) => set("prReviewerAppSlug", e.target.value)}
-                  />
-                )}
-              </Field>
-              <Field label="Check name" hint="The exact check run name or status context.">
-                {(props) => (
-                  <Input
-                    {...props}
-                    mono
-                    disabled={disabled}
-                    placeholder="Code review"
-                    value={form.prReviewerCheckName}
-                    onChange={(e) => set("prReviewerCheckName", e.target.value)}
-                  />
-                )}
-              </Field>
-            </div>
+            <Field label="Muted review apps" hint="One GitHub App slug per line, as in the app URL on GitHub.">
+              {(props) => (
+                <Textarea
+                  {...props}
+                  rows={3}
+                  mono
+                  disabled={disabled}
+                  placeholder="noisy-review-bot"
+                  value={form.reviewAppDenyList}
+                  onChange={(e) => set("reviewAppDenyList", e.target.value)}
+                />
+              )}
+            </Field>
           </Section>
 
           <Section
@@ -768,7 +755,7 @@ function GitHubAccessNotice({ productId, linearWorkspaceId }: { productId: strin
                 ) : (
                   "installation page"
                 )}
-                . Until then, Factoree does not see the reviews, checks and statuses of its pull requests.
+                . Until then, Factoree does not see the reviews, comments, checks, statuses and job logs of its pull requests.
               </p>
             ) : null}
           </li>

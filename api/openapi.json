@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Factoree",
-    "version": "0.21.8"
+    "version": "0.22.0"
   },
   "components": {
     "securitySchemes": {
@@ -2543,27 +2543,14 @@
                         "one_for_all"
                       ]
                     },
-                    "prReviewer": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "appSlug": {
-                              "type": "string"
-                            },
-                            "checkName": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "appSlug",
-                            "checkName"
-                          ]
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                    "reviewAppDenyList": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "automaticFollowUpLimit": {
+                      "type": "number"
                     },
                     "createdAt": {
                       "type": "string"
@@ -2601,7 +2588,8 @@
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
-                    "prReviewer",
+                    "reviewAppDenyList",
+                    "automaticFollowUpLimit",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3321,27 +3309,14 @@
                         "one_for_all"
                       ]
                     },
-                    "prReviewer": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "appSlug": {
-                              "type": "string"
-                            },
-                            "checkName": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "appSlug",
-                            "checkName"
-                          ]
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                    "reviewAppDenyList": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "automaticFollowUpLimit": {
+                      "type": "number"
                     },
                     "createdAt": {
                       "type": "string"
@@ -3379,7 +3354,8 @@
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
-                    "prReviewer",
+                    "reviewAppDenyList",
+                    "automaticFollowUpLimit",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3775,27 +3751,14 @@
                           "one_for_all"
                         ]
                       },
-                      "prReviewer": {
-                        "anyOf": [
-                          {
-                            "type": "object",
-                            "properties": {
-                              "appSlug": {
-                                "type": "string"
-                              },
-                              "checkName": {
-                                "type": "string"
-                              }
-                            },
-                            "required": [
-                              "appSlug",
-                              "checkName"
-                            ]
-                          },
-                          {
-                            "type": "null"
-                          }
-                        ]
+                      "reviewAppDenyList": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "automaticFollowUpLimit": {
+                        "type": "number"
                       },
                       "createdAt": {
                         "type": "string"
@@ -3833,7 +3796,8 @@
                       "sandboxProviderIds",
                       "maxConcurrentRuns",
                       "appChangeIssues",
-                      "prReviewer",
+                      "reviewAppDenyList",
+                      "automaticFollowUpLimit",
                       "createdAt",
                       "updatedAt"
                     ]
@@ -4252,27 +4216,14 @@
                         "one_for_all"
                       ]
                     },
-                    "prReviewer": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "appSlug": {
-                              "type": "string"
-                            },
-                            "checkName": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "appSlug",
-                            "checkName"
-                          ]
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                    "reviewAppDenyList": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "automaticFollowUpLimit": {
+                      "type": "number"
                     },
                     "createdAt": {
                       "type": "string"
@@ -4310,7 +4261,8 @@
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
-                    "prReviewer",
+                    "reviewAppDenyList",
+                    "automaticFollowUpLimit",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -4714,27 +4666,14 @@
                         "one_for_all"
                       ]
                     },
-                    "prReviewer": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "appSlug": {
-                              "type": "string"
-                            },
-                            "checkName": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "appSlug",
-                            "checkName"
-                          ]
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                    "reviewAppDenyList": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "automaticFollowUpLimit": {
+                      "type": "number"
                     },
                     "createdAt": {
                       "type": "string"
@@ -4772,7 +4711,8 @@
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
-                    "prReviewer",
+                    "reviewAppDenyList",
+                    "automaticFollowUpLimit",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -5186,31 +5126,18 @@
                       "one_for_all"
                     ]
                   },
-                  "prReviewer": {
-                    "anyOf": [
-                      {
-                        "type": "object",
-                        "properties": {
-                          "appSlug": {
-                            "type": "string",
-                            "pattern": "^[a-z0-9][a-z0-9-]{0,99}$"
-                          },
-                          "checkName": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 200
-                          }
-                        },
-                        "required": [
-                          "appSlug",
-                          "checkName"
-                        ],
-                        "additionalProperties": false
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                  "reviewAppDenyList": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9][a-z0-9-]{0,99}$"
+                    }
+                  },
+                  "automaticFollowUpLimit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20
                   }
                 },
                 "additionalProperties": false
@@ -5557,27 +5484,14 @@
                         "one_for_all"
                       ]
                     },
-                    "prReviewer": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "appSlug": {
-                              "type": "string"
-                            },
-                            "checkName": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "appSlug",
-                            "checkName"
-                          ]
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                    "reviewAppDenyList": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "automaticFollowUpLimit": {
+                      "type": "number"
                     },
                     "createdAt": {
                       "type": "string"
@@ -5615,7 +5529,8 @@
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
-                    "prReviewer",
+                    "reviewAppDenyList",
+                    "automaticFollowUpLimit",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -6131,27 +6046,14 @@
                         "one_for_all"
                       ]
                     },
-                    "prReviewer": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "appSlug": {
-                              "type": "string"
-                            },
-                            "checkName": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "appSlug",
-                            "checkName"
-                          ]
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                    "reviewAppDenyList": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "automaticFollowUpLimit": {
+                      "type": "number"
                     },
                     "createdAt": {
                       "type": "string"
@@ -6189,7 +6091,8 @@
                     "sandboxProviderIds",
                     "maxConcurrentRuns",
                     "appChangeIssues",
-                    "prReviewer",
+                    "reviewAppDenyList",
+                    "automaticFollowUpLimit",
                     "createdAt",
                     "updatedAt"
                   ]

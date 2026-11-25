@@ -13,6 +13,7 @@ import type { BlockerWait } from "~/domain/runs/blocker-wait.js";
 import type { DrainMode } from "~/domain/runs/drain-mode.js";
 import type { PullRequestStore } from "~/domain/pull-requests/pull-request-store.js";
 import type { OpenDeployFailure } from "~/domain/pull-requests/deploys.js";
+import type { PullRequestLinearReplyEvent } from "~/domain/pull-requests/pull-request-event.js";
 import {
   decideDraft,
   DRAFT_IN_PROGRESS_LINE,
@@ -87,8 +88,7 @@ export type DelegationOutcome =
 
 /** The answer to a Linear reply after a failed PR follow-up run. */
 export const PR_FOLLOW_UP_REPLY_LINE =
-  "This run followed up its pull request, so a reply here starts no new run. Request changes on the pull request, " +
-  "or run the PR reviewer check again, to start another PR follow-up run.";
+  "This run followed up its pull request, and that pull request is no longer open, so a reply here starts no new run.";
 
 /** docs/specs/draft-of-failed-run.md. The answer to one draft request. */
 export type DraftOutcome =
@@ -145,6 +145,11 @@ export interface DelegationDependencies {
    * reply after one starts a follow-up run.
    */
   deployFailures?: Pick<PullRequestStore, "openDeployFailure" | "markDeployFollowedUp"> | undefined;
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.211. Sends a reply to the PR workflow of the open pull
+   * request of the session. It answers the workflow id, or null when no pull request of the session is open.
+   */
+  pullRequestReplies?: { byAgentSession(tenantId: string, agentSessionId: string, event: PullRequestLinearReplyEvent): Promise<string | null> } | undefined;
 }
 
 export class DelegationService {
@@ -227,6 +232,23 @@ export class DelegationService {
         const signalled = await this.dependencies.starter.signalHumanInput(target, command.body);
         metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
         return signalled ? { kind: "prompt_forwarded", workflowId: target } : { kind: "not_running", workflowId: target };
+      }
+      // docs/specs/pr-feedback-loop.md, DI-21.211. While a pull request of the session is open, a reply
+      // is a human decision on it: its PR workflow takes it, and a PR follow-up run follows it.
+      if (this.dependencies.pullRequestReplies !== undefined && !isDraftCommand(command.body) && command.body.trim() !== "") {
+        const routed = await this.dependencies.pullRequestReplies.byAgentSession(tenantId, event.agentSession.id, {
+          kind: "linear_reply",
+          deliveryId: `linear:${deliveryId}`,
+          agentSessionId: event.agentSession.id,
+          replyId: event.agentActivity?.id ?? deliveryId,
+          authorName: command.author,
+          body: command.body,
+          url: event.agentSession.url ?? null,
+        });
+        if (routed !== null) {
+          metrics.humanInterventions.inc({ tenant_id: tenantId, product_id: "" });
+          return { kind: "prompt_forwarded", workflowId: routed };
+        }
       }
       // docs/specs/pr-review-merge-and-deploy.md, slice 5, DI-21.124. A reply after a failed deploy
       // of the merged change starts a follow-up run with the failure as a finding. This extends

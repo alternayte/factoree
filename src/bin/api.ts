@@ -137,6 +137,8 @@ const delegation = new DelegationService({
   drainMode,
   // docs/specs/pr-review-merge-and-deploy.md, slice 5. A reply after a failed deploy starts a follow-up run.
   deployFailures: new PrismaPullRequestStore(prisma),
+  // docs/specs/pr-feedback-loop.md, DI-21.211. A reply while a pull request of the session is open goes to its PR workflow.
+  pullRequestReplies: { byAgentSession: (tenantId, agentSessionId, event) => pullRequestEvents.byAgentSession(tenantId, agentSessionId, event) },
 });
 
 // The Products administration route resolves a team key by tenant. `TenantScopedLinearTeamLookup`

@@ -586,6 +586,7 @@ const worker = await Worker.create({
     autoMerge: new GitHubAutoMerge({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     // docs/specs/pr-review-merge-and-deploy.md, slice 3. The review reads and replies of the PR follow-up runs.
     pullRequestReviews: new GitHubPullRequestReviews({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
+    factoreeAppSlug: async () => (await settings.read()).github.appSlug,
     // Slice 5. The deploy report reads compares and deployments, and writes nothing on GitHub.
     deploys: new GitHubDeployments({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     // docs/specs/change-sets.md, slices 8 and 9. The pull requests of a set, and the factoree/change-set status.
@@ -593,6 +594,8 @@ const worker = await Worker.create({
     commitStatuses: new GitHubCommitStatuses({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     productPageUrl: (productId: string) => `${env.FACTOREE_PUBLIC_URL}/products/${productId}`,
     runPageUrl: (runId: string) => `${env.FACTOREE_PUBLIC_URL.replace(/\/+$/, "")}/runs/${runId}`,
+    // docs/specs/pr-body-for-humans.md, DI-21.217. The proof pack step writes each pull request body.
+    pullRequestBodies: new GitHubPullRequests({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     validationContracts,
     // docs/specs/pr-review-merge-and-deploy.md, D1. The same store holds the passing plans.
     validationPlans: validationContracts,

@@ -1,3 +1,4 @@
+import type { ReviewGuideEntry } from "~/domain/review/review-report.js";
 import { isCancellation } from "@temporalio/workflow";
 import type { PrepareCheckSandboxActivityOutput } from "~/activities/sandbox.activities.js";
 import type { PublishActivityOutput } from "~/activities/publishing.activities.js";
@@ -27,6 +28,9 @@ export interface SetPublicationFacts {
   verificationSummary: string;
   repairCount: number;
   edges: Array<{ provider: string; consumer: string }>;
+  /** docs/specs/pr-body-for-humans.md, DI-21.219. The reviewer's summary and guide of the change. */
+  changeDescription: string;
+  whereToLook: ReviewGuideEntry[];
 }
 
 type CheckedTarget = NonNullable<PrepareCheckSandboxActivityOutput["checkedTargets"]>[number];
@@ -198,6 +202,8 @@ export const publishChangeSet = async (
         repairCount: facts.repairCount,
         githubInstallationId: entry.installationId,
         changeSetRepositories: names,
+        changeDescription: facts.changeDescription,
+        whereToLook: facts.whereToLook,
       });
     } catch (error) {
       return await undo(entry.slug, error);
@@ -223,6 +229,8 @@ export const publishChangeSet = async (
         repairCount: facts.repairCount,
         pullRequests,
         edges: facts.edges,
+        changeDescription: facts.changeDescription,
+        whereToLook: facts.whereToLook,
       });
     } catch (error) {
       return await undo(target.slug, error);

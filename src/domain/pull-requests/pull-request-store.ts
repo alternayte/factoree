@@ -50,6 +50,16 @@ export interface PublishedPullRequest {
   reviewerFollowUpKeys: string[];
   /** DI-21.118. The head commit of the last bring-current update that pushed nothing, until the base moves. */
   bringCurrentHeadSha: string | null;
+  /** DI-21.214. The fingerprints of the answered review app findings with no thread. */
+  answeredFindingFingerprints: string[];
+  /** DI-21.212. The head and the review apps of the last L4 hold notice. */
+  reviewAppNoticeKey: string | null;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.220. The pull request preview: the environment URL of the
+   * last successful deployment on the head, and that head. Null until one, and again after a new head.
+   */
+  previewUrl: string | null;
+  previewHeadSha: string | null;
   workflowId: string;
 }
 
@@ -132,8 +142,17 @@ export interface PullRequestStore {
    * the count. A second call with the same key writes nothing.
    */
   countReviewerFollowUp(tenantId: string, pullRequestId: string, key: string): Promise<number>;
+  /** DI-21.214. Adds the fingerprints of answered review app findings with no thread. A known one is kept once. */
+  addAnsweredFingerprints(tenantId: string, pullRequestId: string, fingerprints: readonly string[]): Promise<void>;
+  /** DI-21.212. Marks one L4 hold notice as posted. False when this key was the last one posted. */
+  markReviewAppNotice(tenantId: string, pullRequestId: string, key: string): Promise<boolean>;
   /** DI-21.118. Records the head of a bring-current update that pushed nothing. */
   markBringCurrentTried(tenantId: string, pullRequestId: string, headSha: string): Promise<void>;
+  /**
+   * docs/specs/pr-feedback-loop.md, DI-21.211. The open pull requests whose origin run has this
+   * Linear agent session, oldest first.
+   */
+  listOpenByAgentSession(tenantId: string, agentSessionId: string): Promise<PublishedPullRequest[]>;
   /** DI-21.117. The open pull requests of a repository that target that base branch. */
   listOpenByBase(tenantId: string, repositoryFullName: string, baseBranch: string): Promise<PublishedPullRequest[]>;
   /** The recorded events of one kind, oldest first. */

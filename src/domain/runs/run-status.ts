@@ -18,6 +18,9 @@ export const RUN_STATUSES = [
   // docs/specs/autonomy-levels.md. An L0 or L1 Run ends here. It posted its report, and by its
   // level it opens no pull request.
   "REPORTED",
+  // docs/specs/pr-feedback-loop.md. A PR follow-up run whose human decisions only asked questions.
+  // It answered each one and pushed no commit. The pull request stays open.
+  "ANSWERED",
   "STALE_BASE",
   "FAILED_CONFIGURATION",
   "FAILED",
@@ -47,6 +50,7 @@ export type RunStatus = (typeof RUN_STATUSES)[number];
 export const TERMINAL_RUN_STATUSES = [
   "READY_FOR_HUMAN",
   "REPORTED",
+  "ANSWERED",
   "STALE_BASE",
   "FAILED_CONFIGURATION",
   "FAILED",

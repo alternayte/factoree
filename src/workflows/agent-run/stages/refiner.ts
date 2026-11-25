@@ -1,6 +1,8 @@
 import { deprecatePatch } from "@temporalio/workflow";
 import type { ProposeRefinementActivityOutput } from "~/activities/refinement.activities.js";
 import type { ForYourEyeCriterion } from "~/domain/validation/for-your-eye.js";
+import type { DecisionAnswer } from "~/domain/refinement/refiner-proposal.js";
+import type { RefinerDecisionLine } from "~/prompts/refiner.js";
 // The workflow bundler resolves a relative path only, so value imports do not use the `~/` alias.
 import { mergeOrderDecision } from "../../../domain/runs/merge-order.js";
 import { activities, buildSessionActivities } from "../activities.js";
@@ -21,14 +23,19 @@ export interface RefinerOutcome {
   context: ResolvedContext;
   /** DI-21.141. The cited provider-to-consumer edges of the set, or null when the refiner cited none. */
   edges: Array<{ provider: string; consumer: string }> | null;
+  /** docs/specs/pr-feedback-loop.md, DI-21.215. One answer per human decision the run carries, or empty. */
+  decisionAnswers: DecisionAnswer[];
 }
+
+/** The text the refiner reads. A PR follow-up run adds its human decisions (DI-21.215). */
+export type RefinerSource = ContextSource & { description: string; humanDecisions?: RefinerDecisionLine[] };
 
 /**
  * docs/specs/refiner-agent.md. A fresh refiner reads the work sprite and proposes what done means
  * and how to prove it. The gate decides what freezes, and Factoree takes every other proposal
  * itself (docs/specs/own-proposals-and-parallel-runs.md).
  */
-const propose = async (run: Run, source: ContextSource & { description: string }, context: ResolvedContext, workspace: Workspace): Promise<Proposal> => {
+const propose = async (run: Run, source: RefinerSource, context: ResolvedContext, workspace: Workspace): Promise<Proposal> => {
   const { input } = run;
   const work = workspace.work;
   const content = source.workItem.content;
@@ -70,6 +77,7 @@ const propose = async (run: Run, source: ContextSource & { description: string }
           ...(afterHang ? { afterHang: true } : {}),
           ...(unreachableRetry > 0 ? { unreachableRetry } : {}),
           ...(input.product.refinerCriteriaLimit === undefined ? {} : { criteriaLimit: input.product.refinerCriteriaLimit }),
+          ...((source.humanDecisions ?? []).length === 0 ? {} : { humanDecisions: source.humanDecisions }),
         }),
       ),
     );
@@ -158,7 +166,7 @@ const joinAddedTargets = async (
  */
 export const runRefiner = async (
   run: Run,
-  source: ContextSource & { description: string },
+  source: RefinerSource,
   firstContext: ResolvedContext,
   workspace: Workspace,
 ): Promise<RefinerOutcome> => {
@@ -182,5 +190,6 @@ export const runRefiner = async (
     forYourEye: proposal.forYourEye ?? [],
     context,
     edges,
+    decisionAnswers: proposal.decisionAnswers ?? [],
   };
 };

@@ -18,7 +18,10 @@ export interface PullRequestFollowUpFacts {
   startedBy: string;
   kept: Array<{ evidence: string; defect: string; rule: string }>;
   dropped: number;
-  plainComments: string[];
+  /** docs/specs/pr-feedback-loop.md. Each dropped review app finding, with its place and the reason. */
+  droppedFindings?: Array<{ place: string; reason: string }>;
+  /** DI-21.208. The CI checks that failed on the head the run read. */
+  ciFailures?: string[];
 }
 
 /**
@@ -104,6 +107,21 @@ export const publishProofPack = async (
       autonomyReasons: facts.refined.autonomyReasons,
       checkDefiningFiles: checked.checkDefiningFiles,
       ...(facts.pullRequest === null ? {} : { pullRequestFollowUp: facts.pullRequest }),
+      // docs/specs/pr-body-for-humans.md, DI-21.217. The proof pack step writes each pull request body.
+      whereToLook: verified.whereToLook,
+      pullRequestBodies: published.map((target) => ({
+        repositorySlug: target.slug,
+        pullRequestNumber: target.publication.pullRequestNumber,
+        pullRequestUrl: target.publication.pullRequestUrl,
+        githubInstallationId: target.installationId,
+        baseSha: set !== null ? target.baseSha : facts.baseSha,
+        patchSha256: target.publication.patchSha256,
+        changedFileCount:
+          set === null
+            ? verified.changedFiles.length
+            : ((checked.checkedTargets ?? []).find((fact) => sameSlug(fact.repository, target.slug))?.changedFiles.length ?? 0),
+        commitSha: target.publication.commitSha,
+      })),
     });
   } catch (error) {
     if (isCancellation(error)) throw error;

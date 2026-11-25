@@ -31,9 +31,10 @@ export type ProductForm = {
   sandboxProviderIds: string[];
   /** docs/specs/setup-app-change-issues.md. How many app-change issues a merged setup creates. */
   appChangeIssues: Product["appChangeIssues"];
-  /** docs/specs/pr-review-merge-and-deploy.md. Both empty means no PR reviewer. */
-  prReviewerAppSlug: string;
-  prReviewerCheckName: string;
+  /** docs/specs/pr-feedback-loop.md. The review app slugs Factoree does not act on, one per line. */
+  reviewAppDenyList: string;
+  /** docs/specs/pr-feedback-loop.md. The most PR follow-up runs that review apps and CI start on one pull request. */
+  automaticFollowUpLimit: string;
   effort: Record<Role, string>;
   defaultAutonomy: AutonomyLevel;
   riskCaps: { label: string; level: AutonomyLevel }[];
@@ -77,8 +78,8 @@ export function formOf(p: Product): ProductForm {
     maxConcurrentRuns: String(p.maxConcurrentRuns),
     sandboxProviderIds: p.sandboxProviderIds,
     appChangeIssues: p.appChangeIssues,
-    prReviewerAppSlug: p.prReviewer?.appSlug ?? "",
-    prReviewerCheckName: p.prReviewer?.checkName ?? "",
+    reviewAppDenyList: p.reviewAppDenyList.join("\n"),
+    automaticFollowUpLimit: String(p.automaticFollowUpLimit),
     effort: roleValues((role) => p.effort[role] ?? ""),
     defaultAutonomy: asLevel(p.defaultAutonomy),
     riskCaps: Object.entries(p.riskCaps ?? {}).map(([label, level]) => ({ label, level: asLevel(level) })),
@@ -95,6 +96,7 @@ export const LIMITS: Limits[] = [
   { key: "sandboxRetentionHours", label: "Sandbox retention (hours)", min: 0, max: 720 },
   { key: "refinerCriteriaLimit", label: "Refiner criteria limit", min: 1, max: 50 },
   { key: "repairMaxAttempts", label: "Repair budget (attempts)", min: 0, max: 10 },
+  { key: "automaticFollowUpLimit", label: "Automatic follow-ups per PR", min: 1, max: 20 },
 ];
 
 /** bodyOf builds the full update body, or the problems that stop a save. */
@@ -115,7 +117,8 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
     sandboxRetentionHours,
     refinerCriteriaLimit,
     repairMaxAttempts,
-  ] = LIMITS.map(int) as [number, number, number, number, number, number];
+    automaticFollowUpLimit,
+  ] = LIMITS.map(int) as [number, number, number, number, number, number, number];
   const riskCaps: Record<string, AutonomyLevel> = {};
   for (const cap of form.riskCaps) {
     const label = cap.label.trim().toLowerCase();
@@ -135,12 +138,14 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
   if (registryUrl && !/^https?:\/\/\S+$/.test(registryUrl))
     problems.push("The skill registry URL must start with http:// or https://.");
   if (!registryUrl && form.skillRegistrySet.trim()) problems.push("A skill set needs a skill registry URL.");
-  const reviewerSlug = form.prReviewerAppSlug.trim();
-  const reviewerCheck = form.prReviewerCheckName.trim();
-  if (Boolean(reviewerSlug) !== Boolean(reviewerCheck))
-    problems.push("A PR reviewer needs both the app slug and the check name, or neither.");
-  if (reviewerSlug && !/^[a-z0-9][a-z0-9-]{0,99}$/i.test(reviewerSlug))
-    problems.push("The PR reviewer app slug holds only letters, digits and hyphens.");
+  const reviewAppDenyList = form.reviewAppDenyList
+    .split(/[\s,]+/)
+    .map((slug) => slug.trim().replace(/\[bot\]$/i, ""))
+    .filter(Boolean);
+  for (const slug of reviewAppDenyList) {
+    if (!/^[a-z0-9][a-z0-9-]{0,99}$/i.test(slug))
+      problems.push(`The review app “${slug}” is no GitHub App slug: use letters, digits and hyphens.`);
+  }
   if (!form.name.trim()) problems.push("The product needs a name.");
   if (problems.length > 0) return { problems };
   const effort = (role: Role) => form.effort[role].trim() || null;
@@ -163,7 +168,8 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
       maxConcurrentRuns,
       sandboxProviderIds: form.sandboxProviderIds,
       appChangeIssues: form.appChangeIssues,
-      prReviewer: reviewerSlug ? { appSlug: reviewerSlug, checkName: reviewerCheck } : null,
+      reviewAppDenyList,
+      automaticFollowUpLimit,
       effort: roleValues(effort),
       defaultAutonomy: form.defaultAutonomy,
       riskCaps,
