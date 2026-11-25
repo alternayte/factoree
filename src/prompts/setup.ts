@@ -1,7 +1,8 @@
 import { PREVIEW_TIMEOUT_MAX_SECONDS, SERVICES_WAIT_TIMEOUT_MAX_SECONDS } from "~/domain/products/factoree-config.js";
+import type { NugetPromptFacts } from "~/domain/setup/nuget-precheck.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const SETUP_PROMPT_VERSION = "setup@17";
+export const SETUP_PROMPT_VERSION = "setup@18";
 
 export interface SetupPromptFields {
   repository: string;
@@ -62,7 +63,29 @@ export interface SetupPromptFields {
    * the check, the killed processes and the peak. Null for any other setup.
    */
   sandboxFault?: string | null;
+  /**
+   * docs/specs/nuget-private-feed-mapping.md. The `.factoree/nuget.config` the NuGet pre-check
+   * wrote before the session. Absent or null when it wrote none.
+   */
+  nugetFeed?: NugetPromptFacts | null;
 }
+
+/** docs/specs/nuget-private-feed-mapping.md. The file Factoree wrote, and how every command uses it. */
+const nugetSection = (facts: NugetPromptFacts): string =>
+  section(
+    "Private NuGet feed",
+    [
+      `Factoree checked the NuGet feeds of the repository before this session and wrote \`${facts.configPath}\` itself. ` +
+        (facts.mirror === null
+          ? `It leaves out ${facts.replacedHost}, which no sandbox reaches and which serves no package of this repository, and keeps every other source.`
+          : `It replaces ${facts.replacedHost}, which no sandbox reaches, with the GitHub Packages mirror ${facts.mirror}, and keeps every other source. ` +
+            `Its packageSourceMapping sends these packages to the mirror and every other package to the other sources: ${facts.mirroredIds.join(", ")}.`),
+      "Factoree looked up each private package it found on the mirror, so a NuGet feed is no reason to leave a project out.",
+      `Restore with \`dotnet restore --configfile ${facts.configPath}\` in bootstrap.command, and with \`dotnet tool restore --configfile ${facts.configPath}\` when the repository has a tool manifest. ` +
+        `Pass \`--no-restore\` to every later dotnet build, test, run and publish command, in warm.command, the verify commands and the preview: the committed NuGet.config still names ${facts.replacedHost}, and an implicit restore reads it.`,
+      "Do not change this file. Factoree writes it again after your session.",
+    ].join("\n"),
+  );
 
 /** The name of a report part as the prompt writes it. */
 const partName = (part: { kind: string; name: string }): string => (part.kind === part.name ? part.kind : `${part.kind} \`${part.name}\``);
@@ -245,6 +268,7 @@ export const renderSetupPrompt = (fields: SetupPromptFields): string =>
             "Commit no credential entry, such as `_authToken` in `.npmrc` or `<packageSourceCredentials>` in `nuget.config`. A file names the source and nothing more. " +
             "A private git dependency on github.com fetches with no token too."),
     ),
+    ...(fields.nugetFeed === undefined || fields.nugetFeed === null ? [] : [nugetSection(fields.nugetFeed)]),
     section(
       "What you cannot configure",
       `When a part needs a change to the app itself, such as a hard-coded API URL with no environment override, ` +

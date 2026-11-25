@@ -3,7 +3,7 @@ import { contextFilesBody, imageFilesBody } from "./context-files.js";
 import { egressBody } from "./egress.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const IMPLEMENTER_PROMPT_VERSION = "implementer/13";
+export const IMPLEMENTER_PROMPT_VERSION = "implementer/14";
 
 export interface ImplementerPromptFields {
   goal: string;
@@ -169,6 +169,8 @@ export const renderImplementerPrompt = (fields: ImplementerPromptFields): string
         "Factoree runs these checks in a new sandbox after you finish.",
         "A failed check returns to you as repair findings, and each repair uses the repair budget of the Run.",
         "You can run any of these checks yourself. Your result is not evidence.",
+        // docs/specs/nuget-private-feed-mapping.md, DI-21.230. An implicit restore reads the committed NuGet.config.
+        "When the repository has `.factoree/nuget.config`, restore with `dotnet restore --configfile .factoree/nuget.config`, and pass `--no-restore` to `dotnet build`, `dotnet test` and `dotnet run`: the committed NuGet.config names a feed no sandbox reaches.",
         ...(fields.selfCheck === true
           ? ["agent-browser is installed. A browser check of your own work is optional, and it is not evidence."]
           : []),

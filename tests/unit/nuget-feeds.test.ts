@@ -1,0 +1,241 @@
+import { describe, expect, it } from "vitest";
+import {
+  classifyNugetFeeds,
+  githubPackagesOwnerOf,
+  isNugetConfigPath,
+  MISSING_MIRROR_CREDENTIAL,
+  mirrorCredentialFailure,
+  mirrorStatusOf,
+  mirrorStatusText,
+  needsNugetPrecheck,
+  NUGET_FEED_MAPPING,
+  parentChainOf,
+  parseNugetConfig,
+  readNugetConfigFiles,
+  renderNugetConfig,
+  requestedVersionOf,
+  restoreFailuresOf,
+  unsupportedFeedFailure,
+} from "~/domain/setup/nuget-feeds.js";
+import { descendantsNamed, parseXml, attributeOf } from "~/domain/setup/xml-elements.js";
+import { mirrorCredential, PRIVATE_FEED_CONFIG } from "../support/fake-nuget.js";
+
+const NO_COVERAGE = { credentialHosts: [], allowedDomains: [] };
+
+describe("parseNugetConfig", () => {
+  it("reads clear, add, remove and the disabled sources", () => {
+    const config = parseNugetConfig(
+      "NuGet.config",
+      `<configuration>
+        <packageSources>
+          <add key="old" value="https://old.example/nuget" />
+          <clear />
+          <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+          <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+          <add key="gone" value="https://gone.example/nuget" />
+          <remove key="gone" />
+          <add key="local" value="./packages" />
+        </packageSources>
+        <disabledPackageSources><add key="local" value="true" /></disabledPackageSources>
+      </configuration>`,
+    );
+    expect(config.clear).toBe(true);
+    expect(config.sources.map((source) => [source.key, source.host])).toEqual([
+      ["nuget.org", "api.nuget.org"],
+      ["frontiers", "nuget.frontiersin.net"],
+      ["local", null],
+    ]);
+    expect(config.disabled).toEqual(["local"]);
+  });
+
+  it("finds a NuGet.config in any case outside build output", () => {
+    expect(isNugetConfigPath("NuGet.Config")).toBe(true);
+    expect(isNugetConfigPath("src/nuget.config")).toBe(true);
+    expect(isNugetConfigPath("node_modules/x/NuGet.config")).toBe(false);
+  });
+
+  it("reads every config the GitHub tree lists, or the root names when it lists nothing", async () => {
+    const read: string[] = [];
+    const source = {
+      readFile: (_name: string, path: string) => {
+        read.push(path);
+        return Promise.resolve(path === "NuGet.config" || path === "src/NuGet.Config" ? PRIVATE_FEED_CONFIG : null);
+      },
+      listFiles: () => Promise.resolve([{ path: "NuGet.config" }, { path: "src/NuGet.Config" }, { path: "README.md" }]),
+    };
+    expect((await readNugetConfigFiles(source as never, "o/r", "sha", "1")).map((file) => file.path)).toEqual(["NuGet.config", "src/NuGet.Config"]);
+    const rootOnly = { readFile: source.readFile };
+    read.length = 0;
+    expect((await readNugetConfigFiles(rootOnly as never, "o/r", "sha", "1")).map((file) => file.path)).toEqual(["NuGet.config"]);
+    expect(read).toEqual(["NuGet.config", "nuget.config", "NuGet.Config"]);
+  });
+});
+
+describe("classifyNugetFeeds", () => {
+  it("names the mapped feed, the mirror, public, credential, local and unsupported feeds", () => {
+    const config = parseNugetConfig(
+      "NuGet.config",
+      `<configuration><packageSources>
+        <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+        <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+        <add key="gh" value="https://nuget.pkg.github.com/frontiersin/index.json" />
+        <add key="allowed" value="https://packages.allowed.example/v3/index.json" />
+        <add key="covered" value="https://private.covered.example/v3/index.json" />
+        <add key="other" value="https://other-private.example/nuget" />
+        <add key="local" value="../packages" />
+      </packageSources></configuration>`,
+    );
+    const feeds = classifyNugetFeeds([config], { credentialHosts: ["private.covered.example"], allowedDomains: ["*.allowed.example"] });
+    expect(feeds.map((feed) => [feed.key, feed.kind])).toEqual([
+      ["nuget.org", "public"],
+      ["frontiers", "mapped"],
+      ["gh", "mirror"],
+      ["allowed", "public"],
+      ["covered", "credential"],
+      ["other", "unsupported"],
+      ["local", "local"],
+    ]);
+    expect(needsNugetPrecheck(feeds)).toBe(true);
+    expect(unsupportedFeedFailure(feeds)).toContain("unsupported private feed `other-private.example`");
+  });
+
+  it("needs no pre-check for public sources only, and leaves a disabled source out", () => {
+    const config = parseNugetConfig(
+      "NuGet.config",
+      `<configuration><packageSources>
+        <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+        <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+      </packageSources><disabledPackageSources><add key="frontiers" value="true" /></disabledPackageSources></configuration>`,
+    );
+    const feeds = classifyNugetFeeds([config], NO_COVERAGE);
+    expect(feeds.map((feed) => feed.key)).toEqual(["nuget.org"]);
+    expect(needsNugetPrecheck(feeds)).toBe(false);
+  });
+});
+
+describe("the mirror credential", () => {
+  it("passes a header credential with the owner's path prefix or none", () => {
+    expect(mirrorCredentialFailure([mirrorCredential()])).toBeNull();
+    expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: null })])).toBeNull();
+    expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/" })])).toBeNull();
+    expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/FrontiersIn" })])).toBeNull();
+  });
+
+  it("names the host when the credential is missing", () => {
+    expect(mirrorCredentialFailure([])).toContain(MISSING_MIRROR_CREDENTIAL);
+    expect(MISSING_MIRROR_CREDENTIAL).toBe("add a host credential for nuget.pkg.github.com");
+  });
+
+  it("fails a path prefix of another owner and a credential of another kind", () => {
+    expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/acme/" })])).toContain("path prefix /acme/");
+    expect(mirrorCredentialFailure([mirrorCredential({ kind: "registry", headerName: null, pathPrefix: null })])).toContain("registry credential");
+  });
+
+  it("reads the owner of a GitHub Packages URL", () => {
+    expect(githubPackagesOwnerOf("https://nuget.pkg.github.com/acme/index.json")).toBe("acme");
+    expect(githubPackagesOwnerOf("https://api.nuget.org/v3/index.json")).toBeNull();
+  });
+});
+
+describe("mirror statuses", () => {
+  it("maps 404, 401, 403, a timeout and a block", () => {
+    expect(mirrorStatusOf({ exitCode: 0, timedOut: false, httpCode: 404 })).toBe("not_found");
+    expect(mirrorStatusOf({ exitCode: 0, timedOut: false, httpCode: 401 })).toBe("unauthorized");
+    expect(mirrorStatusOf({ exitCode: 0, timedOut: false, httpCode: 403 })).toBe("unauthorized");
+    expect(mirrorStatusOf({ exitCode: 28, timedOut: true, httpCode: 0 })).toBe("unreachable");
+    expect(mirrorStatusOf({ exitCode: 56, timedOut: false, httpCode: 0 })).toBe("unreachable");
+    expect(mirrorStatusOf({ exitCode: 0, timedOut: false, httpCode: 302 })).toBe("mirrored");
+  });
+
+  it("says a 404 is a missing package or a token that cannot read it, with both fixes", () => {
+    const text = mirrorStatusText("not_found");
+    expect(text).toContain("not on the mirror, or the token cannot read it");
+    expect(text).toContain("https://github.com/orgs/frontiersin/packages");
+    expect(text).toContain("read:packages");
+    expect(mirrorStatusText("unauthorized")).toContain("credential");
+    expect(mirrorStatusText("unreachable")).toContain("feed unreachable");
+  });
+});
+
+describe("renderNugetConfig", () => {
+  const sourcesOf = (text: string): string[][] =>
+    descendantsNamed(descendantsNamed(parseXml(text), "packageSources")[0]!, "add").map((entry) => [attributeOf(entry, "key") ?? "", attributeOf(entry, "value") ?? ""]);
+  const mappingOf = (text: string): Record<string, string[]> =>
+    Object.fromEntries(descendantsNamed(parseXml(text), "packageSource").map((entry) => [attributeOf(entry, "key") ?? "", descendantsNamed(entry, "package").map((item) => attributeOf(item, "pattern") ?? "")]));
+
+  it("replaces only the private feed, under its key, keeps clear and maps each private id", () => {
+    const configs = [parseNugetConfig("NuGet.config", PRIVATE_FEED_CONFIG)];
+    const text = renderNugetConfig(configs, classifyNugetFeeds(configs, NO_COVERAGE), ["Frontiers.Core", "Hangfire.Pro"]);
+    expect(text).toContain("<clear />");
+    expect(sourcesOf(text)).toEqual([
+      ["nuget.org", "https://api.nuget.org/v3/index.json"],
+      ["frontiers", "https://nuget.pkg.github.com/frontiersin/index.json"],
+    ]);
+    expect(mappingOf(text)).toEqual({ "nuget.org": ["*"], frontiers: ["Frontiers.Core", "Hangfire.Pro"] });
+    expect(text).not.toContain(NUGET_FEED_MAPPING.from + "/nuget");
+  });
+
+  it("writes no clear when the repository had none, keeps every public source and adds nuget.org when absent", () => {
+    const configs = [
+      parseNugetConfig(
+        "NuGet.config",
+        `<configuration><packageSources>
+          <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+          <add key="covered" value="https://private.covered.example/v3/index.json" />
+        </packageSources></configuration>`,
+      ),
+    ];
+    const text = renderNugetConfig(configs, classifyNugetFeeds(configs, { credentialHosts: ["private.covered.example"], allowedDomains: [] }), ["Frontiers.Core"]);
+    expect(text).not.toContain("<clear />");
+    expect(sourcesOf(text).map(([key]) => key)).toEqual(["frontiers", "covered", "nuget.org"]);
+    expect(mappingOf(text)).toEqual({ frontiers: ["Frontiers.Core"], covered: ["*"], "nuget.org": ["*"] });
+  });
+
+  it("drops the private feed and writes no mapping when no package needs the mirror", () => {
+    const configs = [parseNugetConfig("NuGet.config", PRIVATE_FEED_CONFIG)];
+    const text = renderNugetConfig(configs, classifyNugetFeeds(configs, NO_COVERAGE), []);
+    expect(sourcesOf(text)).toEqual([["nuget.org", "https://api.nuget.org/v3/index.json"]]);
+    expect(text).not.toContain("packageSourceMapping");
+  });
+});
+
+describe("restore output", () => {
+  it("reads NU1101 and NU1102 with the project and the lowest version", () => {
+    const output = [
+      "/repo/src/Api/Api.csproj : error NU1101: Unable to find package Frontiers.Transitive. No packages exist with this id in source(s): nuget.org, frontiers [/repo/App.sln]",
+      "/repo/src/Api/Api.csproj : error NU1102: Unable to find package Hangfire.Pro with version (>= 1.8.6)",
+      "  - Found 3 version(s) in frontiers [ Nearest version: 1.8.5 ]",
+      "/repo/src/Web/Web.csproj : error NU1101: Unable to find package Frontiers.Transitive. No packages exist with this id",
+    ].join("\n");
+    expect(restoreFailuresOf(output)).toEqual([
+      { id: "Frontiers.Transitive", code: "NU1101", version: null, project: "/repo/src/Api/Api.csproj" },
+      { id: "Hangfire.Pro", code: "NU1102", version: "1.8.6", project: "/repo/src/Api/Api.csproj" },
+    ]);
+  });
+
+  it("names the parent chain from project.assets.json, direct reference first", () => {
+    const assets = JSON.stringify({
+      targets: {
+        "net8.0": {
+          "Frontiers.Core/3.1.0": { dependencies: { "Frontiers.Http": "2.0.0" } },
+          "Frontiers.Http/2.0.0": { dependencies: { "Frontiers.Transitive": "1.0.0" } },
+        },
+      },
+      project: { frameworks: { "net8.0": { dependencies: { "Frontiers.Core": {} } } } },
+    });
+    expect(parentChainOf(assets, "Frontiers.Transitive")).toEqual(["Frontiers.Core 3.1.0", "Frontiers.Http 2.0.0"]);
+    expect(parentChainOf("not json", "x")).toBeNull();
+  });
+
+  it("reads the lowest version the parents ask for, normalised, since NU1101 names none", () => {
+    const assets = JSON.stringify({
+      targets: {
+        "net8.0": { "Hangfire.Pro.Redis/2.8.20": { dependencies: { "Hangfire.Pro": "[2.3.2.0, )" } } },
+        "net6.0": { "Hangfire.Pro.Redis/2.8.20": { dependencies: { "hangfire.pro": "2.4.0" } } },
+      },
+    });
+    expect(requestedVersionOf(assets, "Hangfire.Pro")).toBe("2.3.2");
+    expect(requestedVersionOf(assets, "Frontiers.Other")).toBeNull();
+    expect(requestedVersionOf("not json", "x")).toBeNull();
+  });
+});

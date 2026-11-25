@@ -3,7 +3,10 @@ import { createSetupActivities, type SetupActivityDependencies } from "~/activit
 import type { RepositorySetupRecord, RepositorySetupStore } from "~/domain/setup/repository-setup.js";
 import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
+import type { NewRunEvent } from "~/domain/diagnostics/run-event.js";
+import type { HostCredential } from "~/domain/products/host-credentials.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
+import { installNugetWorld, mirrorCredential, PRIVATE_FEED_CONFIG, project, type NugetWorld } from "../support/fake-nuget.js";
 
 const setupRow: RepositorySetupRecord = {
   id: "setup-1",
@@ -37,6 +40,9 @@ interface World {
   testSecrets?: string[];
   /** The session result over a finished session. */
   result?: { completed: boolean; outcome: string; summary: string };
+  /** docs/specs/nuget-private-feed-mapping.md. The NuGet world the sandbox answers. */
+  nuget?: NugetWorld;
+  credentials?: HostCredential[];
 }
 
 const build = (status: string, world: World = {}) => {
@@ -47,6 +53,13 @@ const build = (status: string, world: World = {}) => {
     if (command.file === "git" && command.args.includes("rev-parse")) return { exitCode: 0, stdout: `${"a".repeat(40)}\n`, stderr: "" };
     return { exitCode: 0, stdout: "", stderr: "" };
   };
+  if (world.nuget !== undefined) {
+    const base = sandbox.onExec;
+    installNugetWorld(sandbox, world.nuget, "/workspace/primary", (command) => base(command));
+  }
+  const credentials = world.credentials ?? [];
+  const credentialHosts = credentials.flatMap((credential) => [credential.host, ...credential.redirectHosts]);
+  const events: NewRunEvent[] = [];
   const updates: Array<Partial<RepositorySetupRecord>> = [];
   const setups: RepositorySetupStore = {
     create: () => Promise.reject(new Error("unused")),
@@ -72,7 +85,7 @@ const build = (status: string, world: World = {}) => {
         run: (input: { role: string; prompt: string }) => {
           runs.push(input.role);
           prompts.push(input.prompt);
-          return Promise.resolve({ completed: true, summary: "", exitCode: 0, outcome: "finished", usage: null, model: null, effort: null, session: { sessionId: "s", processId: "p" }, ...world.result });
+          return Promise.resolve({ completed: true, summary: "", exitCode: 0, outcome: "finished", usage: null, model: null, effort: null, failureLog: null, session: { sessionId: "s", processId: "p" }, ...world.result });
         },
       }),
     },
@@ -87,6 +100,24 @@ const build = (status: string, world: World = {}) => {
       headSha: () => Promise.resolve("b".repeat(40)),
       readFile: (_fullName: string, path: string) => Promise.resolve(world.files?.[path] ?? null),
     },
+    hostCredentials: () =>
+      Promise.resolve({
+        credentials,
+        hosts: credentialHosts,
+        bindings: credentials.map((credential) => ({ name: credential.host, host: credential.host, header: "Authorization", value: "Basic c2VjcmV0", methods: ["GET", "HEAD"] })),
+        refreshes: false,
+      }),
+    credentialHosts: () => Promise.resolve(credentialHosts),
+    events: {
+      store: {
+        record: (event: NewRunEvent) => {
+          events.push(event);
+          return Promise.resolve();
+        },
+      },
+      redactor: new Redactor(),
+      logger: createLogger({ level: "error", redactor: new Redactor() }),
+    },
     browser: { name: "unused" },
     previewProbe: () => Promise.resolve(null),
     pullRequests: () => ({}),
@@ -97,12 +128,16 @@ const build = (status: string, world: World = {}) => {
   } as unknown as SetupActivityDependencies;
   const activities = createSetupActivities(dependencies);
   /** The workflow's order: the inputs and the key, then the session when the setup does not skip. */
+  const ready = async () => {
+    const read = await activities.prepareSetup({ setupId: "setup-1", temporalRunId: "run-1" });
+    return read.kind === "precheck" ? activities.precheckNugetFeeds({ setupId: "setup-1", prepared: read }) : read;
+  };
   const session = async () => {
-    const prepared = await activities.prepareSetup({ setupId: "setup-1", temporalRunId: "run-1" });
+    const prepared = await ready();
     if (prepared.kind !== "run") throw new Error(`the setup did not run: ${prepared.kind}`);
     return activities.runSetupSession({ setupId: "setup-1", prepared });
   };
-  return { activities, session, sandbox, updates, runs, prompts };
+  return { activities, ready, session, sandbox, updates, runs, prompts, events };
 };
 
 describe("runSetupSession (repository-setup-and-services.md)", () => {
@@ -323,3 +358,112 @@ describe("prepareSetup (docs/specs/setup-speed-and-history.md)", () => {
   });
 });
 
+
+describe("precheckNugetFeeds (docs/specs/nuget-private-feed-mapping.md)", () => {
+  const repository = (references: Record<string, string>, config = PRIVATE_FEED_CONFIG): Record<string, string> => ({ "NuGet.config": config, "src/Api/Api.csproj": project(references) });
+  const nugetWorld = (references: Record<string, string>, patch: Partial<NugetWorld> = {}, config = PRIVATE_FEED_CONFIG): World => ({
+    files: { "NuGet.config": config },
+    nuget: { files: repository(references, config), mirror: { "frontiers.core": ["3.1.0"] }, ...patch },
+    credentials: [mirrorCredential()],
+  });
+
+  it("starts no pre-check for a repository whose feeds every sandbox reaches", async () => {
+    const { activities } = build("", { files: { "NuGet.config": '<configuration><packageSources><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>' } });
+    expect((await activities.prepareSetup({ setupId: "setup-1", temporalRunId: "run-1" })).kind).toBe("run");
+  });
+
+  it("waits for the pre-check, before the key, when the repository names the private feed", async () => {
+    const { activities, updates } = build("", nugetWorld({ "Frontiers.Core": "3.1.0" }));
+    expect((await activities.prepareSetup({ setupId: "setup-1", temporalRunId: "run-1" })).kind).toBe("precheck");
+    expect(updates.some((update) => update.inputKey !== undefined)).toBe(false);
+  });
+
+  it("gives the session the file it wrote, says so in the prompt, and writes it again after the session", async () => {
+    const { session, sandbox, prompts, runs } = build("?? .factoree/config.yaml\0?? .factoree/nuget.config\0", nugetWorld({ "Frontiers.Core": "3.1.0" }));
+    const written: string[] = [];
+    const write = sandbox.writeFile.bind(sandbox);
+    sandbox.writeFile = (ref, path, content) => {
+      if (path.endsWith("/.factoree/nuget.config")) written.push(prompts.length === 0 ? "before" : "after");
+      return write(ref, path, content);
+    };
+    const outcome = await session();
+    expect(runs).toEqual(["setup"]);
+    expect(prompts[0]).toContain("## Private NuGet feed");
+    expect(prompts[0]).toContain("dotnet restore --configfile .factoree/nuget.config");
+    expect(prompts[0]).toContain("Frontiers.Core");
+    const config = sandbox.files.get("/workspace/primary/.factoree/nuget.config");
+    expect(config).toContain('<package pattern="Frontiers.Core" />');
+    // The pre-check writes it in its own sandbox, the session gets it, and Factoree writes it over any agent change.
+    expect(written).toEqual(["before", "before", "after"]);
+    expect(outcome.kind === "proposed" ? outcome.nuget?.outcome : outcome.kind).toBe("passed");
+    expect(sandbox.destroyed.length).toBe(2);
+  });
+
+  it("fails the setup on a package the mirror lacks, with no session, a run event and the report", async () => {
+    const { ready, runs, updates, events, sandbox } = build("", nugetWorld({ "Frontiers.Core": "3.1.0", "Frontiers.Missing": "2.0.0" }));
+    const outcome = await ready();
+    expect(outcome.kind).toBe("failed");
+    expect(outcome.kind === "failed" ? outcome.reason : "").toContain("mirror these packages to https://github.com/orgs/frontiersin/packages");
+    expect(runs).toEqual([]);
+    expect(sandbox.destroyed.length).toBe(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: "command_failed", stage: "setup", detail: { step: "setup_precheck:nuget" } });
+    const stored = updates.find((update) => update.report !== undefined)!;
+    expect(stored.inputKey).toBeTypeOf("string");
+    expect(stored.report).toMatchObject({ appChanges: [], nuget: { outcome: "failed" } });
+    expect(stored.report?.nuget?.packages.find((entry) => entry.id === "Frontiers.Missing")).toMatchObject({ status: "not_found", projects: ["src/Api/Api.csproj"] });
+  });
+
+  it("names the host of a missing credential", async () => {
+    const { ready, runs } = build("", { ...nugetWorld({ "Frontiers.Core": "3.1.0" }), credentials: [] });
+    const outcome = await ready();
+    expect(outcome.kind === "failed" ? outcome.reason : "").toContain("add a host credential for nuget.pkg.github.com");
+    expect(runs).toEqual([]);
+  });
+
+  it("fails an unsupported second private feed without a session", async () => {
+    const config = PRIVATE_FEED_CONFIG.replace("</packageSources>", '  <add key="other" value="https://myget.example/F/x/api/v3/index.json" />\n  </packageSources>');
+    const { ready, runs } = build("", nugetWorld({ "Frontiers.Core": "3.1.0" }, {}, config));
+    const outcome = await ready();
+    expect(outcome.kind === "failed" ? outcome.reason : "").toContain("unsupported private feed `myget.example`");
+    expect(runs).toEqual([]);
+  });
+
+  it("passes a private feed no package uses, with no credential", async () => {
+    const world = nugetWorld({ Serilog: "3.1.1" }, { nugetOrg: { serilog: { versions: ["3.1.1"] } } });
+    const { ready } = build("", { ...world, credentials: [] });
+    const outcome = await ready();
+    expect(outcome.kind).toBe("run");
+    expect(outcome.kind === "run" ? outcome.nuget?.credential : null).toBe("not_needed");
+  });
+
+  it("never skips a setup after a failed pre-check, and skips after a passed one with the same key", async () => {
+    const failing = nugetWorld({ "Frontiers.Missing": "2.0.0" });
+    const first = build("", failing);
+    await first.ready();
+    const failedKey = first.updates.find((update) => update.inputKey !== undefined)!.inputKey!;
+    const again = build("", { ...failing, latest: { ...setupRow, id: "setup-0", status: "failed", endedAt: new Date(0), inputKey: failedKey } });
+    expect((await again.ready()).kind).toBe("failed");
+    expect(again.events).toHaveLength(1);
+
+    const passing = nugetWorld({ "Frontiers.Core": "3.1.0" });
+    const ran = build("", passing);
+    await ran.ready();
+    const passedKey = ran.updates.find((update) => update.inputKey !== undefined)!.inputKey!;
+    const report = { parts: [], observedHosts: [], deniedHosts: [], egressRecorded: true, fakes: [], appChanges: [] };
+    const skipped = build("", { ...passing, latest: { ...setupRow, id: "setup-0", status: "unchanged", endedAt: new Date(0), inputKey: passedKey, report } });
+    expect((await skipped.ready()).kind).toBe("skipped");
+    expect(skipped.runs).toEqual([]);
+  });
+
+  it("changes the key when the mirror answer changes", async () => {
+    const keyOf = async (world: World): Promise<string> => {
+      const built = build("", world);
+      await built.ready();
+      return built.updates.find((update) => update.inputKey !== undefined)!.inputKey!;
+    };
+    const one = await keyOf(nugetWorld({ "Frontiers.Core": "3.1.0" }));
+    const two = await keyOf(nugetWorld({ "Frontiers.Core": "3.1.0" }, { mirror: {} }));
+    expect(one).not.toBe(two);
+  });
+});

@@ -359,6 +359,7 @@ export const HEARTBEAT_ACTIVITIES = [
   "prepareSandbox",
   "prepareCheckSandbox",
   "verify",
+  "precheckNugetFeeds",
   "runSetupSession",
   "proveAndPublishSetup",
 ] as const;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseFactoreeConfig } from "~/domain/products/factoree-config.js";
+import type { NugetPrecheckReport } from "~/domain/setup/nuget-precheck.js";
 import { failureExcerpt, parseLeftOutStacks, provenConfigOf, renderSetupReport, withPreviewDependents, type SetupPartResult } from "~/domain/setup/setup-report.js";
 
 const PROPOSAL = `version: 1
@@ -119,5 +120,48 @@ describe("failureExcerpt", () => {
 
   it("keeps a short log whole", () => {
     expect(failureExcerpt("error: one\ntwo")).toBe("error: one\ntwo");
+  });
+});
+
+describe("renderSetupReport, the NuGet pre-check (nuget-private-feed-mapping.md)", () => {
+  const nuget: NugetPrecheckReport = {
+    outcome: "passed",
+    feeds: [
+      { key: "nuget.org", url: "https://api.nuget.org/v3/index.json", kind: "public", file: "NuGet.config" },
+      { key: "frontiers", url: "https://nuget.frontiersin.net/nuget", kind: "mapped", file: "NuGet.config" },
+    ],
+    credential: "present",
+    publicPackages: 12,
+    packages: [
+      { id: "Frontiers.Core", version: "3.1.0", projects: ["src/Api/Api.csproj"], status: "mirrored", detail: "on the mirror, and its download reads" },
+      { id: "Frontiers.Transitive", version: "1.0.0", projects: ["src/Api/Api.csproj"], parents: ["Frontiers.Core 3.1.0"], status: "mirrored", detail: "found by the restore, and on the mirror" },
+    ],
+    configPath: ".factoree/nuget.config",
+    mirroredIds: ["Frontiers.Core", "Frontiers.Transitive"],
+    restore: { outcome: "passed", rounds: 2, detail: null },
+    failure: null,
+  };
+  const base = { parts: [{ kind: "bootstrap" as const, name: "bootstrap", passed: true, reason: null }], observedHosts: [], deniedHosts: [], egressRecorded: true, fakes: [], appChanges: [] };
+
+  it("names the file, the mapped ids, the credential and each private package with its evidence", () => {
+    const text = renderSetupReport({ ...base, nuget });
+    expect(text).toContain("### NuGet feeds");
+    expect(text).toContain("Factoree wrote `.factoree/nuget.config`: it replaces `nuget.frontiersin.net` with `nuget.pkg.github.com/frontiersin` and maps `Frontiers.Core`, `Frontiers.Transitive` to it");
+    expect(text).toContain("nuget.org has 12 of the referenced packages");
+    expect(text).toContain("The host credential for nuget.pkg.github.com is present.");
+    expect(text).toContain("- `Frontiers.Transitive` 1.0.0 (src/Api/Api.csproj, through Frontiers.Core 3.1.0): found by the restore, and on the mirror");
+    expect(text).toContain("Factoree proved every part");
+  });
+
+  it("renders only the pre-check evidence when it failed, and never the parts of the setup before it", () => {
+    const failure = "The NuGet pre-check failed: 1 of 1 private packages do not read from nuget.pkg.github.com/frontiersin.\n- Frontiers.Missing 2.0.0 (src/Api/Api.csproj): not on the mirror, or the token cannot read it.";
+    const text = renderSetupReport({
+      ...base,
+      nuget: { ...nuget, outcome: "failed", configPath: null, mirroredIds: [], restore: { outcome: "not_run", rounds: 0, detail: null }, failure, packages: [{ id: "Frontiers.Missing", version: "2.0.0", projects: ["src/Api/Api.csproj"], status: "not_found", detail: "not on the mirror" }] },
+    });
+    expect(text).toContain("The NuGet pre-check failed, so Factoree started no setup agent and proved nothing.");
+    expect(text).toContain("- Frontiers.Missing 2.0.0 (src/Api/Api.csproj): not on the mirror, or the token cannot read it.");
+    expect(text).not.toContain("Factoree proved");
+    expect(text).not.toContain("bootstrap");
   });
 });

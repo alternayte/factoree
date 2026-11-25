@@ -1,5 +1,7 @@
 import { isMap, isSeq, parseDocument } from "yaml";
 import type { DerivedHost } from "./derived-hosts.js";
+import { NUGET_FEED_MAPPING, NUGET_MIRROR_HOST } from "./nuget-feeds.js";
+import type { NugetPrecheckReport } from "./nuget-precheck.js";
 
 /**
  * docs/specs/repository-setup-and-services.md. One part of a proposed `.factoree/config.yaml` that
@@ -70,6 +72,11 @@ export interface SetupReport {
    * the memory and the disk the guest had, in MB. Absent when no sampler ran.
    */
   resources?: { peakMemoryMb: number; peakDiskMb: number; memoryMb: number; diskMb: number };
+  /**
+   * docs/specs/nuget-private-feed-mapping.md. The NuGet pre-check with its per-package evidence.
+   * Absent when the repository needed none, and in a report made before it existed.
+   */
+  nuget?: NugetPrecheckReport;
 }
 
 /** Why a part that depends on another part did not run. */
@@ -188,9 +195,53 @@ export const withSources = (parts: readonly SetupPartResult[], sources: Readonly
     return source === undefined ? part : { ...part, source };
   });
 
+const CREDENTIAL_TEXT: Record<NugetPrecheckReport["credential"], string> = {
+  present: "present",
+  missing: "missing",
+  invalid: "not usable",
+  not_needed: "not needed, because no package needs the mirror",
+};
+
+/** docs/specs/nuget-private-feed-mapping.md. The NuGet pre-check, with each package that is not public. */
+const renderNugetPrecheck = (nuget: NugetPrecheckReport): string[] => {
+  const lines = ["### NuGet feeds", ""];
+  if (nuget.outcome === "failed" && nuget.failure !== null) lines.push(...nuget.failure.split("\n"), "");
+  if (nuget.configPath !== null) {
+    const mapped = nuget.mirroredIds.length === 0
+      ? `leaves out \`${NUGET_FEED_MAPPING.from}\`, which serves no package of this repository`
+      : `replaces \`${NUGET_FEED_MAPPING.from}\` with \`${NUGET_FEED_MAPPING.to}\` and maps ${nuget.mirroredIds.map((id) => `\`${id}\``).join(", ")} to it`;
+    lines.push(`Factoree wrote \`${nuget.configPath}\`: it ${mapped}, and keeps every other source. Restore with \`dotnet restore --configfile ${nuget.configPath}\`.`, "");
+  }
+  lines.push(
+    `Sources: ${nuget.feeds.length === 0 ? "none" : nuget.feeds.map((feed) => `\`${feed.key}\` (${feed.kind}, from \`${feed.file}\`)`).join(", ")}.`,
+    `nuget.org has ${String(nuget.publicPackages)} of the referenced packages, listed, at the exact version.`,
+    `The host credential for ${NUGET_MIRROR_HOST} is ${CREDENTIAL_TEXT[nuget.credential]}.`,
+  );
+  if (nuget.restore.outcome === "passed") lines.push(`\`dotnet restore\` with the file passed after ${String(nuget.restore.rounds)} round${nuget.restore.rounds === 1 ? "" : "s"}.`);
+  if (nuget.restore.outcome === "not_run" && nuget.restore.detail !== null) lines.push(nuget.restore.detail);
+  if (nuget.restore.outcome === "failed") lines.push(`\`dotnet restore\` with the file failed in round ${String(nuget.restore.rounds)}.`);
+  lines.push("");
+  if (nuget.packages.length > 0) {
+    for (const entry of nuget.packages) {
+      const where = [...entry.projects, ...(entry.parents === undefined || entry.parents.length === 0 ? [] : [`through ${entry.parents.join(" > ")}`])].join(", ");
+      lines.push(`- \`${entry.id}\` ${entry.version}${where === "" ? "" : ` (${where})`}: ${entry.detail}`);
+    }
+    lines.push("");
+  }
+  if (nuget.restore.detail !== null && nuget.restore.outcome === "failed") {
+    lines.push("```", ...nuget.restore.detail.split("\n"), "```", "");
+  }
+  return lines;
+};
+
 /** The pull request body and the report the product page shows. */
 export const renderSetupReport = (report: SetupReport): string => {
   const lines: string[] = ["## Factoree setup", ""];
+  // docs/specs/nuget-private-feed-mapping.md. A failed pre-check started no session, so only its evidence is the report.
+  if (report.nuget?.outcome === "failed") {
+    lines.push("The NuGet pre-check failed, so Factoree started no setup agent and proved nothing.", "", ...renderNugetPrecheck(report.nuget));
+    return `${lines.join("\n").trimEnd()}\n`;
+  }
   const passed = report.parts.filter((part) => part.passed);
   const failed = report.parts.filter((part) => !part.passed);
   lines.push(
@@ -258,6 +309,7 @@ export const renderSetupReport = (report: SetupReport): string => {
       "",
     );
   }
+  if (report.nuget !== undefined) lines.push(...renderNugetPrecheck(report.nuget));
   if ((report.derivedHosts ?? []).length > 0) {
     lines.push(
       "### Hosts the repository names",

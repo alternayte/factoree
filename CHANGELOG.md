@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A .NET repository whose `NuGet.config` names the private feed `nuget.frontiersin.net` now sets up with no change to the repository. Before the setup agent starts, a NuGet pre-check runs in a sandbox. It drops the packages that nuget.org lists at the exact version, checks the `nuget.pkg.github.com` host credential, and looks each private package up on the GitHub Packages mirror `nuget.pkg.github.com/frontiersin`, the index and then the download. It then writes `.factoree/nuget.config` with `packageSourceMapping`, and restores with it for at most 5 rounds to find each transitive private package (docs/specs/nuget-private-feed-mapping.md, DI-21.221 to DI-21.232).
+- A missing package, a missing or wrong credential, or another private feed fails the setup before any agent session, with no app-change issue. The setup report and the `setup_precheck:nuget` run event name each package, the file that references it, its parent chain and the fix: mirror it to https://github.com/orgs/frontiersin/packages, or fix the credential (DI-21.229).
+
+### Changed
+
+- The setup prompt is `setup@18`: it gives the agent `.factoree/nuget.config`, restores with `--configfile` in the bootstrap, and passes `--no-restore` to later dotnet commands. The implementer prompt is `implementer/14`, with the same rule. A setup whose previous setup failed in the NuGet pre-check always runs, and the pre-check outcome is part of the setup input key (DI-21.222, DI-21.230).
+
 ## [0.22.0] - 2026-11-25
 
 ### Added

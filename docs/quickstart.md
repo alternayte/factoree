@@ -392,6 +392,18 @@ A repository names the source in its `nuget.config` or `.npmrc` and holds no
 credential entry. An unset `${NODE_AUTH_TOKEN}` or `%NUGET_AUTH_TOKEN%` stays
 as literal text, the client sends it, and the bound header replaces it.
 
+A .NET repository whose `NuGet.config` names `nuget.frontiersin.net` needs no
+change: setup maps that feed to the GitHub Packages mirror
+`nuget.pkg.github.com/frontiersin` and writes `.factoree/nuget.config`
+(`docs/specs/nuget-private-feed-mapping.md`). Add the `nuget.pkg.github.com`
+credential from the table above, with the path `/frontiersin/` or no path.
+Before the setup agent starts, Factoree looks up each private package on the
+mirror. When one is missing, the setup fails and its report names the
+package, the project that references it and the fix: mirror the package to
+https://github.com/orgs/frontiersin/packages, or give the token
+`read:packages`, single sign-on and access to the package. GitHub answers 404
+for both. Any other private NuGet feed fails the setup.
+
 For private git dependencies, such as Go modules or `git+https` npm packages,
 add GitHub git access and list the `owner/name` repositories. Factoree mints a
 read-only GitHub App token for them and the Product's own repositories, binds

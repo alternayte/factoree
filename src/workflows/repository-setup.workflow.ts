@@ -56,7 +56,11 @@ export const repositorySetupWorkflow = async (input: { setupId: string }): Promi
   try {
     // docs/specs/setup-speed-and-history.md. The inputs and the setup input key come first. A
     // setup whose inputs match the last unchanged setup ends there, with no sandbox.
-    const prepared = await record.prepareSetup({ setupId: input.setupId, temporalRunId: workflowInfo().runId });
+    const read = await record.prepareSetup({ setupId: input.setupId, temporalRunId: workflowInfo().runId });
+    // docs/specs/nuget-private-feed-mapping.md, DI-21.222. A NuGet feed that needs the pre-check
+    // gets it in a sandbox before any session, and the pre-check decides the key and the skip. A
+    // history recorded before it holds no `precheck` result, so it replays down the old path.
+    const prepared = read.kind === "precheck" ? await withSlot(() => activities.precheckNugetFeeds({ setupId: input.setupId, prepared: read })) : read;
     if (prepared.kind === "skipped") return;
     if (prepared.kind === "failed") {
       await record.finishSetup({ setupId: input.setupId, status: "failed", pullRequestUrl: null, failureMessage: prepared.reason });

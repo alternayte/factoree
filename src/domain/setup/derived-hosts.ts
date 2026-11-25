@@ -1,6 +1,7 @@
 import { credentialHostsOf, type HostCredential } from "~/domain/products/host-credentials.js";
 import { allowListCovers } from "~/domain/runs/sandbox.js";
 import { ECOSYSTEM_HOSTS } from "./ecosystem-hosts.js";
+import { NUGET_FEED_MAPPING } from "./nuget-feeds.js";
 
 /**
  * docs/specs/private-stack-onboarding.md. A derived host: a host that the committed files of a
@@ -394,6 +395,8 @@ export const uncoveredDerivedHosts = (derived: readonly DerivedHost[], coverage:
       return entry.repository !== undefined && !repositories.has(entry.repository.toLowerCase());
     }
     if (entry.host === "github.com") return false;
+    // docs/specs/nuget-private-feed-mapping.md. The setup maps this feed to its mirror, and no sandbox reaches it.
+    if (entry.host === NUGET_FEED_MAPPING.from) return false;
     if (ECOSYSTEM_HOSTS.includes(entry.host)) return false;
     if (coverage.credentialHosts.some((host) => host.toLowerCase() === entry.host)) return false;
     return !allowListCovers(coverage.allowedDomains, entry.host);

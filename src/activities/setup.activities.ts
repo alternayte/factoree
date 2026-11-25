@@ -27,6 +27,8 @@ import { bootstrapAllowListOf, toProjectRuntimeConfig } from "~/domain/runs/proj
 import { allowListCovers, narrowAllowList, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
 import { BOOTSTRAP_TIMEOUT_MS, bootstrapScript } from "~/domain/runs/sandbox-manager.js";
 import { readDerivedHosts, uncoveredDerivedHosts, type DerivedHostCoverage } from "~/domain/setup/derived-hosts.js";
+import { classifyNugetFeeds, FACTOREE_NUGET_CONFIG, needsNugetPrecheck, readNugetConfigFiles } from "~/domain/setup/nuget-feeds.js";
+import { nugetPrecheckKeyOf, nugetPromptFactsOf, runNugetPrecheck, type NugetPrecheckReport, type NugetPrecheckResult } from "~/domain/setup/nuget-precheck.js";
 import { dockerLogSize, dockerPullFailures, ensureDocker, listFakes, seedServices, startServices } from "~/domain/runs/services.js";
 import { runVerification } from "~/domain/runs/verification.js";
 import { alreadyRequested, type AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
@@ -110,19 +112,44 @@ export interface SetupActivityDependencies {
 /** docs/specs/setup-speed-and-history.md. The prompt fields that hold no sandbox path. */
 export type SetupPromptInputs = Omit<SetupPromptFields, "primaryRepositoryPath" | "appChangesPath" | "sourcesPath" | "leftOutPath">;
 
-/** docs/specs/setup-speed-and-history.md. What a setup does after its inputs are read. */
+/**
+ * docs/specs/setup-speed-and-history.md. What a setup does after its inputs are read.
+ * docs/specs/nuget-private-feed-mapping.md: `precheck` means a NuGet feed needs the pre-check,
+ * which decides the setup input key and the skip.
+ */
 export type PreparedSetup =
-  | { kind: "run"; defaultBranch: string; headSha: string; prompt: SetupPromptInputs }
+  | {
+      kind: "run";
+      defaultBranch: string;
+      headSha: string;
+      prompt: SetupPromptInputs;
+      /** docs/specs/nuget-private-feed-mapping.md. The pre-check, when one ran. */
+      nuget?: NugetPrecheckReport;
+      /** docs/specs/nuget-private-feed-mapping.md. The `.factoree/nuget.config` the pre-check wrote. */
+      nugetConfig?: string;
+    }
+  | { kind: "precheck"; defaultBranch: string; headSha: string; prompt: SetupPromptInputs }
   | { kind: "skipped" }
   | { kind: "failed"; reason: string };
+
+/** What a setup does once every check before its session ran. */
+export type ReadySetup = Exclude<PreparedSetup, { kind: "precheck" }>;
 
 /**
  * docs/specs/setup-speed-and-history.md. The setup input key: the SHA-256 of the head SHA and the
  * rendered setup prompt, with fixed text where the sandbox paths go.
+ * docs/specs/nuget-private-feed-mapping.md: and the outcome of the NuGet pre-check when one ran,
+ * because the mirror and the credential live outside the repository.
  */
-export const setupInputKeyOf = (headSha: string, prompt: SetupPromptInputs): string =>
+export const setupInputKeyOf = (headSha: string, prompt: SetupPromptInputs, nuget?: NugetPrecheckReport): string =>
   createHash("sha256")
-    .update(JSON.stringify({ headSha, prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: "<repository>", appChangesPath: "<app changes file>", sourcesPath: "<sources file>", leftOutPath: "<left-out file>" }) }))
+    .update(
+      JSON.stringify({
+        headSha,
+        prompt: renderSetupPrompt({ ...prompt, primaryRepositoryPath: "<repository>", appChangesPath: "<app changes file>", sourcesPath: "<sources file>", leftOutPath: "<left-out file>" }),
+        ...(nuget === undefined ? {} : { nuget: nugetPrecheckKeyOf(nuget) }),
+      }),
+    )
     .digest("hex");
 
 /** The agent session of one setup, and what it wrote. */
@@ -146,6 +173,8 @@ export type SetupSessionOutput =
       sources?: Record<string, string>;
       /** GitHub issue 82. The stacks the agent found and did not propose, as failed `stack` parts. */
       leftOut?: SetupPartResult[];
+      /** docs/specs/nuget-private-feed-mapping.md. The NuGet pre-check before the session, for the report. */
+      nuget?: NugetPrecheckReport;
     }
   | { kind: "failed"; reason: string };
 
@@ -658,6 +687,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         ...(measured === null
           ? {}
           : { resources: { peakMemoryMb: measured.memoryMb, peakDiskMb: measured.diskMb, memoryMb: measured.totalMemoryMb, diskMb: measured.totalDiskMb } }),
+        ...(session.nuget === undefined ? {} : { nuget: session.nuget }),
       };
       await dependencies.setups.update(setup.id, { report });
       if (finalPatch === null) {
@@ -704,6 +734,44 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         }, setup.githubInstallationId));
       const allPassed = finalParts.every((part) => part.passed);
       return { status: allPassed ? "proposed" : "partial", pullRequestUrl: pullRequest.url, failureMessage: null };
+  };
+
+  /**
+   * docs/specs/setup-speed-and-history.md. Stores the setup input key, and skips the session when
+   * the newest ended setup of the repository is unchanged with the same key. A setup that failed,
+   * in the NuGet pre-check or anywhere else, is never a skip source.
+   */
+  const decide = async (
+    setup: { id: string; productId: string; repositoryFullName: string; createdAt: Date },
+    defaultBranch: string,
+    headSha: string,
+    prompt: SetupPromptInputs,
+    nuget?: NugetPrecheckResult,
+  ): Promise<ReadySetup> => {
+    const inputKey = setupInputKeyOf(headSha, prompt, nuget?.report);
+    await dependencies.setups.update(setup.id, { inputKey });
+
+    const latest = await dependencies.setups.latestEnded(setup.productId, setup.repositoryFullName, setup.createdAt);
+    const source = skipSourceOf(latest, inputKey);
+    if (latest !== null && source !== null) {
+      await dependencies.setups.update(setup.id, {
+        status: "unchanged",
+        skippedFromSetupId: source,
+        ...(latest.report === null ? {} : { report: latest.report }),
+        failureMessage: null,
+        endedAt: new Date(),
+      });
+      dependencies.logger.info("the setup inputs did not change, so the setup skipped its session", { setup_id: setup.id, skipped_from: source, step: "setup_skip" });
+      return { kind: "skipped" };
+    }
+    return {
+      kind: "run",
+      defaultBranch,
+      headSha,
+      prompt,
+      ...(nuget === undefined ? {} : { nuget: nuget.report }),
+      ...(nuget?.config === null || nuget?.config === undefined ? {} : { nugetConfig: nuget.config }),
+    };
   };
 
   return {
@@ -774,23 +842,89 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         // docs/specs/sandbox-memory-and-size.md. A setup a sandbox fault started repairs that fault.
         sandboxFault: setup.sandboxFault,
       };
-      const inputKey = setupInputKeyOf(headSha, prompt);
-      await dependencies.setups.update(setup.id, { inputKey });
+      // docs/specs/nuget-private-feed-mapping.md. A NuGet feed that no sandbox reaches as it is
+      // waits for the pre-check, which reads the mirror and decides the key.
+      const nugetConfigs = await readNugetConfigFiles(files, setup.repositoryFullName, headSha, setup.githubInstallationId).catch((error: unknown) => {
+        dependencies.logger.warn("the NuGet configs were not read", { setup_id: setup.id, error: String(error) });
+        return [];
+      });
+      const nugetFeeds = classifyNugetFeeds(nugetConfigs, { credentialHosts: prompt.credentialHosts ?? [], allowedDomains: product.allowedDomains });
+      if (needsNugetPrecheck(nugetFeeds)) return { kind: "precheck", defaultBranch, headSha, prompt };
+      return await decide(setup, defaultBranch, headSha, prompt);
+    },
 
-      const latest = await dependencies.setups.latestEnded(setup.productId, setup.repositoryFullName, setup.createdAt);
-      const source = skipSourceOf(latest, inputKey);
-      if (latest !== null && source !== null) {
-        await dependencies.setups.update(setup.id, {
-          status: "unchanged",
-          skippedFromSetupId: source,
-          ...(latest.report === null ? {} : { report: latest.report }),
-          failureMessage: null,
-          endedAt: new Date(),
+    /**
+     * docs/specs/nuget-private-feed-mapping.md. The NuGet pre-check, in a sandbox before the agent
+     * session: the mirror requests run inside it, where the provider adds the credential, so no
+     * secret reaches the worker, a prompt or a file. A failure fails the whole setup with its
+     * evidence, starts no session and creates no app-change issue. A pass decides the key and the
+     * skip, and gives the session the file Factoree wrote.
+     */
+    async precheckNugetFeeds(input: { setupId: string; prepared: Extract<PreparedSetup, { kind: "precheck" }> }): Promise<ReadySetup> {
+      const { setup, product, url } = await load(input.setupId);
+      const { defaultBranch, headSha, prompt } = input.prepared;
+      const started = Date.now();
+      const token = await dependencies.tokens.tokenForInstallation(setup.githubInstallationId, { contents: "read" }, [setup.repositoryFullName]);
+      dependencies.redactor.addSecret(token);
+      const hosts = [...new Set([...hostsOf(url), ...ECOSYSTEM_HOSTS, ...product.allowedDomains])];
+      const { ref, warm, egress } = await startSessionSandbox(setup, product, url, hosts);
+      let result: NugetPrecheckResult;
+      try {
+        const primary = warm
+          ? await refreshPrimary(dependencies.sandbox, ref, { url, ref: headSha }, token)
+          : await checkoutPrimary(dependencies.sandbox, ref, { url, ref: headSha }, token);
+        result = await runNugetPrecheck({
+          sandbox: dependencies.sandbox,
+          ref,
+          repositoryPath: primary.path,
+          credentials: egress.access.credentials,
+          coverage: { credentialHosts: egress.access.hosts, allowedDomains: product.allowedDomains },
+          egressHosts: [...hosts, ...egress.access.hosts],
         });
-        dependencies.logger.info("the setup inputs did not change, so the setup skipped its session", { setup_id: setup.id, skipped_from: source, step: "setup_skip" });
-        return { kind: "skipped" };
+      } finally {
+        await dependencies.sandbox.destroy(ref).catch(() => undefined);
       }
-      return { kind: "run", defaultBranch, headSha, prompt };
+      const redact = (text: string): string => dependencies.redactor.redactText(withoutUrlCredentials(text));
+      const report: NugetPrecheckReport = {
+        ...result.report,
+        feeds: result.report.feeds.map((feed) => ({ ...feed, url: withoutUrlCredentials(feed.url) })),
+        restore: { ...result.report.restore, detail: result.report.restore.detail === null ? null : redact(result.report.restore.detail) },
+        failure: result.report.failure === null ? null : redact(result.report.failure),
+      };
+      if (report.outcome === "failed") {
+        const failure = report.failure ?? "The NuGet pre-check failed.";
+        await recordRunEvent(dependencies.events, {
+          tenantId: setup.tenantId,
+          subject: { setupId: setup.id },
+          stage: "setup",
+          attempt: 1,
+          role: null,
+          kind: "command_failed",
+          message: failure.split("\n")[0] ?? failure,
+          detail: {
+            step: "setup_precheck:nuget",
+            command: "the NuGet pre-check",
+            exitCode: null,
+            durationMs: Date.now() - started,
+            log: failure,
+            egress: "not_recorded",
+            deniedHosts: [],
+            hostHints: [],
+          },
+          idempotencyKey: `setup:${setup.id}:precheck:nuget`,
+        });
+        // DI-21.229. The report keeps the parts of the setup before it, so the next setup still
+        // names what is unproven (DI-21.18). A failed pre-check renders only its own evidence.
+        const previous = await dependencies.setups.previousWithReport(setup.productId, setup.repositoryFullName, setup.createdAt);
+        await dependencies.setups.update(setup.id, {
+          inputKey: setupInputKeyOf(headSha, prompt, report),
+          report: { parts: previous?.report?.parts ?? [], observedHosts: [], deniedHosts: [], egressRecorded: false, fakes: [], appChanges: [], nuget: report },
+        });
+        dependencies.logger.warn("the NuGet pre-check failed, so the setup starts no session", { setup_id: setup.id, step: "setup_precheck" });
+        return { kind: "failed", reason: failure };
+      }
+      const facts = nugetPromptFactsOf(report);
+      return await decide(setup, defaultBranch, headSha, facts === null ? prompt : { ...prompt, nugetFeed: facts }, { report, config: result.config });
     },
 
     /**
@@ -799,7 +933,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
      * allow list, which holds the model API. docs/specs/setup-speed-and-history.md: the sandbox
      * starts from the warm snapshot when one exists, and the prompt is the one the key holds.
      */
-    async runSetupSession(input: { setupId: string; prepared: Extract<PreparedSetup, { kind: "run" }> }): Promise<SetupSessionOutput> {
+    async runSetupSession(input: { setupId: string; prepared: Extract<ReadySetup, { kind: "run" }> }): Promise<SetupSessionOutput> {
       const { setup, product, url } = await load(input.setupId);
       const { defaultBranch, headSha, prompt } = input.prepared;
       await registerProjectSecrets(dependencies.redactor, dependencies.secrets, setup.tenantId, setup.productId, dependencies.logger);
@@ -834,6 +968,12 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           await ensureDocker(dependencies.sandbox, ref).catch((error: unknown) =>
             dependencies.logger.warn("rootless Docker did not start in the setup sandbox", { setup_id: setup.id, error: String(error) }),
           );
+        }
+        // docs/specs/nuget-private-feed-mapping.md. The file the pre-check wrote, given to the agent as it is.
+        const nugetConfig = input.prepared.nugetConfig;
+        if (nugetConfig !== undefined) {
+          await dependencies.sandbox.exec(ref, { file: "mkdir", args: ["-p", `${primary.path}/.factoree`], cwd: "/" });
+          await dependencies.sandbox.writeFile(ref, `${primary.path}/${FACTOREE_NUGET_CONFIG}`, nugetConfig);
         }
         const appChangesPath = `${ref.workspacePath}/setup-app-changes.txt`;
         const sourcesPath = `${ref.workspacePath}/setup-sources.txt`;
@@ -963,6 +1103,8 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         if (document.get("bootstrap") !== undefined) document.setIn(["bootstrap", "allowedDomains"], bootstrapHosts);
         const proposal = document.toString();
         await dependencies.sandbox.writeFile(ref, `${primary.path}/${CONFIG}`, proposal);
+        // Factoree's file wins over any change the agent made to it.
+        if (nugetConfig !== undefined) await dependencies.sandbox.writeFile(ref, `${primary.path}/${FACTOREE_NUGET_CONFIG}`, nugetConfig);
 
         const appChanges = ((await readText(dependencies.sandbox, ref, appChangesPath)) ?? "")
           .split("\n")
@@ -985,6 +1127,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           appChanges,
           warm,
           ...(leftOut.length === 0 ? {} : { leftOut }),
+          ...(input.prepared.nuget === undefined ? {} : { nuget: input.prepared.nuget }),
         };
       } finally {
         await dependencies.sandbox.destroy(ref).catch(() => undefined);

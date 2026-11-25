@@ -64,4 +64,12 @@ describe("uncoveredDerivedHosts", () => {
     const left = uncoveredDerivedHosts(derived, { allowedDomains: ["*.acme.example"], credentialHosts: ["npm.pkg.github.com"], githubRepositories: ["acme/a"] });
     expect(left.map((entry) => `${entry.host}${entry.repository === undefined ? "" : ` ${entry.repository}`}`)).toEqual(["github.com acme/b"]);
   });
+
+  it("leaves out the private NuGet feed the setup maps to its mirror (nuget-private-feed-mapping.md)", () => {
+    const derived = deriveHosts([
+      { path: "NuGet.config", text: '<configuration><packageSources><add key="f" value="https://nuget.frontiersin.net/nuget" /><add key="o" value="https://other.example/nuget" /></packageSources></configuration>' },
+    ]);
+    const left = uncoveredDerivedHosts(derived, { allowedDomains: [], credentialHosts: [], githubRepositories: [] });
+    expect(left.map((entry) => entry.host)).toEqual(["other.example"]);
+  });
 });
