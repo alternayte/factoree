@@ -1058,6 +1058,23 @@ export const createPullRequestActivities = (dependencies: PullRequestActivityDep
     }
     if (record.bringCurrentHeadSha === record.headSha) return { kind: "none", reason: "an update of this head already pushed nothing" };
     if (record.verifiedBaseSha === null || record.verifiedRunId === null) return { kind: "none", reason: "no verified base" };
+    // The event that asked for the update can carry a stale merge state. GitHub answers again here,
+    // so an update with nothing to do starts no run that ends REPORTED with nothing done.
+    const { githubInstallationId } = await store.steeringFacts(input.tenantId, record.id);
+    const live = await dependencies.autoMerge.pullRequest(record.repositoryFullName, record.number, githubInstallationId);
+    if (!live.open) return { kind: "none", reason: "the pull request is not open" };
+    if (live.headSha !== record.headSha) {
+      dependencies.logger.info("the head moved since Factoree recorded it, so Factoree does not bring it current", log);
+      return { kind: "none", reason: "the head moved" };
+    }
+    if (input.reason === "conflict" && mergeabilityOf(live) === "clean") {
+      dependencies.logger.info("GitHub reports no conflict now, so Factoree does not bring it current", log);
+      return { kind: "none", reason: "the branch does not conflict" };
+    }
+    if ((await dependencies.autoMerge.behindBy(record.repositoryFullName, record.baseBranch, record.headSha, githubInstallationId)) === 0) {
+      dependencies.logger.info("the head holds the base already, so Factoree does not bring it current", log);
+      return { kind: "none", reason: "the head holds the base already" };
+    }
     const origin = await store.originFacts(input.tenantId, record.id);
     const product = await dependencies.products.findById(input.tenantId, origin.productId);
     if (product === null) return { kind: "none", reason: "the product is gone" };

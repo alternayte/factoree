@@ -2460,6 +2460,7 @@ export type GetRunResponses = {
         | null;
     } | null;
     temporalWorkflowId: string;
+    finalResponse: string | null;
     terminal: boolean;
     stopRequestedAt: string | null;
     stopSource: string | null;

@@ -237,6 +237,16 @@ function RunDetail({
           {run.failureMessage}
         </Alert>
       ) : null}
+      {run.finalResponse ? (
+        // A REPORTED or ANSWERED run posts this text to Linear, and it is often all the run did.
+        <Section
+          title={run.status === "ANSWERED" ? "Answer" : "Report"}
+          description="The final response Factoree posted to the Linear agent session."
+          className="mb-4"
+        >
+          <div className="whitespace-pre-wrap break-words text-sm text-body">{run.finalResponse}</div>
+        </Section>
+      ) : null}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-start">
         <Section title="Run" className="lg:col-span-1">
           <KeyValue

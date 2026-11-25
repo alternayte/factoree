@@ -84,6 +84,8 @@ export const runDetailSchema = runListItemSchema.extend({
    */
   diagnosis: diagnosisSchema,
   temporalWorkflowId: z.string(),
+  /** The final response a run that ended REPORTED or ANSWERED posted to Linear, redacted, or null. */
+  finalResponse: z.string().nullable(),
   /** Issue #45. True when the status is terminal, so the run takes no stop. */
   terminal: z.boolean(),
   /** Issue #45, DI-21.65. The first stop that reached the workflow, or null. */
