@@ -439,6 +439,8 @@ export interface RestoreFailure {
   exact: boolean;
   /** The upper bound of the range, `&& < x` or `&& <= x`, when it has one. */
   maximum?: { version: string; inclusive: boolean };
+  /** The whole request: the lower id, then each bound with its operator and normalised version. Two failures with the same request are one. */
+  request: string;
   /** The project file the line names, or null. */
   project: string | null;
 }
@@ -446,24 +448,29 @@ export interface RestoreFailure {
 const RESTORE_FAILURE = /^\s*(?:(.+?)\s*:\s*)?error (NU1101|NU1102):\s*Unable to find package '?([A-Za-z0-9_.-]+)'?(?:\s+with version \(([^)]*)\))?/gim;
 
 /**
- * DI-21.228. The packages a `dotnet restore` output names as not found, once per id and version.
- * Factoree looks each one up on the mirror itself: the restore text alone proves nothing.
+ * DI-21.228. The packages a `dotnet restore` output names as not found, once per id and whole
+ * range, so a narrower range of the same id and lower bound is looked up on its own. Factoree
+ * looks each one up on the mirror itself: the restore text alone proves nothing.
  */
 export const restoreFailuresOf = (output: string): RestoreFailure[] => {
-  const byKey = new Map<string, RestoreFailure>();
+  const byRequest = new Map<string, RestoreFailure>();
   for (const match of output.matchAll(RESTORE_FAILURE)) {
     // The sentence ends with a period right after the id.
     const id = match[3]!.replace(/\.+$/, "");
     // Only `>= x` or `= x` names a lowest version. `< x`, `<= x` and `> x` name none to check.
-    const bound = /^\s*(>=|=)?\s*(\d[^\s,)\]&]*)/.exec(match[4] ?? "");
+    const lower = /^\s*(>=|>|=)?\s*(\d[^\s,)\]&]*)/.exec(match[4] ?? "");
+    const bound = lower?.[1] === ">" ? null : lower;
     const version = bound?.[2] ?? null;
-    const upper = /&&\s*(<=|<)\s*(\d[^\s,)\]&]*)/.exec(match[4] ?? "");
+    const upper = /(?:^|&&)\s*(<=|<)\s*(\d[^\s,)\]&]*)/.exec(match[4] ?? "");
     const maximum = upper === null ? {} : { maximum: { version: upper[2]!, inclusive: upper[1] === "<=" } };
     const project = match[1] === undefined ? null : match[1].trim().replace(/\s*\[.*$/, "");
-    const key = `${id.toLowerCase()}/${version ?? ""}`;
-    if (!byKey.has(key)) byKey.set(key, { id, code: match[2]!.toUpperCase() as RestoreFailure["code"], version, exact: bound?.[1] === "=", ...maximum, project: project === "" ? null : project });
+    const boundText = (operator: string, text: string): string => `${operator}${normalizeNugetVersion(text) ?? text}`;
+    const request = [id.toLowerCase(), ...(lower === null ? [] : [boundText(lower[1] ?? ">=", lower[2]!)]), ...(upper === null ? [] : [boundText(upper[1]!, upper[2]!)])].join(" ");
+    if (!byRequest.has(request)) {
+      byRequest.set(request, { id, code: match[2]!.toUpperCase() as RestoreFailure["code"], version, exact: bound?.[1] === "=", ...maximum, request, project: project === "" ? null : project });
+    }
   }
-  return [...byKey.values()];
+  return [...byRequest.values()];
 };
 
 const SERVICE_INDEX_FAILURE = /error NU1301:[^\n]*?(https?:\/\/[^\s'"]+)/gi;

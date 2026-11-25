@@ -484,7 +484,7 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
     }
     const credentialFailure = checkCredential();
     if (credentialFailure !== null) return fail(credentialFailure);
-    const fresh = failures.filter((failure) => !handled.has(`${failure.id.toLowerCase()}/${failure.version === null ? "" : (normalizeNugetVersion(failure.version) ?? "")}`));
+    const fresh = failures.filter((failure) => !handled.has(failure.request));
     if (fresh.length === 0) {
       report.restore = { outcome: "failed", rounds: round, detail: failureExcerpt(output) };
       return fail(`the restore still finds no ${failures.map((failure) => failure.id).join(", ")} with ${failures.length === 1 ? "it" : "them"} mapped to ${NUGET_FEED_MAPPING.to}.`);
@@ -492,7 +492,7 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
     let failing = 0;
     for (const failure of fresh) {
       const version = failure.version === null ? null : normalizeNugetVersion(failure.version);
-      handled.add(`${failure.id.toLowerCase()}/${version ?? ""}`);
+      handled.add(failure.request);
       const assets =
         failure.project === null
           ? null

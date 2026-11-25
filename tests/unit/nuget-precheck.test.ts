@@ -438,6 +438,25 @@ describe("runNugetPrecheck", () => {
     expect(report.packages.find((entry) => entry.id === "Frontiers.Transitive")).toMatchObject({ version: "1.0.0", status: "version_missing" });
   });
 
+  it("looks up a narrower NU1102 range of the same id and lower bound on its own", async () => {
+    const { report } = await run({
+      files: files({ "Frontiers.Core": "3.1.0" }),
+      mirror: { "frontiers.core": ["3.1.0"], "frontiers.transitive": ["3.0.0"] },
+      restore: () => ({
+        exitCode: 1,
+        output: [
+          `${PATH}/src/Api/Api.csproj : error NU1102: Unable to find package Frontiers.Transitive with version (>= 1.0.0 && < 4.0.0)`,
+          `${PATH}/src/Web/Web.csproj : error NU1102: Unable to find package Frontiers.Transitive with version (>= 1.0.0 && < 2.0.0)`,
+        ].join("\n"),
+      }),
+    });
+    expect(report.outcome).toBe("failed");
+    expect(report.packages.filter((entry) => entry.id === "Frontiers.Transitive")).toMatchObject([
+      { version: "3.0.0", status: "mirrored", projects: ["src/Api/Api.csproj"] },
+      { version: "1.0.0", status: "version_missing", projects: ["src/Web/Web.csproj"] },
+    ]);
+  });
+
   it("needs the exact version for a request NuGet pins", async () => {
     const { report } = await run({
       files: files({ "Frontiers.Core": "3.1.0" }),

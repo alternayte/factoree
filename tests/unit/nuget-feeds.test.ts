@@ -366,8 +366,22 @@ describe("restore output", () => {
       "/repo/src/Web/Web.csproj : error NU1101: Unable to find package Frontiers.Transitive. No packages exist with this id",
     ].join("\n");
     expect(restoreFailuresOf(output)).toEqual([
-      { id: "Frontiers.Transitive", code: "NU1101", version: null, exact: false, project: "/repo/src/Api/Api.csproj" },
-      { id: "Hangfire.Pro", code: "NU1102", version: "1.8.6", exact: false, project: "/repo/src/Api/Api.csproj" },
+      { id: "Frontiers.Transitive", code: "NU1101", version: null, exact: false, request: "frontiers.transitive", project: "/repo/src/Api/Api.csproj" },
+      { id: "Hangfire.Pro", code: "NU1102", version: "1.8.6", exact: false, request: "hangfire.pro >=1.8.6", project: "/repo/src/Api/Api.csproj" },
+    ]);
+  });
+
+  it("keeps two ranges of one id and lower bound that differ only in the upper bound", () => {
+    const output = [
+      "A.csproj : error NU1102: Unable to find package Lib with version (>= 1.0.0 && < 4.0.0)",
+      "B.csproj : error NU1102: Unable to find package Lib with version (>= 1.0 && < 2.0.0)",
+      "C.csproj : error NU1102: Unable to find package Lib with version (>= 1.0.0 && <= 2.0.0)",
+      "D.csproj : error NU1102: Unable to find package lib with version (>= 1.0.0 && < 2.0)",
+    ].join("\n");
+    expect(restoreFailuresOf(output).map((failure) => [failure.project, failure.maximum])).toEqual([
+      ["A.csproj", { version: "4.0.0", inclusive: false }],
+      ["B.csproj", { version: "2.0.0", inclusive: false }],
+      ["C.csproj", { version: "2.0.0", inclusive: true }],
     ]);
   });
 
