@@ -218,6 +218,11 @@ export interface ActivityDependencies {
   productPageUrl?: ((productId: string) => string) | undefined;
   /** docs/specs/run-diagnostics.md. The Run page of a run, linked from its failure post. */
   runPageUrl?: ((runId: string) => string) | undefined;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.217. Reads and writes pull request bodies, with a token
+   * per call. A worker without it leaves each pull request with its first body.
+   */
+  pullRequestBodies?: Pick<PullRequestPort, "body" | "updateBody"> | undefined;
 }
 
 /** A worker without the work item reads finds no comment, no image and no link. */
@@ -509,6 +514,8 @@ const createActivityTable = (dependencies: ActivityDependencies) => ({
     logger: dependencies.logger,
     skills: dependencies.skills,
     sandboxProviderName: dependencies.sandboxProviderName,
+    pullRequestBodies: dependencies.pullRequestBodies,
+    runPageUrl: dependencies.runPageUrl,
   }),
   ...createIssueStatusActivities({
     runs: dependencies.runs,

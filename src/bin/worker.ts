@@ -594,6 +594,8 @@ const worker = await Worker.create({
     commitStatuses: new GitHubCommitStatuses({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     productPageUrl: (productId: string) => `${env.FACTOREE_PUBLIC_URL}/products/${productId}`,
     runPageUrl: (runId: string) => `${env.FACTOREE_PUBLIC_URL.replace(/\/+$/, "")}/runs/${runId}`,
+    // docs/specs/pr-body-for-humans.md, DI-21.217. The proof pack step writes each pull request body.
+    pullRequestBodies: new GitHubPullRequests({ apiBaseUrl: githubApiBaseUrl(settings), tokens: githubTokens }),
     validationContracts,
     // docs/specs/pr-review-merge-and-deploy.md, D1. The same store holds the passing plans.
     validationPlans: validationContracts,

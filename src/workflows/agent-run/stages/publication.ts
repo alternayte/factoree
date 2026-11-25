@@ -318,11 +318,22 @@ export const publish = async (run: Run, plan: PublicationPlan): Promise<never> =
     verificationSummary: verified.verificationSummary,
     repairCount: verified.repairCount,
     githubInstallationId: primary.githubInstallationId,
+    // docs/specs/pr-body-for-humans.md, DI-21.219. The reviewer's summary and guide start the body.
+    changeDescription: verified.changeDescription,
+    whereToLook: verified.whereToLook,
   };
   // docs/specs/own-proposals-and-parallel-runs.md. A moved base branch no longer stops the Run.
   if (run.stopped) await run.cancel();
 
-  const setFacts = { draft, worktreeSha: verified.worktreeSha, verificationSummary: verified.verificationSummary, repairCount: verified.repairCount, edges: plan.edges };
+  const setFacts = {
+    draft,
+    worktreeSha: verified.worktreeSha,
+    verificationSummary: verified.verificationSummary,
+    repairCount: verified.repairCount,
+    edges: plan.edges,
+    changeDescription: verified.changeDescription,
+    whereToLook: verified.whereToLook,
+  };
   let set: SetPublication | null = null;
   let published: PublishedTarget[];
   if (changeSet) set = await publishChangeSet(run, checked, bases, setFacts);

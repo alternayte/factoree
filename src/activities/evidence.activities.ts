@@ -1,3 +1,6 @@
+import type { PullRequestPort } from "~/domain/publishing/pull-request.js";
+import { bodyFactsOfProofPack, keptPartsOf, renderOwnedBlock, repositoryUrlOf, withOwnedBlock } from "~/domain/publishing/pull-request-body.js";
+import type { ReviewGuideEntry } from "~/domain/review/review-report.js";
 import type { FactoreeDecision } from "~/domain/runs/factoree-decision.js";
 import { NOT_CHECKED_REASON } from "~/domain/runs/run-draft.js";
 import { ApplicationFailure } from "@temporalio/activity";
@@ -243,6 +246,26 @@ export interface ProofPackActivityDependencies {
   skills?: RunSkillStore | undefined;
   /** docs/specs/sandbox-provider-spillover.md. The name of a sandbox provider, or null when it is gone. */
   sandboxProviderName?: ((providerId: string) => Promise<string | null>) | undefined;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.217. Reads and writes the body of a pull request. Each
+   * call mints its own token for the one repository, on the control plane only.
+   */
+  pullRequestBodies?: Pick<PullRequestPort, "body" | "updateBody"> | undefined;
+  /** The run page, where the proof pack shows. Absent in a test that renders no link. */
+  runPageUrl?: ((runId: string) => string) | undefined;
+}
+
+/** docs/specs/pr-body-for-humans.md, DI-21.217. One pull request whose body the proof pack step writes. */
+export interface PullRequestBodyTarget {
+  repositorySlug: string;
+  pullRequestNumber: number;
+  pullRequestUrl: string;
+  githubInstallationId: string;
+  baseSha: string;
+  patchSha256: string;
+  changedFileCount: number;
+  /** The head commit, so the reading guide links its lines. */
+  commitSha: string;
 }
 
 export interface PublishProofPackActivityInput {
@@ -311,6 +334,12 @@ export interface PublishProofPackActivityInput {
   draft?: { attempt: number; reviewed: boolean };
   /** docs/specs/pr-review-merge-and-deploy.md. Present for a PR follow-up run. */
   pullRequestFollowUp?: ProofPackPullRequestFollowUp;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.217. The pull requests whose owned block this step
+   * writes, and the reviewer's guide. Absent in a history from before the human body.
+   */
+  pullRequestBodies?: PullRequestBodyTarget[];
+  whereToLook?: ReviewGuideEntry[];
 }
 
 export interface PublishProofPackActivityOutput {
@@ -345,6 +374,52 @@ const sandboxProviderOf = async (
   const providerId = (await dependencies.runs.findById(tenantId, runId))?.sandboxProviderId ?? null;
   if (providerId === null) return null;
   return (await dependencies.sandboxProviderName(providerId)) ?? providerId;
+};
+
+/**
+ * docs/specs/pr-body-for-humans.md, DI-21.217. Writes the owned block of each pull request from the
+ * proof pack input, keeping the draft warning and the change set section the publication wrote,
+ * and every line a human wrote outside the block. The proof pack is the durable record, so a body
+ * that GitHub refuses is logged and costs the run nothing: the pull request keeps its first body.
+ */
+const writePullRequestBodies = async (
+  dependencies: ProofPackActivityDependencies,
+  input: PublishProofPackActivityInput,
+  proofPackInput: ProofPackInput,
+): Promise<void> => {
+  const port = dependencies.pullRequestBodies;
+  if (port === undefined || input.pullRequestBodies === undefined) return;
+  const changeSet = input.pullRequestBodies.length > 1;
+  for (const target of input.pullRequestBodies) {
+    try {
+      const current = await port.body(target.repositorySlug, target.pullRequestNumber, target.githubInstallationId);
+      const kept = keptPartsOf(current);
+      const repositoryUrl = repositoryUrlOf(target.pullRequestUrl);
+      const facts = bodyFactsOfProofPack(proofPackInput, {
+        whereToLook: input.whereToLook ?? [],
+        linkTarget: changeSet || repositoryUrl === null ? null : { repositoryUrl, commitSha: target.commitSha },
+        proofPackUrl: dependencies.runPageUrl?.(input.runId) ?? null,
+        changedFileCount: target.changedFileCount,
+        baseSha: target.baseSha,
+        patchSha256: target.patchSha256,
+      });
+      const block = renderOwnedBlock({
+        ...facts,
+        ...(kept.draftWarning === null ? {} : { draftWarning: kept.draftWarning }),
+        ...(kept.changeSet === null ? {} : { changeSet: kept.changeSet }),
+      });
+      const next = withOwnedBlock(current, dependencies.redactor.redactText(block));
+      if (next !== current) await port.updateBody(target.repositorySlug, target.pullRequestNumber, next, target.githubInstallationId);
+    } catch (error) {
+      dependencies.logger.warn("the pull request body was not written", {
+        tenant_id: input.tenantId,
+        run_id: input.runId,
+        step: "proof_pack",
+        pull_request: `${target.repositorySlug}#${String(target.pullRequestNumber)}`,
+        error: dependencies.redactor.redactText(String(error)),
+      });
+    }
+  }
 };
 
 export const createProofPackActivities = (dependencies: ProofPackActivityDependencies) => ({
@@ -676,6 +751,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       }
     }
     await dependencies.agentSession.respond(input.sessionId, body);
+    await writePullRequestBodies(dependencies, input, proofPackInput);
 
     dependencies.logger.info("proof pack posted", {
       tenant_id: input.tenantId,

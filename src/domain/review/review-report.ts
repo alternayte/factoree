@@ -45,8 +45,25 @@ export interface ReviewReport {
    * sentences. The Proof Pack shows it, labelled as the Reviewer's description. It decides nothing.
    */
   changeDescription: string;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.219. The reading guide of the pull request body: changed
+   * files in review order, the core first and glue and tests last, each with one reason. It is a
+   * guide and never evidence, so a report without it is still valid.
+   */
+  whereToLook: ReviewGuideEntry[];
   findings: ReviewFinding[];
 }
+
+/** One entry of the reviewer's reading guide. */
+export interface ReviewGuideEntry {
+  path: string;
+  startLine: number | null;
+  endLine: number | null;
+  reason: string;
+}
+
+/** The most entries the guide holds. */
+export const MAX_GUIDE_ENTRIES = 8;
 
 export class ReviewReportInvalidError extends Error {
   constructor(message: string) {
@@ -79,6 +96,19 @@ const reportSchema = z
       .string()
       .max(MAX_CHANGE_DESCRIPTION_CHARACTERS)
       .refine((value) => value.trim() !== "", "must not be blank"),
+    whereToLook: z
+      .array(
+        z
+          .object({
+            path: nonBlank,
+            startLine: z.number().int().positive().nullable(),
+            endLine: z.number().int().positive().nullable(),
+            reason: nonBlank,
+          })
+          .strict(),
+      )
+      .max(MAX_GUIDE_ENTRIES)
+      .default([]),
     findings: z.array(findingSchema),
   })
   .strict();
@@ -95,8 +125,11 @@ const fail = (message: string): never => {
 
 /** The prompt text that describes the shape above. SDD section 41 fixes it. */
 export const REVIEW_REPORT_SCHEMA_TEXT = [
-  'The document is one JSON object: { "version": 1, "verdict": "pass" | "fail", "changeDescription": string, "findings": [...] }.',
-  `changeDescription says what the change does for a user, in two or three plain sentences and at most ${MAX_CHANGE_DESCRIPTION_CHARACTERS} characters. Name no hash and no file list.`,
+  'The document is one JSON object: { "version": 1, "verdict": "pass" | "fail", "changeDescription": string, "whereToLook": [...], "findings": [...] }.',
+  `changeDescription says what the change does for a user and why, in two or three plain sentences and at most ${MAX_CHANGE_DESCRIPTION_CHARACTERS} characters. Name no hash and no file list. A human reviewer reads it first.`,
+  `whereToLook is the reading guide for a human reviewer, at most ${String(MAX_GUIDE_ENTRIES)} entries, in the order the human should read them: the core change first, then the code that calls it, and glue code, configuration and tests last.`,
+  'Each whereToLook entry holds exactly: path (one changed file), startLine and endLine (the lines that matter in the new file, or null for the whole file), and reason (one plain sentence: what to check there and why).',
+  "Leave out a file whose change is mechanical, such as a rename or a generated file.",
   "Each finding holds exactly these fields: id, severity, category, requirement, evidence, description.",
   `severity is one of: ${REVIEW_SEVERITIES.join(", ")}.`,
   `category is one of: ${REVIEW_CATEGORIES.join(", ")}.`,
@@ -134,4 +167,25 @@ export const parseReviewReport = (text: string): ReviewReport => {
   }
 
   return report;
+};
+
+/**
+ * DI-21.219. The guide entries whose path is a changed file, in the reviewer's order. An entry that
+ * names any other file points a human at code the change did not touch, so Factoree drops it. A
+ * line range with its end before its start keeps only its start.
+ */
+export const guideOfChangedFiles = (guide: readonly ReviewGuideEntry[], changedFiles: readonly string[]): ReviewGuideEntry[] => {
+  const changed = new Set(changedFiles.map((file) => file.replace(/^\.\//, "")));
+  const seen = new Set<string>();
+  const kept: ReviewGuideEntry[] = [];
+  for (const entry of guide) {
+    const path = entry.path.trim().replace(/^\.\//, "");
+    if (!changed.has(path)) continue;
+    const key = `${path}:${String(entry.startLine)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const endLine = entry.startLine !== null && entry.endLine !== null && entry.endLine < entry.startLine ? null : entry.endLine;
+    kept.push({ path, startLine: entry.startLine, endLine: entry.startLine === null ? null : endLine, reason: entry.reason });
+  }
+  return kept.slice(0, MAX_GUIDE_ENTRIES);
 };

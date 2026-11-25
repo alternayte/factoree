@@ -170,6 +170,7 @@ beforeAll(async () => {
       pullRequests: () => ({
         findByHead: () => Promise.reject(new Error("this test never publishes")),
         create: () => Promise.reject(new Error("this test never publishes")),
+        body: () => Promise.reject(new Error("this test never publishes")),
         updateBody: () => Promise.reject(new Error("this test never publishes")),
         comment: () => Promise.reject(new Error("this test never publishes")),
         close: () => Promise.reject(new Error("this test never publishes")),

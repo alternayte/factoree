@@ -163,6 +163,18 @@ export class GitHubPullRequests implements PullRequestPort {
     return this.toRecord(body as GitHubPullRequestBody, input.headBranch);
   }
 
+  /** docs/specs/pr-body-for-humans.md, DI-21.217. The current body of the pull request. */
+  async body(slug: string, number: number, githubInstallationId: string): Promise<string | null> {
+    assertRepositorySlug(slug);
+    const answer = (await this.call(
+      `${await resolveGitHubApiBaseUrl(this.apiBaseUrl)}/repos/${slug}/pulls/${String(number)}`,
+      { method: "GET" },
+      githubInstallationId,
+      slug,
+    )) as { body?: unknown } | null;
+    return typeof answer?.body === "string" ? answer.body : null;
+  }
+
   /** docs/specs/change-sets.md, DI-21.152. Replaces the body of the pull request. */
   async updateBody(slug: string, number: number, body: string, githubInstallationId: string): Promise<void> {
     assertRepositorySlug(slug);

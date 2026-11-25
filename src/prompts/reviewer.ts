@@ -1,7 +1,7 @@
 import { imageFilesBody } from "./context-files.js";
 
 /** SDD section 56 requires prompt versioning. Change this value whenever the template below changes. */
-export const REVIEWER_PROMPT_VERSION = "reviewer@6";
+export const REVIEWER_PROMPT_VERSION = "reviewer@7";
 
 export interface ReviewerPromptFields {
   goal: string;

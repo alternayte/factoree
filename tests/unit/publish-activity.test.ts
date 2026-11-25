@@ -82,6 +82,7 @@ const memoryPullRequests = (existing: PullRequestRecord | null = null): MemoryPu
         headSha: COMMIT,
       });
     },
+    body: () => Promise.reject(new Error("a single target reads no body")),
     updateBody: () => Promise.reject(new Error("a single target writes its body once")),
     comment: () => Promise.reject(new Error("a single target never comments")),
     close: () => Promise.reject(new Error("a single target never closes")),

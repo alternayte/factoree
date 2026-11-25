@@ -1,3 +1,4 @@
+import type { ReviewGuideEntry } from "~/domain/review/review-report.js";
 import { ActivityFailure, ApplicationFailure, deprecatePatch, isCancellation, patched } from "@temporalio/workflow";
 import type { PrepareCheckSandboxActivityOutput } from "~/activities/sandbox.activities.js";
 import type { UserValidateActivityOutput } from "~/activities/validation.activities.js";
@@ -80,6 +81,8 @@ export interface Verified {
   /** DI-21.148. The pairs the last set check tested alone, with the reason. */
   setCheckNotes: string[];
   changeDescription: string;
+  /** docs/specs/pr-body-for-humans.md, DI-21.219. The reviewer's reading guide of the change. */
+  whereToLook: ReviewGuideEntry[];
   repairCount: number;
   repairLimit: number;
   /** SDD sections 24 and 68. The moment the first Implementer attempt started. */
@@ -530,6 +533,7 @@ export const runAttempts = async (run: Run, plan: AttemptPlan): Promise<Verified
         fakes: userValidation.fakes ?? [],
         setCheckNotes: userValidation.setCheckNotes ?? [],
         changeDescription: passed.changeDescription,
+        whereToLook: passed.whereToLook ?? [],
         repairCount: state.repairCount,
         repairLimit: state.limit,
         implementationStartedAt: state.implementationStartedAt,

@@ -1,3 +1,5 @@
+import { issueKeyOf, renderOwnedBlock, type PullRequestBodyFacts } from "./pull-request-body.js";
+
 /** One pull request of the primary repository. */
 export interface PullRequestRecord {
   number: number;
@@ -35,6 +37,8 @@ export interface PullRequestPort {
   /** The open pull request for that head branch, or null. DI-9.8 needs it. */
   findByHead(slug: string, headBranch: string, githubInstallationId: string): Promise<PullRequestRecord | null>;
   create(input: CreatePullRequestInput, githubInstallationId: string): Promise<PullRequestRecord>;
+  /** docs/specs/pr-body-for-humans.md, DI-21.217. The current body of the pull request, or null for an empty one. */
+  body(slug: string, number: number, githubInstallationId: string): Promise<string | null>;
   /** docs/specs/change-sets.md, DI-21.152. Replaces the body, to add the links to the sibling pull requests. */
   updateBody(slug: string, number: number, body: string, githubInstallationId: string): Promise<void>;
   /** DI-21.153. One comment on the conversation of the pull request. */
@@ -47,64 +51,22 @@ export interface PullRequestPort {
 
 const MAX_TITLE = 120;
 
-export const buildPullRequestTitle = (input: { workItemTitle: string }): string => {
-  const prefix = "Factoree: ";
-  const room = MAX_TITLE - prefix.length;
+/**
+ * docs/specs/pr-body-for-humans.md, DI-21.218. The work item title, then the Linear key in
+ * parentheses, at most 120 characters. The author already shows the Factoree app, so no prefix.
+ */
+export const buildPullRequestTitle = (input: { workItemTitle: string; workItemUrl: string | null }): string => {
+  const key = issueKeyOf(input.workItemUrl);
+  const suffix = key === null ? "" : ` (${key})`;
+  const room = MAX_TITLE - suffix.length;
   const title = input.workItemTitle.trim().replace(/\s+/g, " ");
-  return prefix + (title.length <= room ? title : `${title.slice(0, room - 1)}…`);
+  return (title.length <= room ? title : `${title.slice(0, room - 1)}…`) + suffix;
 };
 
-export interface PullRequestBodyInput {
-  workItemTitle: string;
-  workItemUrl: string | null;
-  runId: string;
-  baseSha: string;
-  patchSha256: string;
-  verificationSummary: string;
-  changedFileCount: number;
-  repairCount: number;
-  /**
-   * docs/specs/draft-of-failed-run.md. The warning block of a draft of a failed run. It starts the
-   * body, and the closing sentence names the last patch, not a verified one.
-   */
-  draftWarning?: string;
-  /**
-   * docs/specs/change-sets.md, DI-21.152. The change set section: the sibling pull requests and the
-   * merge order. It ends the body.
-   */
-  changeSet?: string[];
-}
-
 /**
- * AT-29. One pull request must name the Work Item, the Run identifier, the base SHA, the patch
- * hash, and the verification summary. The body carries no raw log, because SDD section 47 forbids
- * a log dump in the human-facing record. The same restraint applies here.
+ * AT-29, amended by docs/specs/pr-body-for-humans.md. The body names the Work Item, the Run
+ * identifier, the base SHA, the patch hash and the verification summary, now in the collapsed Run
+ * metadata of the owned block. The body carries no raw log, because SDD section 47 forbids a log
+ * dump in the human-facing record. The same restraint applies here.
  */
-export const buildPullRequestBody = (input: PullRequestBodyInput): string =>
-  [
-    ...(input.draftWarning === undefined ? [] : [input.draftWarning, ""]),
-    "## Factoree change",
-    "",
-    `Work Item: ${input.workItemTitle}`,
-    `Work Item link: ${input.workItemUrl ?? "no Work Item URL"}`,
-    `Run ID: ${input.runId}`,
-    `Base SHA: ${input.baseSha}`,
-    `Patch SHA-256: ${input.patchSha256}`,
-    `Changed files: ${input.changedFileCount}`,
-    `Repair count: ${input.repairCount}`,
-    "",
-    "### Deterministic verification",
-    "",
-    input.verificationSummary,
-    "",
-    ...(input.draftWarning === undefined
-      ? [
-          "Factoree applied the verified patch to a clean trusted checkout and proved the patch hash",
-          "again before it created this pull request.",
-        ]
-      : [
-          "Factoree applied the last patch a check sprite received to a clean trusted checkout and",
-          "proved its hash again before it created this draft. Only a human marks it ready.",
-        ]),
-    ...(input.changeSet === undefined ? [] : ["", ...input.changeSet]),
-  ].join("\n");
+export const buildPullRequestBody = (facts: PullRequestBodyFacts): string => renderOwnedBlock(facts);

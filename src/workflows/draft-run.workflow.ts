@@ -152,6 +152,19 @@ export const draftRunWorkflow = async (input: DraftRunWorkflowInput): Promise<Dr
       autonomyReasons: [],
       checkDefiningFiles: [],
       draft: { attempt: plan.patchAttempt, reviewed: plan.reviewed },
+      // docs/specs/pr-body-for-humans.md, DI-21.217. The proof pack step writes the draft body too.
+      pullRequestBodies: [
+        {
+          repositorySlug: plan.repositorySlug,
+          pullRequestNumber: publication.pullRequestNumber,
+          pullRequestUrl: publication.pullRequestUrl,
+          githubInstallationId: plan.githubInstallationId,
+          baseSha: plan.baseSha,
+          patchSha256: publication.patchSha256,
+          changedFileCount: publication.changedFiles.length,
+          commitSha: publication.commitSha,
+        },
+      ],
     });
   } catch {
     // The draft is open and the run says DRAFT_PUBLISHED. The human still gets its link.
