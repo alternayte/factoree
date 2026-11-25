@@ -27,17 +27,19 @@ describe("retroWorkflow (docs/specs/retro-agent.md)", () => {
       taskQueue,
       workflowsPath: new URL("../../src/workflows/retro.workflow.ts", import.meta.url).pathname,
       activities: {
-        prepareRetro: async () => ({ kind: "run", retroId: "retro-1", productIds: ["broken", "first", "second"], costCapUsd: 1 }),
-        runRetroSession: async (input: { productId: string }) => {
+        prepareRetro: () => Promise.resolve({ kind: "run", retroId: "retro-1", productIds: ["broken", "first", "second"], costCapUsd: 1 }),
+        runRetroSession: (input: { productId: string }) => {
           sessions.push(input.productId);
-          if (input.productId === "broken") throw new Error("the sandbox did not start");
-          return { costUsd: 1.5 };
+          if (input.productId === "broken") return Promise.reject(new Error("the sandbox did not start"));
+          return Promise.resolve({ costUsd: 1.5 });
         },
-        skipRetroSession: async (input: { productId: string; status?: string }) => {
+        skipRetroSession: (input: { productId: string; status?: string }) => {
           skipped.push({ productId: input.productId, status: input.status ?? "skipped" });
+          return Promise.resolve();
         },
-        finishRetro: async (input: { status: string }) => {
+        finishRetro: (input: { status: string }) => {
           finished = input.status;
+          return Promise.resolve();
         },
       },
     });
