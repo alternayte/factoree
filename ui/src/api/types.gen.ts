@@ -745,6 +745,9 @@ export type CreateSetupProductResponses = {
     appChangeIssues: "one_per_change" | "one_for_all";
     reviewAppDenyList: Array<string>;
     automaticFollowUpLimit: number;
+    productGoal: string | null;
+    keepTranscripts: boolean;
+    retroRetentionDays: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -913,6 +916,9 @@ export type ListProductsResponses = {
     appChangeIssues: "one_per_change" | "one_for_all";
     reviewAppDenyList: Array<string>;
     automaticFollowUpLimit: number;
+    productGoal: string | null;
+    keepTranscripts: boolean;
+    retroRetentionDays: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1016,6 +1022,9 @@ export type CreateProductResponses = {
     appChangeIssues: "one_per_change" | "one_for_all";
     reviewAppDenyList: Array<string>;
     automaticFollowUpLimit: number;
+    productGoal: string | null;
+    keepTranscripts: boolean;
+    retroRetentionDays: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1119,6 +1128,9 @@ export type CopyProductResponses = {
     appChangeIssues: "one_per_change" | "one_for_all";
     reviewAppDenyList: Array<string>;
     automaticFollowUpLimit: number;
+    productGoal: string | null;
+    keepTranscripts: boolean;
+    retroRetentionDays: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1255,6 +1267,9 @@ export type GetProductResponses = {
     appChangeIssues: "one_per_change" | "one_for_all";
     reviewAppDenyList: Array<string>;
     automaticFollowUpLimit: number;
+    productGoal: string | null;
+    keepTranscripts: boolean;
+    retroRetentionDays: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1310,6 +1325,9 @@ export type UpdateProductData = {
     appChangeIssues?: "one_per_change" | "one_for_all";
     reviewAppDenyList?: Array<string>;
     automaticFollowUpLimit?: number;
+    productGoal?: string | null;
+    keepTranscripts?: boolean;
+    retroRetentionDays?: number;
   };
   path: {
     id: string;
@@ -1406,6 +1424,9 @@ export type UpdateProductResponses = {
     appChangeIssues: "one_per_change" | "one_for_all";
     reviewAppDenyList: Array<string>;
     automaticFollowUpLimit: number;
+    productGoal: string | null;
+    keepTranscripts: boolean;
+    retroRetentionDays: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1507,6 +1528,9 @@ export type ActivateProductResponses = {
     appChangeIssues: "one_per_change" | "one_for_all";
     reviewAppDenyList: Array<string>;
     automaticFollowUpLimit: number;
+    productGoal: string | null;
+    keepTranscripts: boolean;
+    retroRetentionDays: number;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1982,9 +2006,18 @@ export type GetFloorResponses = {
         at: string;
       }>;
     }>;
+    retros: Array<{
+      id: string;
+      status: "running" | "succeeded" | "failed";
+      productIds: Array<string>;
+      startedAt: string;
+      endedAt: string | null;
+    }>;
     pulses: Array<{
       runId: string | null;
       setupId: string | null;
+      retroId: string | null;
+      productId: string | null;
       role: string;
       toolKind: "read" | "edit" | "shell" | "browser" | "think";
       lastOutputAt: string;
@@ -2082,9 +2115,18 @@ export type GetFloorReplayResponses = {
         at: string;
       }>;
     }>;
+    retros: Array<{
+      id: string;
+      status: "running" | "succeeded" | "failed";
+      productIds: Array<string>;
+      startedAt: string;
+      endedAt: string | null;
+    }>;
     pulses: Array<{
       runId: string | null;
       setupId: string | null;
+      retroId: string | null;
+      productId: string | null;
       role: string;
       toolKind: "read" | "edit" | "shell" | "browser" | "think";
       lastOutputAt: string;
@@ -4406,6 +4448,15 @@ export type GetInstallSettingsResponses = {
       name: string;
       email: string;
     };
+    transcriptBucket: {
+      endpoint: string | null;
+      bucket: string | null;
+      region: string | null;
+      accessKey: string | null;
+      secretKeySet: boolean;
+      locked: Array<"endpoint" | "bucket" | "region" | "accessKey" | "secretKey">;
+      active: boolean;
+    };
   };
 };
 
@@ -4430,6 +4481,13 @@ export type UpdateInstallSettingsData = {
     gitAuthor?: {
       name?: string;
       email?: string;
+    };
+    transcriptBucket?: {
+      endpoint?: string | null;
+      bucket?: string | null;
+      region?: string | null;
+      accessKey?: string | null;
+      secretKey?: string | null;
     };
   };
   path?: never;
@@ -4493,6 +4551,15 @@ export type UpdateInstallSettingsResponses = {
     gitAuthor: {
       name: string;
       email: string;
+    };
+    transcriptBucket: {
+      endpoint: string | null;
+      bucket: string | null;
+      region: string | null;
+      accessKey: string | null;
+      secretKeySet: boolean;
+      locked: Array<"endpoint" | "bucket" | "region" | "accessKey" | "secretKey">;
+      active: boolean;
     };
   };
 };
@@ -4689,6 +4756,881 @@ export type RevokeApiKeyResponses = {
 };
 
 export type RevokeApiKeyResponse = RevokeApiKeyResponses[keyof RevokeApiKeyResponses];
+
+export type GetRetroSettingsData = {
+  body?: never;
+  path?: never;
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/retro/settings";
+};
+
+export type GetRetroSettingsErrors = {
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type GetRetroSettingsError = GetRetroSettingsErrors[keyof GetRetroSettingsErrors];
+
+export type GetRetroSettingsResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    settings: {
+      schedule: "off" | "daily" | "weekly";
+      weekday: number;
+      hour: number;
+      timeZone: string;
+      productIds: Array<string>;
+      runner: "opencode" | "claude" | null;
+      model: string | null;
+      effort: string | null;
+      costCapUsd: number;
+    };
+    nextRunAt: string | null;
+    scheduleError: string | null;
+    running: {
+      id: string;
+      trigger: string;
+      status: "running" | "succeeded" | "failed";
+      windowStart: string | null;
+      windowEnd: string;
+      promptVersion: string;
+      costUsd: number | null;
+      findingCount: number;
+      failureMessage: string | null;
+      startedAt: string;
+      endedAt: string | null;
+    } | null;
+    last: {
+      id: string;
+      trigger: string;
+      status: "running" | "succeeded" | "failed";
+      windowStart: string | null;
+      windowEnd: string;
+      promptVersion: string;
+      costUsd: number | null;
+      findingCount: number;
+      failureMessage: string | null;
+      startedAt: string;
+      endedAt: string | null;
+    } | null;
+  };
+};
+
+export type GetRetroSettingsResponse = GetRetroSettingsResponses[keyof GetRetroSettingsResponses];
+
+export type PutRetroSettingsData = {
+  body: {
+    schedule: "off" | "daily" | "weekly";
+    weekday: number;
+    hour: number;
+    timeZone: string;
+    productIds: Array<string>;
+    runner: "opencode" | "claude" | null;
+    model: string | null;
+    effort: string | null;
+    costCapUsd: number;
+    linearWorkspaceId: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/admin/retro/settings";
+};
+
+export type PutRetroSettingsErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type PutRetroSettingsError = PutRetroSettingsErrors[keyof PutRetroSettingsErrors];
+
+export type PutRetroSettingsResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    settings: {
+      schedule: "off" | "daily" | "weekly";
+      weekday: number;
+      hour: number;
+      timeZone: string;
+      productIds: Array<string>;
+      runner: "opencode" | "claude" | null;
+      model: string | null;
+      effort: string | null;
+      costCapUsd: number;
+    };
+    nextRunAt: string | null;
+    scheduleError: string | null;
+    running: {
+      id: string;
+      trigger: string;
+      status: "running" | "succeeded" | "failed";
+      windowStart: string | null;
+      windowEnd: string;
+      promptVersion: string;
+      costUsd: number | null;
+      findingCount: number;
+      failureMessage: string | null;
+      startedAt: string;
+      endedAt: string | null;
+    } | null;
+    last: {
+      id: string;
+      trigger: string;
+      status: "running" | "succeeded" | "failed";
+      windowStart: string | null;
+      windowEnd: string;
+      promptVersion: string;
+      costUsd: number | null;
+      findingCount: number;
+      failureMessage: string | null;
+      startedAt: string;
+      endedAt: string | null;
+    } | null;
+  };
+};
+
+export type PutRetroSettingsResponse = PutRetroSettingsResponses[keyof PutRetroSettingsResponses];
+
+export type RetryRetroScheduleData = {
+  body: {
+    linearWorkspaceId: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/admin/retro/settings/schedule";
+};
+
+export type RetryRetroScheduleErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type RetryRetroScheduleError = RetryRetroScheduleErrors[keyof RetryRetroScheduleErrors];
+
+export type RetryRetroScheduleResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    settings: {
+      schedule: "off" | "daily" | "weekly";
+      weekday: number;
+      hour: number;
+      timeZone: string;
+      productIds: Array<string>;
+      runner: "opencode" | "claude" | null;
+      model: string | null;
+      effort: string | null;
+      costCapUsd: number;
+    };
+    nextRunAt: string | null;
+    scheduleError: string | null;
+    running: {
+      id: string;
+      trigger: string;
+      status: "running" | "succeeded" | "failed";
+      windowStart: string | null;
+      windowEnd: string;
+      promptVersion: string;
+      costUsd: number | null;
+      findingCount: number;
+      failureMessage: string | null;
+      startedAt: string;
+      endedAt: string | null;
+    } | null;
+    last: {
+      id: string;
+      trigger: string;
+      status: "running" | "succeeded" | "failed";
+      windowStart: string | null;
+      windowEnd: string;
+      promptVersion: string;
+      costUsd: number | null;
+      findingCount: number;
+      failureMessage: string | null;
+      startedAt: string;
+      endedAt: string | null;
+    } | null;
+  };
+};
+
+export type RetryRetroScheduleResponse = RetryRetroScheduleResponses[keyof RetryRetroScheduleResponses];
+
+export type RunRetroNowData = {
+  body: {
+    linearWorkspaceId: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/admin/retro/run";
+};
+
+export type RunRetroNowErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  503: {
+    error: unknown;
+  };
+};
+
+export type RunRetroNowError = RunRetroNowErrors[keyof RunRetroNowErrors];
+
+export type RunRetroNowResponses = {
+  /**
+   * Default Response
+   */
+  202: {
+    workflowId: string;
+  };
+};
+
+export type RunRetroNowResponse = RunRetroNowResponses[keyof RunRetroNowResponses];
+
+export type ListRetrosData = {
+  body?: never;
+  path?: never;
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/retros";
+};
+
+export type ListRetrosErrors = {
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type ListRetrosError = ListRetrosErrors[keyof ListRetrosErrors];
+
+export type ListRetrosResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    retros: Array<{
+      id: string;
+      trigger: string;
+      status: "running" | "succeeded" | "failed";
+      windowStart: string | null;
+      windowEnd: string;
+      promptVersion: string;
+      costUsd: number | null;
+      findingCount: number;
+      failureMessage: string | null;
+      startedAt: string;
+      endedAt: string | null;
+    }>;
+  };
+};
+
+export type ListRetrosResponse = ListRetrosResponses[keyof ListRetrosResponses];
+
+export type GetRetroData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/retros/{id}";
+};
+
+export type GetRetroErrors = {
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type GetRetroError = GetRetroErrors[keyof GetRetroErrors];
+
+export type GetRetroResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    id: string;
+    trigger: string;
+    status: "running" | "succeeded" | "failed";
+    windowStart: string | null;
+    windowEnd: string;
+    promptVersion: string;
+    costUsd: number | null;
+    findingCount: number;
+    failureMessage: string | null;
+    startedAt: string;
+    endedAt: string | null;
+    events: Array<{
+      kind: string;
+      productId: string | null;
+      message: string;
+    }>;
+    sessions: Array<{
+      productId: string;
+      productName: string;
+      status: string;
+      runCount: number;
+      runner: string | null;
+      model: string | null;
+      effort: string | null;
+      outcome: string | null;
+      costUsd: number | null;
+      durationMs: number | null;
+      metrics: {
+        runs: number;
+        firstPassRate: number | null;
+        repairsPerRun: number | null;
+        hungSessions: number;
+        costPerRun: number | null;
+      } | null;
+      failureMessage: string | null;
+    }>;
+    findings: Array<{
+      id: string;
+      retroId: string;
+      productId: string;
+      productName: string;
+      kind: "factory" | "error" | "idea";
+      title: string;
+      description: string;
+      runIds: Array<string>;
+      signalResultIds: Array<string>;
+      repositories: Array<string>;
+      status: "proposed" | "created" | "dismissed" | "already_proposed";
+      duplicateOfId: string | null;
+      linearIssueIdentifier: string | null;
+      linearIssueUrl: string | null;
+      decidedBy: string | null;
+      decidedAt: string | null;
+      createdAt: string;
+    }>;
+    signalResults: Array<{
+      id: string;
+      productId: string;
+      sourceName: string;
+      sourceKind: "errors" | "analytics";
+      queryName: string;
+      bytes: number;
+    }>;
+  };
+};
+
+export type GetRetroResponse = GetRetroResponses[keyof GetRetroResponses];
+
+export type GetSignalResultData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/retro/signal-results/{id}";
+};
+
+export type GetSignalResultErrors = {
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type GetSignalResultError = GetSignalResultErrors[keyof GetSignalResultErrors];
+
+export type GetSignalResultResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    id: string;
+    retroId: string;
+    productId: string;
+    sourceName: string;
+    sourceKind: "errors" | "analytics";
+    queryName: string;
+    content: string;
+    sha256: string;
+    bytes: number;
+    createdAt: string;
+  };
+};
+
+export type GetSignalResultResponse = GetSignalResultResponses[keyof GetSignalResultResponses];
+
+export type CreateRetroFindingIssueData = {
+  body: {
+    linearWorkspaceId: string;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/admin/retro/findings/{id}/issue";
+};
+
+export type CreateRetroFindingIssueErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  502: {
+    error: unknown;
+  };
+};
+
+export type CreateRetroFindingIssueError = CreateRetroFindingIssueErrors[keyof CreateRetroFindingIssueErrors];
+
+export type CreateRetroFindingIssueResponses = {
+  /**
+   * Default Response
+   */
+  201: {
+    id: string;
+    retroId: string;
+    productId: string;
+    productName: string;
+    kind: "factory" | "error" | "idea";
+    title: string;
+    description: string;
+    runIds: Array<string>;
+    signalResultIds: Array<string>;
+    repositories: Array<string>;
+    status: "proposed" | "created" | "dismissed" | "already_proposed";
+    duplicateOfId: string | null;
+    linearIssueIdentifier: string | null;
+    linearIssueUrl: string | null;
+    decidedBy: string | null;
+    decidedAt: string | null;
+    createdAt: string;
+  };
+};
+
+export type CreateRetroFindingIssueResponse = CreateRetroFindingIssueResponses[keyof CreateRetroFindingIssueResponses];
+
+export type DismissRetroFindingData = {
+  body: {
+    linearWorkspaceId: string;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/admin/retro/findings/{id}/dismiss";
+};
+
+export type DismissRetroFindingErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    error: unknown;
+  };
+};
+
+export type DismissRetroFindingError = DismissRetroFindingErrors[keyof DismissRetroFindingErrors];
+
+export type DismissRetroFindingResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    id: string;
+    retroId: string;
+    productId: string;
+    productName: string;
+    kind: "factory" | "error" | "idea";
+    title: string;
+    description: string;
+    runIds: Array<string>;
+    signalResultIds: Array<string>;
+    repositories: Array<string>;
+    status: "proposed" | "created" | "dismissed" | "already_proposed";
+    duplicateOfId: string | null;
+    linearIssueIdentifier: string | null;
+    linearIssueUrl: string | null;
+    decidedBy: string | null;
+    decidedAt: string | null;
+    createdAt: string;
+  };
+};
+
+export type DismissRetroFindingResponse = DismissRetroFindingResponses[keyof DismissRetroFindingResponses];
+
+export type ListSignalSourcesData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/signal-sources";
+};
+
+export type ListSignalSourcesErrors = {
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type ListSignalSourcesError = ListSignalSourcesErrors[keyof ListSignalSourcesErrors];
+
+export type ListSignalSourcesResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    sources: Array<{
+      id: string;
+      productId: string;
+      name: string;
+      kind: "errors" | "analytics";
+      endpoint: string;
+      secretName: string | null;
+      enabled: boolean;
+      queries: Array<{
+        name: string;
+        tool: string;
+        arguments: {
+          [key: string]: unknown;
+        };
+        maxBytes: number;
+      }>;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+  };
+};
+
+export type ListSignalSourcesResponse = ListSignalSourcesResponses[keyof ListSignalSourcesResponses];
+
+export type CreateSignalSourceData = {
+  body: {
+    name: string;
+    kind: "errors" | "analytics";
+    endpoint: string;
+    secretName: string | null;
+    enabled?: boolean;
+    queries: Array<{
+      name: string;
+      tool: string;
+      arguments?: {
+        [key: string]: unknown;
+      };
+      maxBytes?: number;
+    }>;
+    linearWorkspaceId: string;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/admin/products/{id}/signal-sources";
+};
+
+export type CreateSignalSourceErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    error: unknown;
+  };
+};
+
+export type CreateSignalSourceError = CreateSignalSourceErrors[keyof CreateSignalSourceErrors];
+
+export type CreateSignalSourceResponses = {
+  /**
+   * Default Response
+   */
+  201: {
+    id: string;
+    productId: string;
+    name: string;
+    kind: "errors" | "analytics";
+    endpoint: string;
+    secretName: string | null;
+    enabled: boolean;
+    queries: Array<{
+      name: string;
+      tool: string;
+      arguments: {
+        [key: string]: unknown;
+      };
+      maxBytes: number;
+    }>;
+    createdAt: string;
+    updatedAt: string;
+  };
+};
+
+export type CreateSignalSourceResponse = CreateSignalSourceResponses[keyof CreateSignalSourceResponses];
+
+export type DeleteSignalSourceData = {
+  body?: never;
+  path: {
+    id: string;
+    sourceId: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/products/{id}/signal-sources/{sourceId}";
+};
+
+export type DeleteSignalSourceErrors = {
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type DeleteSignalSourceError = DeleteSignalSourceErrors[keyof DeleteSignalSourceErrors];
+
+export type DeleteSignalSourceResponses = {
+  /**
+   * Default Response
+   */
+  204: void;
+};
+
+export type DeleteSignalSourceResponse = DeleteSignalSourceResponses[keyof DeleteSignalSourceResponses];
+
+export type UpdateSignalSourceData = {
+  body: {
+    name: string;
+    kind: "errors" | "analytics";
+    endpoint: string;
+    secretName: string | null;
+    enabled?: boolean;
+    queries: Array<{
+      name: string;
+      tool: string;
+      arguments?: {
+        [key: string]: unknown;
+      };
+      maxBytes?: number;
+    }>;
+    linearWorkspaceId: string;
+  };
+  path: {
+    id: string;
+    sourceId: string;
+  };
+  query?: never;
+  url: "/admin/products/{id}/signal-sources/{sourceId}";
+};
+
+export type UpdateSignalSourceErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  409: {
+    error: unknown;
+  };
+};
+
+export type UpdateSignalSourceError = UpdateSignalSourceErrors[keyof UpdateSignalSourceErrors];
+
+export type UpdateSignalSourceResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    id: string;
+    productId: string;
+    name: string;
+    kind: "errors" | "analytics";
+    endpoint: string;
+    secretName: string | null;
+    enabled: boolean;
+    queries: Array<{
+      name: string;
+      tool: string;
+      arguments: {
+        [key: string]: unknown;
+      };
+      maxBytes: number;
+    }>;
+    createdAt: string;
+    updatedAt: string;
+  };
+};
+
+export type UpdateSignalSourceResponse = UpdateSignalSourceResponses[keyof UpdateSignalSourceResponses];
+
+export type TestSignalSourceData = {
+  body: {
+    name: string;
+    kind: "errors" | "analytics";
+    endpoint: string;
+    secretName: string | null;
+    enabled?: boolean;
+    queries: Array<{
+      name: string;
+      tool: string;
+      arguments?: {
+        [key: string]: unknown;
+      };
+      maxBytes?: number;
+    }>;
+    linearWorkspaceId: string;
+  };
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: "/admin/products/{id}/signal-sources/test";
+};
+
+export type TestSignalSourceErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type TestSignalSourceError = TestSignalSourceErrors[keyof TestSignalSourceErrors];
+
+export type TestSignalSourceResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    results: Array<{
+      queryName: string;
+      ok: boolean;
+      bytes: number | null;
+      preview: string | null;
+      reason: string | null;
+    }>;
+  };
+};
+
+export type TestSignalSourceResponse = TestSignalSourceResponses[keyof TestSignalSourceResponses];
 
 export type GetDrainModeData = {
   body?: never;

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-25
+
+### Added
+
+- The retro agent. A retro runs on a schedule or on Run now, outside any run, with one agent session per product. It reads the runs that ended since the last retro and the product's signal results, and proposes findings. Factoree keeps a finding only when it cites runs and signal results the session read (docs/specs/retro-agent.md, DI-21.221 to DI-21.226).
+- Three finding kinds: a factory finding cites runs, an error finding cites production errors, and an idea finding cites analytics. Create issue makes a Linear issue in the product's team. Factory and error issues are delegated to Factoree. An idea issue is not delegated, and a human decides it.
+- Signal sources: a product's MCP servers for errors or analytics, with the queries Factoree runs before each retro session. The token stays in the worker, and each result is redacted and stored with its SHA-256.
+- The product goal, in markdown, tells the retro agent what the product must achieve and what to improve first.
+- Keep transcripts stores the redacted, gzipped transcript of every agent session of a product, in Postgres or in an S3-compatible bucket from the install settings or `FACTOREE_TRANSCRIPT_S3_*`. Retro data retention deletes transcripts and signal results after 30 days by default (DI-21.227).
+- The Retro page shows the retro settings, the next retro, each retro with its cost, events, findings and the first-pass rate, repairs per run, hung sessions and cost per run of each product. A running retro walks the factory floor (DI-21.228).
+
 ## [0.22.1] - 2026-11-25
 
 ### Fixed

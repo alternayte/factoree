@@ -1,0 +1,66 @@
+import { describe, expect, it } from "vitest";
+import { PrismaRetroStore, PrismaTranscriptStore } from "~/persistence/prisma/retro.prisma.js";
+import { withDatabase, seedTenantProjectAndRun } from "./support/database.js";
+
+/** docs/specs/retro-agent.md. The retro store: the run window, title dedupe and retention. */
+describe("retro store", () => {
+  it("exports only the ended runs of the product inside the window", async () => {
+    await withDatabase(async (prisma) => {
+      const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
+      const windowStart = new Date("2026-11-18T09:00:00Z");
+      const windowEnd = new Date("2026-11-25T09:00:00Z");
+      await prisma.run.update({ where: { id: runId }, data: { status: "FAILED", completedAt: new Date("2026-11-20T09:00:00Z"), followUpReply: "use the staging seed" } });
+      const store = new PrismaRetroStore(prisma);
+      const inside = await store.exportRuns(tenantId, productId, windowStart, windowEnd, 200);
+      expect(inside.map((run) => [run.id, run.followUpReply])).toEqual([[runId, "use the staging seed"]]);
+      // A run that ended at the start of the window belongs to the retro before it.
+      await prisma.run.update({ where: { id: runId }, data: { completedAt: windowStart } });
+      expect(await store.exportRuns(tenantId, productId, windowStart, windowEnd, 200)).toEqual([]);
+      // A run still open is no retro input.
+      await prisma.run.update({ where: { id: runId }, data: { status: "IMPLEMENTING", completedAt: new Date("2026-11-20T09:00:00Z") } });
+      expect(await store.exportRuns(tenantId, productId, windowStart, windowEnd, 200)).toEqual([]);
+    });
+  });
+
+  it("stores a finding whose title an open finding holds as already proposed", async () => {
+    await withDatabase(async (prisma) => {
+      const { tenantId, productId } = await seedTenantProjectAndRun(prisma);
+      const store = new PrismaRetroStore(prisma);
+      const start = (workflowId: string) =>
+        store.start({ tenantId, workflowId, trigger: "manual", windowStart: null, windowEnd: new Date(), promptVersion: "retro@1", productIds: [productId] });
+      const finding = { kind: "factory" as const, title: "The seed  step times out", description: "d", runIds: [], signalResultIds: [], repositories: [] };
+      const first = await start("retro-a");
+      await store.storeFindings({ tenantId, retroId: first.id, productId, findings: [{ ...finding, duplicateOfId: null }] });
+      const open = await store.openFindingsByTitle(tenantId, productId);
+      const original = open.get("the seed step times out");
+      expect(original).toBeDefined();
+      const second = await start("retro-b");
+      await store.storeFindings({ tenantId, retroId: second.id, productId, findings: [{ ...finding, title: "the seed step times out", duplicateOfId: original! }] });
+      const detail = await store.detail(tenantId, second.id);
+      expect(detail?.findings.map((entry) => [entry.status, entry.duplicateOfId])).toEqual([["already_proposed", original]]);
+      // A start with the same workflow id reads the same retro.
+      expect((await start("retro-a")).id).toBe(first.id);
+    });
+  });
+
+  it("deletes kept transcripts and signal results past the product's retention", async () => {
+    await withDatabase(async (prisma) => {
+      const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
+      await prisma.product.update({ where: { id: productId }, data: { retroRetentionDays: 7 } });
+      const transcripts = new PrismaTranscriptStore(prisma, () => Promise.resolve(null));
+      await transcripts.keep({ tenantId, productId, runId, role: "implementer", attempt: 1, text: "old output", idempotencyKey: "old" });
+      await transcripts.keep({ tenantId, productId, runId, role: "implementer", attempt: 2, text: "new output", idempotencyKey: "new" });
+      const now = new Date();
+      await prisma.agentTranscript.updateMany({ where: { idempotencyKey: "old" }, data: { createdAt: new Date(now.getTime() - 8 * 24 * 60 * 60_000) } });
+      const store = new PrismaRetroStore(prisma);
+      const retro = await store.start({ tenantId, workflowId: "retro-c", trigger: "manual", windowStart: null, windowEnd: now, promptVersion: "retro@1", productIds: [productId] });
+      await store.storeSignalResults(tenantId, retro.id, productId, [
+        { sourceName: "sentry", sourceKind: "errors", queryName: "new-issues", content: "TypeError", sha256: "x", bytes: 9 },
+      ]);
+      await prisma.signalResult.updateMany({ data: { createdAt: new Date(now.getTime() - 8 * 24 * 60 * 60_000) } });
+
+      expect(await store.deleteExpired(now, null)).toEqual({ transcripts: 1, signalResults: 1 });
+      expect((await transcripts.forRun(tenantId, runId)).map((entry) => entry.text)).toEqual(["new output"]);
+    });
+  });
+});

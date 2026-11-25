@@ -3,7 +3,16 @@ import { Field, Select } from "@/components/form";
 import type { Membership } from "@/lib/session";
 
 /** WorkspacePicker switches the Linear workspace that the product pages show. */
-export function WorkspacePicker({ memberships, current }: { memberships: Membership[]; current: Membership }) {
+export function WorkspacePicker({
+  memberships,
+  current,
+  to = "/products",
+}: {
+  memberships: Membership[];
+  current: Membership;
+  /** The page that opens for the new workspace. */
+  to?: "/products" | "/retro";
+}) {
   const navigate = useNavigate();
   if (memberships.length < 2) {
     return (
@@ -19,7 +28,7 @@ export function WorkspacePicker({ memberships, current }: { memberships: Members
         <Select
           {...props}
           value={current.linearWorkspaceId}
-          onChange={(e) => void navigate({ to: "/products", search: { ws: e.target.value } })}
+          onChange={(e) => void navigate({ to, search: { ws: e.target.value } })}
         >
           {memberships.map((m) => (
             <option key={m.linearWorkspaceId} value={m.linearWorkspaceId}>

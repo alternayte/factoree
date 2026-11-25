@@ -22,13 +22,14 @@ export const buildAgentRunnerRegistry = (
   // docs/specs/agent-session-usage-and-hangs.md and docs/specs/release-0-1-0.md. The worker passes
   // `settingsFor`, which reads the model, the effort and the silence limit of the Run's Product
   // for each new session. A test passes a fixed silence limit instead.
-  sessions: Pick<CliAgentRunnerOptions, "silenceLimitMs" | "settingsFor" | "pulses"> = {},
+  sessions: Pick<CliAgentRunnerOptions, "silenceLimitMs" | "settingsFor" | "pulses" | "transcripts"> = {},
 ): AgentRunnerRegistry => {
   const shared = {
     redactor,
     ...(sessions.silenceLimitMs === undefined ? {} : { silenceLimitMs: sessions.silenceLimitMs }),
     ...(sessions.settingsFor === undefined ? {} : { settingsFor: sessions.settingsFor }),
     ...(sessions.pulses === undefined ? {} : { pulses: sessions.pulses }),
+    ...(sessions.transcripts === undefined ? {} : { transcripts: sessions.transcripts }),
   };
   return new AgentRunnerRegistry([new OpenCodeRunner({ ...shared, ...opencode }), new ClaudeCodeRunner(shared)]);
 };

@@ -60,6 +60,13 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
         registryToken: this.open(row.sandboxRegistryTokenCipher),
       },
       gitAuthor: { name: row.gitAuthorName, email: row.gitAuthorEmail },
+      transcriptBucket: {
+        endpoint: row.transcriptS3Endpoint,
+        bucket: row.transcriptS3Bucket,
+        region: row.transcriptS3Region,
+        accessKey: row.transcriptS3AccessKey,
+        secretKey: this.open(row.transcriptS3SecretKeyCipher),
+      },
       operatorTenantId: row.operatorTenantId,
       setupCompletedAt: row.setupCompletedAt,
     };
@@ -70,7 +77,7 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
   }
 
   async update(patch: InstallSettingsPatch): Promise<InstallSettings> {
-    const { github = {}, linear = {}, sandbox = {}, gitAuthor = {} } = patch;
+    const { github = {}, linear = {}, sandbox = {}, gitAuthor = {}, transcriptBucket = {} } = patch;
     const data = {
       githubAppId: github.appId,
       githubAppSlug: github.appSlug,
@@ -88,6 +95,11 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
       sandboxRegistryTokenCipher: this.seal(sandbox.registryToken),
       gitAuthorName: gitAuthor.name,
       gitAuthorEmail: gitAuthor.email,
+      transcriptS3Endpoint: transcriptBucket.endpoint,
+      transcriptS3Bucket: transcriptBucket.bucket,
+      transcriptS3Region: transcriptBucket.region,
+      transcriptS3AccessKey: transcriptBucket.accessKey,
+      transcriptS3SecretKeyCipher: this.seal(transcriptBucket.secretKey),
       operatorTenantId: patch.operatorTenantId,
     };
     const defined = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));

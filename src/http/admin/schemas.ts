@@ -3,10 +3,21 @@ import { PROJECT_SECRET_KINDS } from "~/domain/products/secret-store.js";
 import { DEFAULT_KILN_SANDBOX_SIZE, SANDBOX_PROVIDERS, type InstallSettings } from "~/domain/settings/install-settings.js";
 import type { SandboxProviderSettings } from "~/domain/settings/sandbox-providers.js";
 import { buildInfo } from "~/config/build-info.js";
+import { completeBucket, effectiveBucket, lockedBucketFields } from "~/domain/retro/transcript.js";
+
+/** The `FACTOREE_TRANSCRIPT_S3_*` env vars, each of which wins over its install setting. */
+export type TranscriptBucketEnv = Parameters<typeof lockedBucketFields>[0];
 import { AGENT_RUNNERS } from "~/domain/products/agent-settings.js";
 import { REFINER_CRITERIA_LIMIT_MAX, REFINER_CRITERIA_LIMIT_MIN } from "~/domain/refinement/refiner-proposal.js";
 import { REPAIR_MAX_ATTEMPTS_MAX } from "~/domain/runs/repair-budget.js";
-import { AUTOMATIC_FOLLOW_UP_LIMIT_MAX, AUTOMATIC_FOLLOW_UP_LIMIT_MIN, GITHUB_APP_SLUG } from "~/domain/products/product-registry.js";
+import {
+  AUTOMATIC_FOLLOW_UP_LIMIT_MAX,
+  AUTOMATIC_FOLLOW_UP_LIMIT_MIN,
+  GITHUB_APP_SLUG,
+  PRODUCT_GOAL_MAX_BYTES,
+  RETRO_RETENTION_DAYS_MAX,
+  RETRO_RETENTION_DAYS_MIN,
+} from "~/domain/products/product-registry.js";
 
 /**
  * docs/specs/release-0-1-0.md. The shapes of the settings API. The zod schemas validate the
@@ -74,6 +85,12 @@ export const productSchema = z.object({
   reviewAppDenyList: z.array(z.string()),
   /** docs/specs/pr-feedback-loop.md. The most PR follow-up runs that review apps and CI checks start on one pull request. */
   automaticFollowUpLimit: z.number(),
+  /** docs/specs/retro-agent.md. The product goal in markdown, which only the retro agent reads. */
+  productGoal: z.string().nullable(),
+  /** docs/specs/retro-agent.md. Keep the redacted transcript of every agent session. */
+  keepTranscripts: z.boolean(),
+  /** docs/specs/retro-agent.md. The days kept transcripts and signal results stay. */
+  retroRetentionDays: z.number(),
   createdAt: z.string(),
   updatedAt: z.string(),
   /** docs/specs/repository-membership.md. The products list only: the claims no admin decided yet. */
@@ -146,6 +163,14 @@ export const productSettingsFields = {
     .max(50)
     .transform((slugs) => [...new Set(slugs)].sort()),
   automaticFollowUpLimit: z.number().int().min(AUTOMATIC_FOLLOW_UP_LIMIT_MIN).max(AUTOMATIC_FOLLOW_UP_LIMIT_MAX),
+  // docs/specs/retro-agent.md. An empty goal clears it.
+  productGoal: z
+    .string()
+    .refine((goal) => Buffer.byteLength(goal, "utf8") <= PRODUCT_GOAL_MAX_BYTES, `must be at most ${PRODUCT_GOAL_MAX_BYTES / 1024} KiB`)
+    .transform((goal) => (goal.trim() === "" ? null : goal))
+    .nullable(),
+  keepTranscripts: z.boolean(),
+  retroRetentionDays: z.number().int().min(RETRO_RETENTION_DAYS_MIN).max(RETRO_RETENTION_DAYS_MAX),
 };
 
 /** docs/specs/pr-review-merge-and-deploy.md. What each GitHub App installation of a product lacks. */
@@ -220,6 +245,17 @@ export const installSettingsUpdateSchema = z
       })
       .partial()
       .strict(),
+    // docs/specs/retro-agent.md. The bucket of kept transcripts. Null clears a field.
+    transcriptBucket: z
+      .object({
+        endpoint: z.string().url().nullable(),
+        bucket: z.string().min(1).nullable(),
+        region: z.string().min(1).nullable(),
+        accessKey: z.string().min(1).nullable(),
+        secretKey: z.string().min(1).nullable(),
+      })
+      .partial()
+      .strict(),
   })
   .partial()
   .strict();
@@ -256,6 +292,17 @@ export const installSettingsViewSchema = z.object({
     localAllowed: z.boolean(),
   }),
   gitAuthor: z.object({ name: z.string(), email: z.string() }),
+  /** docs/specs/retro-agent.md. The effective bucket of kept transcripts, and the fields an env var locks. */
+  transcriptBucket: z.object({
+    endpoint: z.string().nullable(),
+    bucket: z.string().nullable(),
+    region: z.string().nullable(),
+    accessKey: z.string().nullable(),
+    secretKeySet: z.boolean(),
+    locked: z.array(z.enum(["endpoint", "bucket", "region", "accessKey", "secretKey"])),
+    /** True when new transcripts go to the bucket, false when they stay in Postgres. */
+    active: z.boolean(),
+  }),
 });
 
 export type InstallSettingsView = z.infer<typeof installSettingsViewSchema>;
@@ -269,6 +316,7 @@ export const viewInstallSettings = (
   settings: InstallSettings,
   publicUrl: string,
   localAllowed: boolean,
+  bucketEnv: TranscriptBucketEnv = {},
 ): InstallSettingsView => ({
   publicUrl,
   github: {
@@ -302,6 +350,18 @@ export const viewInstallSettings = (
     localAllowed,
   },
   gitAuthor: settings.gitAuthor,
+  transcriptBucket: (() => {
+    const bucket = effectiveBucket(settings.transcriptBucket, bucketEnv);
+    return {
+      endpoint: bucket.endpoint,
+      bucket: bucket.bucket,
+      region: bucket.region,
+      accessKey: bucket.accessKey,
+      secretKeySet: bucket.secretKey !== null,
+      locked: lockedBucketFields(bucketEnv),
+      active: completeBucket(bucket) !== null,
+    };
+  })(),
 });
 
 /** The registry login of the sandbox image is a pair. */

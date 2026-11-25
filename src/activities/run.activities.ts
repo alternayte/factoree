@@ -35,7 +35,9 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     input: CreateRunInput,
   ): Promise<{ runId: string; created: boolean; adopted?: boolean; ended?: boolean; status?: RunStatus }> {
     const adoptedRun = await dependencies.runs.adoptWaiting(input.temporalWorkflowId);
-    const { run, created } = adoptedRun === null ? await dependencies.runs.createIfAbsent(input) : { run: adoptedRun, created: true };
+    // docs/specs/retro-agent.md. The reply is human text, so it is stored redacted.
+    const stored = input.followUpReply === undefined || input.followUpReply === null ? input : { ...input, followUpReply: dependencies.redactor.redactText(input.followUpReply) };
+    const { run, created } = adoptedRun === null ? await dependencies.runs.createIfAbsent(stored) : { run: adoptedRun, created: true };
     if (!created && isTerminalRunStatus(run.status)) {
       dependencies.logger.info("run already ended before its workflow started", {
         tenant_id: run.tenantId,

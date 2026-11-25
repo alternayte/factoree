@@ -13,6 +13,8 @@ export interface FloorData {
   lines: FloorLine[];
   runs: FloorRun[];
   setups: FloorSetup[];
+  /** docs/specs/retro-agent.md. The retros of the window: a consultant walks the lines they read. */
+  retros: FloorRetro[];
   pulses: FloorPulse[];
   throughput: FloorThroughputDay[];
 }
@@ -80,9 +82,21 @@ export interface FloorSetup {
   statuses: FloorStatusChange[];
 }
 
+/** docs/specs/retro-agent.md. One retro on the floor, with the products it reads in order. */
+export interface FloorRetro {
+  id: string;
+  status: "running" | "succeeded" | "failed";
+  productIds: string[];
+  startedAt: Date;
+  endedAt: Date | null;
+}
+
 export interface FloorPulse {
   runId: string | null;
   setupId: string | null;
+  /** docs/specs/retro-agent.md. The retro and the product of a retro session's pulse. */
+  retroId: string | null;
+  productId: string | null;
   role: string;
   toolKind: ToolKind;
   lastOutputAt: Date;

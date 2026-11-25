@@ -18,12 +18,15 @@ import { Route as AppWorkspacesRouteImport } from './routes/_app/workspaces'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as AppProductsIndexRouteImport } from './routes/_app/products/index'
 import { Route as AppProductsProductIdRouteImport } from './routes/_app/products/$productId'
+import { Route as AppRetroIndexRouteImport } from './routes/_app/retro/index'
+import { Route as AppRetroRetroIdRouteImport } from './routes/_app/retro/$retroId'
 import { Route as AppRunsIndexRouteImport } from './routes/_app/runs/index'
 import { Route as AppRunsRunIdRouteImport } from './routes/_app/runs/$runId'
 import { Route as AppSettingsInstallRouteImport } from './routes/_app/settings/install'
 import { Route as SetupGithubCreatedRouteImport } from './routes/setup/github/created'
 import { Route as SetupGithubInstalledRouteImport } from './routes/setup/github/installed'
 import { Route as AppProductsProductIdSetupsRouteImport } from './routes/_app/products/$productId_.setups'
+import { Route as AppRetroSignalResultsResultIdRouteImport } from './routes/_app/retro/signal-results/$resultId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -69,6 +72,16 @@ const AppProductsProductIdRoute = AppProductsProductIdRouteImport.update({
   path: '/products/$productId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppRetroIndexRoute = AppRetroIndexRouteImport.update({
+  id: '/retro/',
+  path: '/retro/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppRetroRetroIdRoute = AppRetroRetroIdRouteImport.update({
+  id: '/retro/$retroId',
+  path: '/retro/$retroId',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppRunsIndexRoute = AppRunsIndexRouteImport.update({
   id: '/runs/',
   path: '/runs/',
@@ -100,6 +113,12 @@ const AppProductsProductIdSetupsRoute =
     path: '/products/$productId/setups',
     getParentRoute: () => AppRoute,
   } as any)
+const AppRetroSignalResultsResultIdRoute =
+  AppRetroSignalResultsResultIdRouteImport.update({
+    id: '/retro/signal-results/$resultId',
+    path: '/retro/signal-results/$resultId',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -109,13 +128,16 @@ export interface FileRoutesByFullPath {
   '/workspaces': typeof AppWorkspacesRoute
   '/setup/': typeof SetupIndexRoute
   '/products/$productId': typeof AppProductsProductIdRoute
+  '/retro/$retroId': typeof AppRetroRetroIdRoute
   '/runs/$runId': typeof AppRunsRunIdRoute
   '/settings/install': typeof AppSettingsInstallRoute
   '/setup/github/created': typeof SetupGithubCreatedRoute
   '/setup/github/installed': typeof SetupGithubInstalledRoute
   '/products/': typeof AppProductsIndexRoute
+  '/retro/': typeof AppRetroIndexRoute
   '/runs/': typeof AppRunsIndexRoute
   '/products/$productId/setups': typeof AppProductsProductIdSetupsRoute
+  '/retro/signal-results/$resultId': typeof AppRetroSignalResultsResultIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -125,13 +147,16 @@ export interface FileRoutesByTo {
   '/workspaces': typeof AppWorkspacesRoute
   '/setup': typeof SetupIndexRoute
   '/products/$productId': typeof AppProductsProductIdRoute
+  '/retro/$retroId': typeof AppRetroRetroIdRoute
   '/runs/$runId': typeof AppRunsRunIdRoute
   '/settings/install': typeof AppSettingsInstallRoute
   '/setup/github/created': typeof SetupGithubCreatedRoute
   '/setup/github/installed': typeof SetupGithubInstalledRoute
   '/products': typeof AppProductsIndexRoute
+  '/retro': typeof AppRetroIndexRoute
   '/runs': typeof AppRunsIndexRoute
   '/products/$productId/setups': typeof AppProductsProductIdSetupsRoute
+  '/retro/signal-results/$resultId': typeof AppRetroSignalResultsResultIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -143,13 +168,16 @@ export interface FileRoutesById {
   '/_app/workspaces': typeof AppWorkspacesRoute
   '/setup/': typeof SetupIndexRoute
   '/_app/products/$productId': typeof AppProductsProductIdRoute
+  '/_app/retro/$retroId': typeof AppRetroRetroIdRoute
   '/_app/runs/$runId': typeof AppRunsRunIdRoute
   '/_app/settings/install': typeof AppSettingsInstallRoute
   '/setup/github/created': typeof SetupGithubCreatedRoute
   '/setup/github/installed': typeof SetupGithubInstalledRoute
   '/_app/products/': typeof AppProductsIndexRoute
+  '/_app/retro/': typeof AppRetroIndexRoute
   '/_app/runs/': typeof AppRunsIndexRoute
   '/_app/products/$productId_/setups': typeof AppProductsProductIdSetupsRoute
+  '/_app/retro/signal-results/$resultId': typeof AppRetroSignalResultsResultIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -161,13 +189,16 @@ export interface FileRouteTypes {
     | '/workspaces'
     | '/setup/'
     | '/products/$productId'
+    | '/retro/$retroId'
     | '/runs/$runId'
     | '/settings/install'
     | '/setup/github/created'
     | '/setup/github/installed'
     | '/products/'
+    | '/retro/'
     | '/runs/'
     | '/products/$productId/setups'
+    | '/retro/signal-results/$resultId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -177,13 +208,16 @@ export interface FileRouteTypes {
     | '/workspaces'
     | '/setup'
     | '/products/$productId'
+    | '/retro/$retroId'
     | '/runs/$runId'
     | '/settings/install'
     | '/setup/github/created'
     | '/setup/github/installed'
     | '/products'
+    | '/retro'
     | '/runs'
     | '/products/$productId/setups'
+    | '/retro/signal-results/$resultId'
   id:
     | '__root__'
     | '/'
@@ -194,13 +228,16 @@ export interface FileRouteTypes {
     | '/_app/workspaces'
     | '/setup/'
     | '/_app/products/$productId'
+    | '/_app/retro/$retroId'
     | '/_app/runs/$runId'
     | '/_app/settings/install'
     | '/setup/github/created'
     | '/setup/github/installed'
     | '/_app/products/'
+    | '/_app/retro/'
     | '/_app/runs/'
     | '/_app/products/$productId_/setups'
+    | '/_app/retro/signal-results/$resultId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -277,6 +314,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProductsProductIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/retro/': {
+      id: '/_app/retro/'
+      path: '/retro'
+      fullPath: '/retro/'
+      preLoaderRoute: typeof AppRetroIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/retro/$retroId': {
+      id: '/_app/retro/$retroId'
+      path: '/retro/$retroId'
+      fullPath: '/retro/$retroId'
+      preLoaderRoute: typeof AppRetroRetroIdRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/runs/': {
       id: '/_app/runs/'
       path: '/runs'
@@ -319,6 +370,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProductsProductIdSetupsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/retro/signal-results/$resultId': {
+      id: '/_app/retro/signal-results/$resultId'
+      path: '/retro/signal-results/$resultId'
+      fullPath: '/retro/signal-results/$resultId'
+      preLoaderRoute: typeof AppRetroSignalResultsResultIdRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -327,11 +385,14 @@ interface AppRouteChildren {
   AppFloorRoute: typeof AppFloorRoute
   AppWorkspacesRoute: typeof AppWorkspacesRoute
   AppProductsProductIdRoute: typeof AppProductsProductIdRoute
+  AppRetroRetroIdRoute: typeof AppRetroRetroIdRoute
   AppRunsRunIdRoute: typeof AppRunsRunIdRoute
   AppSettingsInstallRoute: typeof AppSettingsInstallRoute
   AppProductsIndexRoute: typeof AppProductsIndexRoute
+  AppRetroIndexRoute: typeof AppRetroIndexRoute
   AppRunsIndexRoute: typeof AppRunsIndexRoute
   AppProductsProductIdSetupsRoute: typeof AppProductsProductIdSetupsRoute
+  AppRetroSignalResultsResultIdRoute: typeof AppRetroSignalResultsResultIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -339,11 +400,14 @@ const AppRouteChildren: AppRouteChildren = {
   AppFloorRoute: AppFloorRoute,
   AppWorkspacesRoute: AppWorkspacesRoute,
   AppProductsProductIdRoute: AppProductsProductIdRoute,
+  AppRetroRetroIdRoute: AppRetroRetroIdRoute,
   AppRunsRunIdRoute: AppRunsRunIdRoute,
   AppSettingsInstallRoute: AppSettingsInstallRoute,
   AppProductsIndexRoute: AppProductsIndexRoute,
+  AppRetroIndexRoute: AppRetroIndexRoute,
   AppRunsIndexRoute: AppRunsIndexRoute,
   AppProductsProductIdSetupsRoute: AppProductsProductIdSetupsRoute,
+  AppRetroSignalResultsResultIdRoute: AppRetroSignalResultsResultIdRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

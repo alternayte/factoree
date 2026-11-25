@@ -24,7 +24,8 @@ import {
 } from "@/api/sdk.gen";
 import { Button } from "@/components/button";
 import { Confirm } from "@/components/confirm";
-import { Field, Input, SavedNote, Select, Textarea } from "@/components/form";
+import { Field, Input, SavedNote, Select, Switch, Textarea } from "@/components/form";
+import { Markdown } from "@/components/markdown";
 import { AllowedDomainsHelp, AutonomyHelp, AutonomyOptions, RiskCapsHelp } from "@/components/policy-help";
 import {
   Alert,
@@ -44,7 +45,18 @@ import { levelHelp } from "@/lib/policy-help";
 import { AUTONOMY_LEVELS, pickWorkspace, type AutonomyLevel } from "@/lib/workspace";
 import { ContextSourcesSection } from "./context-sources-section";
 import { ModelWarning, RecentSessionsSection } from "./model-defaults";
-import { bodyOf, formOf, LIMITS, type Product, type ProductForm } from "./product-form";
+import {
+  bodyOf,
+  byteLength,
+  formOf,
+  LIMITS,
+  PRODUCT_GOAL_MAX_BYTES,
+  RETRO_RETENTION,
+  type Product,
+  type ProductForm,
+} from "./product-form";
+import { SignalSourcesSection } from "./signal-sources-section";
+import { cn } from "@/lib/utils";
 import { SecretsSection, type KeyRequest } from "./secrets-section";
 import { HostCredentialsSection } from "./host-credentials-section";
 import { AgentsSection } from "./model-picker";
@@ -327,6 +339,8 @@ function ProductEditor({
               </Field>
             </div>
           </Section>
+
+          <ProductGoalSection value={form.productGoal} onChange={(goal) => set("productGoal", goal)} disabled={disabled} />
         </div>
         <div className="flex min-w-0 flex-col gap-4">
           <Section
@@ -459,6 +473,39 @@ function ProductEditor({
               </Alert>
             ) : null}
           </Section>
+
+          <Section
+            title="Retro data"
+            description="A kept transcript is the redacted, gzipped output and tool inputs of one agent session. The retro agent reads it. Factoree deletes kept transcripts and signal results after the retention."
+          >
+            <div className="flex flex-col gap-4">
+              <Switch
+                checked={form.keepTranscripts}
+                disabled={disabled}
+                label="Keep transcripts"
+                onCheckedChange={(on) => set("keepTranscripts", on)}
+              />
+              <Field
+                label="Retro data retention (days)"
+                hint={`${RETRO_RETENTION.min} to ${RETRO_RETENTION.max}. A weekly retro needs at least a week.`}
+                className="max-w-56"
+              >
+                {(props) => (
+                  <Input
+                    {...props}
+                    type="number"
+                    required
+                    min={RETRO_RETENTION.min}
+                    max={RETRO_RETENTION.max}
+                    step={1}
+                    disabled={disabled}
+                    value={form.retroRetentionDays}
+                    onChange={(e) => set("retroRetentionDays", e.target.value)}
+                  />
+                )}
+              </Field>
+            </div>
+          </Section>
         </div>
 
         {problems.length > 0 ? (
@@ -499,6 +546,7 @@ function ProductEditor({
             prefill={credentialPrefill}
           />
           <ContextSourcesSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
+          <SignalSourcesSection productId={product.id} linearWorkspaceId={linearWorkspaceId} canEdit={canEdit} />
         </div>
       </div>
 
@@ -547,6 +595,73 @@ function ProductEditor({
         {remove.error ? <ErrorAlert error={remove.error} className="mt-3" /> : null}
       </Confirm>
     </>
+  );
+}
+
+/** docs/specs/retro-agent.md. The product goal in markdown, with a preview. Only the retro agent reads it. */
+function ProductGoalSection({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (goal: string) => void;
+  disabled: boolean;
+}) {
+  const [preview, setPreview] = useState(false);
+  const bytes = byteLength(value);
+  const over = bytes > PRODUCT_GOAL_MAX_BYTES;
+  return (
+    <Section
+      title="Product goal"
+      description="What the product must achieve and what to improve first, in markdown. Only the retro agent reads it. Runs do not."
+      actions={
+        <div role="radiogroup" aria-label="Product goal view" className="segmented">
+          {[false, true].map((on) => (
+            <button
+              key={String(on)}
+              type="button"
+              role="radio"
+              aria-checked={preview === on}
+              className={cn("segment", preview === on && "segment-on")}
+              onClick={() => setPreview(on)}
+            >
+              {on ? "Preview" : "Write"}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      {preview ? (
+        value.trim() ? (
+          <div className="min-h-32 rounded-control border border-hairline p-3">
+            <Markdown source={value} />
+          </div>
+        ) : (
+          <p className="t-hint">No product goal. The retro agent ranks error findings first, then factory findings, then idea findings.</p>
+        )
+      ) : (
+        <Field
+          label="Goal"
+          hint={
+            <span className={over ? "text-danger" : undefined}>
+              Optional. {(bytes / 1024).toFixed(1)} of {PRODUCT_GOAL_MAX_BYTES / 1024} KiB.
+            </span>
+          }
+        >
+          {(props) => (
+            <Textarea
+              {...props}
+              rows={8}
+              disabled={disabled}
+              placeholder={"# Goal\nMore teams finish onboarding in one session.\n\n## First\n- Fix the errors users hit on sign-up."}
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+            />
+          )}
+        </Field>
+      )}
+    </Section>
   );
 }
 

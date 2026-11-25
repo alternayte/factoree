@@ -21,6 +21,8 @@ model Tenant {
   retiredSnapshots     RetiredWarmSnapshot[]
   buildAheadFailures   BuildAheadFailure[]
   linearMembers        LinearMember[]
+  retroSettings        RetroSettings?
+  retros               Retro[]
 }
 
 model GitHubInstallation {
@@ -84,6 +86,9 @@ model Run {
   // docs/specs/run-recovery.md. A follow-up run shares the agent session of the run it follows.
   linearAgentSessionId      String
   followUpOfRunId           String?                     @map("follow_up_of_run_id")
+  // docs/specs/retro-agent.md. The redacted human reply that started this follow-up run, so a
+  // retro reads it. Null on a run that no reply started.
+  followUpReply             String?                     @map("follow_up_reply")
   temporalWorkflowId        String                      @unique
   status                    String
   failureReason             String?
@@ -176,6 +181,7 @@ model Run {
   targets                   RunTarget[]
   targetEdges               RunTargetEdge[]
   originOfPullRequests      PullRequest[]
+  transcripts               AgentTranscript[]
 
   @@index([tenantId])
   @@index([productId, status])
@@ -720,6 +726,11 @@ model Product {
   // start on one pull request. Only the product sets them, never .factoree/config.yaml (R-4).
   reviewAppDenyList            String[]                     @default([]) @map("review_app_deny_list")
   automaticFollowUpLimit       Int                          @default(3) @map("automatic_follow_up_limit")
+  // docs/specs/retro-agent.md. The product goal in markdown, which only the retro agent reads,
+  // the switch that keeps agent transcripts, and the days kept transcripts and signal results stay.
+  productGoal                  String?                      @map("product_goal")
+  keepTranscripts              Boolean                      @default(false) @map("keep_transcripts")
+  retroRetentionDays           Int                          @default(30) @map("retro_retention_days")
   createdAt                    DateTime                     @default(now())
   updatedAt                    DateTime                     @updatedAt
   repositories                 Repository[]
@@ -730,6 +741,11 @@ model Product {
   contextSources               ContextSourceConfiguration[]
   runs                         Run[]
   policyChanges                ProductPolicyChange[]
+  signalSources                SignalSource[]
+  retroSessions                RetroSession[]
+  retroFindings                RetroFinding[]
+  signalResults                SignalResult[]
+  transcripts                  AgentTranscript[]
 
   @@unique([tenantId, slug])
   // One Linear team maps to at most one Product. This constraint makes the routing rule of
@@ -938,6 +954,13 @@ model InstallSettings {
   drainStartedAt              DateTime?
   drainStartedBy              String?
   drainRelease                String?
+  // docs/specs/retro-agent.md. The S3-compatible bucket of kept transcripts. Null keeps them in
+  // Postgres. FACTOREE_TRANSCRIPT_S3_* env vars win over these columns.
+  transcriptS3Endpoint        String?   @map("transcript_s3_endpoint")
+  transcriptS3Bucket          String?   @map("transcript_s3_bucket")
+  transcriptS3Region          String?   @map("transcript_s3_region")
+  transcriptS3AccessKey       String?   @map("transcript_s3_access_key")
+  transcriptS3SecretKeyCipher String?   @map("transcript_s3_secret_key_cipher")
   updatedAt                   DateTime  @updatedAt
 }
 
@@ -1322,6 +1345,10 @@ model SessionPulse {
   run          Run?             @relation(fields: [runId], references: [id], onDelete: Cascade)
   setupId      String?          @map("setup_id")
   setup        RepositorySetup? @relation(fields: [setupId], references: [id], onDelete: Cascade)
+  // docs/specs/retro-agent.md. The retro of a retro session, with the product it reads.
+  retroId      String?          @map("retro_id")
+  retro        Retro?           @relation(fields: [retroId], references: [id], onDelete: Cascade)
+  productId    String?          @map("product_id")
   role         String
   // read, edit, shell, browser or think.
   toolKind     String           @map("tool_kind")
@@ -1330,6 +1357,191 @@ model SessionPulse {
 
   @@index([runId, createdAt])
   @@index([setupId, createdAt])
+  @@index([retroId, createdAt])
   @@index([tenantId, createdAt])
   @@map("session_pulse")
+}
+
+// docs/specs/retro-agent.md. The retro settings of one tenant. The Temporal Schedule
+// retro-<tenantId> follows them.
+model RetroSettings {
+  tenantId   String   @id @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // off, daily or weekly.
+  schedule   String   @default("off")
+  // 1 (Monday) to 7 (Sunday). Only a weekly schedule reads it.
+  weekday    Int      @default(1)
+  hour       Int      @default(9)
+  // An IANA time zone.
+  timeZone   String   @default("UTC") @map("time_zone")
+  // The products a retro reads. Empty means every active product of the tenant.
+  productIds String[] @default([]) @map("product_ids")
+  // The runner, model and effort of the retro role. Null means the product's default.
+  runner     String?
+  model      String?
+  effort     String?
+  costCapUsd Float    @default(5) @map("cost_cap_usd")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("retro_settings")
+}
+
+// docs/specs/retro-agent.md. One pass of the retro agent over the ended runs of a tenant.
+model Retro {
+  id             String         @id @default(uuid())
+  tenantId       String         @map("tenant_id")
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  workflowId     String         @unique @map("workflow_id")
+  // schedule or manual.
+  trigger        String
+  // running, succeeded or failed.
+  status         String
+  // The runs it reads ended after windowStart (null: no earlier successful retro) and at or before windowEnd.
+  windowStart    DateTime?      @map("window_start")
+  windowEnd      DateTime       @map("window_end")
+  promptVersion  String         @map("prompt_version")
+  // The products the retro reads, in session order.
+  productIds     String[]       @default([]) @map("product_ids")
+  costUsd        Float?         @map("cost_usd")
+  findingCount   Int            @default(0) @map("finding_count")
+  failureMessage String?        @map("failure_message")
+  // Each fault of the retro: kind, product, message.
+  events         Json           @default("[]")
+  startedAt      DateTime       @default(now()) @map("started_at")
+  endedAt        DateTime?      @map("ended_at")
+  sessions       RetroSession[]
+  findings       RetroFinding[]
+  signalResults  SignalResult[]
+  sessionPulses  SessionPulse[]
+
+  @@index([tenantId, startedAt])
+  @@index([tenantId, status])
+  @@map("retro")
+}
+
+// docs/specs/retro-agent.md. The agent session of one product in one retro, with the measured
+// numbers of the runs it read.
+model RetroSession {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  retroId        String   @map("retro_id")
+  retro          Retro    @relation(fields: [retroId], references: [id], onDelete: Cascade)
+  productId      String   @map("product_id")
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  // finished, failed or skipped.
+  status         String
+  runCount       Int      @default(0) @map("run_count")
+  runner         String?
+  model          String?
+  effort         String?
+  outcome        String?
+  costUsd        Float?   @map("cost_usd")
+  durationMs     Int?     @map("duration_ms")
+  // firstPassRate, repairsPerRun, hungSessions, costPerRun over the runs it read.
+  metrics        Json?
+  failureMessage String?  @map("failure_message")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([retroId, productId])
+  @@map("retro_session")
+}
+
+// docs/specs/retro-agent.md. One retro finding. Factoree checked its citations before it stored it.
+model RetroFinding {
+  id                    String    @id @default(uuid())
+  tenantId              String    @map("tenant_id")
+  retroId               String    @map("retro_id")
+  retro                 Retro     @relation(fields: [retroId], references: [id], onDelete: Cascade)
+  productId             String    @map("product_id")
+  product               Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  // factory, error or idea.
+  kind                  String
+  title                 String
+  description           String
+  runIds                String[]  @map("run_ids")
+  signalResultIds       String[]  @map("signal_result_ids")
+  repositories          String[]
+  // proposed, created, dismissed or already_proposed.
+  status                String
+  // The open finding of the same product with the same title, for an already_proposed finding.
+  duplicateOfId         String?   @map("duplicate_of_id")
+  linearIssueId         String?   @map("linear_issue_id")
+  linearIssueIdentifier String?   @map("linear_issue_identifier")
+  linearIssueUrl        String?   @map("linear_issue_url")
+  decidedBy             String?   @map("decided_by")
+  decidedAt             DateTime? @map("decided_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  @@index([retroId])
+  @@index([productId, status])
+  @@map("retro_finding")
+}
+
+// docs/specs/retro-agent.md. A product's MCP server for production errors or analytics, with the
+// queries Factoree runs before each retro session.
+model SignalSource {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  productId  String   @map("product_id")
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name       String
+  // errors or analytics.
+  kind       String
+  endpoint   String
+  // The product secret that holds the bearer token, or null for none.
+  secretName String?  @map("secret_name")
+  // Each query: name, tool, arguments, maxBytes.
+  queries    Json     @default("[]")
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([productId, name])
+  @@index([tenantId])
+  @@map("signal_source")
+}
+
+// docs/specs/retro-agent.md. The redacted output of one signal source query in one retro.
+model SignalResult {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  retroId    String   @map("retro_id")
+  retro      Retro    @relation(fields: [retroId], references: [id], onDelete: Cascade)
+  productId  String   @map("product_id")
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sourceName String   @map("source_name")
+  // errors or analytics.
+  sourceKind String   @map("source_kind")
+  queryName  String   @map("query_name")
+  content    String
+  sha256     String
+  bytes      Int
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([retroId])
+  @@index([productId, createdAt])
+  @@map("signal_result")
+}
+
+// docs/specs/retro-agent.md, SDD section 61. The redacted, gzipped transcript of one agent session
+// of a product that keeps transcripts. The bytes live here, or in the bucket under objectKey.
+model AgentTranscript {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  productId      String   @map("product_id")
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  runId          String   @map("run_id")
+  run            Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  role           String
+  attempt        Int
+  bytes          Int
+  gzip           Bytes?
+  objectKey      String?  @map("object_key")
+  idempotencyKey String   @map("idempotency_key")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([runId])
+  @@index([productId, createdAt])
+  @@map("agent_transcript")
 }

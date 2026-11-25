@@ -110,6 +110,12 @@ import type { WorkItemContentPort } from "~/domain/context/work-item-content.js"
 import { createLinearWorkItemReader } from "~/adapters/linear/linear-work-item-content.js";
 import { GitHubWorkItemLinks } from "~/adapters/github/github-work-item-links.js";
 import { createModelsDevSource } from "~/adapters/models-dev/models-dev-source.js";
+import { PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore, PrismaTranscriptStore } from "~/persistence/prisma/retro.prisma.js";
+import { parseRetroSessionRunId, resolveRetroRole } from "~/domain/retro/retro-settings.js";
+import { completeBucket, effectiveBucket } from "~/domain/retro/transcript.js";
+import { S3ObjectStore, type ObjectStore } from "~/adapters/s3/s3-object-store.js";
+import type { TranscriptSink } from "~/adapters/runners/cli-agent-runner.js";
+import { createRetroScheduler } from "~/temporal/retro-schedule.js";
 
 // docs/specs/release-0-1-0.md. `factoree --version` answers before the environment loads, so it
 // works with no configuration.
@@ -237,13 +243,47 @@ const sandboxManager = new SandboxManager({
 // model of one runner means nothing to the other.
 const modelCatalog = new ModelCatalogService({ store: new PrismaModelCatalogStore(prisma), source: createModelsDevSource(), logger });
 
+// docs/specs/retro-agent.md. The retro settings, retros, signal sources and kept transcripts. The
+// transcript bucket is read for each write, so a change in Settings applies to the next one.
+const retroSettingsStore = new PrismaRetroSettingsStore(prisma);
+const retroStore = new PrismaRetroStore(prisma);
+const transcriptBucket = async (): Promise<ObjectStore | null> => {
+  const bucket = completeBucket(effectiveBucket((await settings.read()).transcriptBucket, env));
+  return bucket === null ? null : new S3ObjectStore(bucket);
+};
+const transcriptStore = new PrismaTranscriptStore(prisma, transcriptBucket);
+// SDD section 61. Only a run of a product that keeps transcripts stores one. A setup or a retro
+// session has no run row, and its owner holds a colon.
+const transcriptSink: TranscriptSink = {
+  keep: async ({ tenantId, owner, role, invocation, text }) => {
+    if (owner.includes(":")) return;
+    const run = await prisma.run.findUnique({ where: { id: owner }, select: { productId: true, product: { select: { keepTranscripts: true } } } });
+    if (run === null || !run.product.keepTranscripts) return;
+    const attempt = (await prisma.agentTranscript.count({ where: { runId: owner, role } })) + 1;
+    await transcriptStore
+      .keep({ tenantId, productId: run.productId, runId: owner, role, attempt, text, idempotencyKey: `${owner}:${role}:${invocation}` })
+      .catch((error: unknown) => logger.warn("the transcript was not kept", { run_id: owner, role, error: String(error) }));
+  },
+};
+
 const sessionSettings = async (input: AgentRunInput, runner: string): Promise<AgentSessionSettings> => {
   // docs/specs/repository-setup-and-services.md. A setup session belongs to a setup row, not a run.
-  const product = input.runId.startsWith("setup:")
-    ? (await prisma.repositorySetup.findUniqueOrThrow({ where: { id: input.runId.slice("setup:".length) }, include: { product: true } })).product
-    : (await prisma.run.findUniqueOrThrow({ where: { id: input.runId }, include: { product: true } })).product;
+  // docs/specs/retro-agent.md. A retro session belongs to a retro and a product, and the tenant's
+  // retro settings pick its runner, model and effort.
+  const retroSession = parseRetroSessionRunId(input.runId);
+  const product =
+    retroSession !== null
+      ? await prisma.product.findUniqueOrThrow({ where: { id: retroSession.productId } })
+      : input.runId.startsWith("setup:")
+        ? (await prisma.repositorySetup.findUniqueOrThrow({ where: { id: input.runId.slice("setup:".length) }, include: { product: true } })).product
+        : (await prisma.run.findUniqueOrThrow({ where: { id: input.runId }, include: { product: true } })).product;
   const record = await products.findById(product.tenantId, product.id);
-  const resolved = record === null ? null : resolveRole(record, input.role);
+  const resolved =
+    record === null
+      ? null
+      : input.role === "retro"
+        ? resolveRetroRole((await retroSettingsStore.read(product.tenantId)), record)
+        : resolveRole(record, input.role);
   const matches = resolved !== null && resolved.runner === runner;
   // B-2. On the sandbox image the runner calls the root-owned CLI, never one the bootstrap installed.
   const customImage = (await sandbox.forRef(input.ref)).capabilities.supportsCustomImage;
@@ -264,7 +304,7 @@ const sessionSettings = async (input: AgentRunInput, runner: string): Promise<Ag
 // SDD section 33 names two required adapters. docs/specs/claude-code-runner.md: the Product
 // selects one of them for each role.
 // docs/specs/factory-floor.md. Each running session writes a pulse for the factory floor.
-const runners = buildAgentRunnerRegistry(redactor, {}, { settingsFor: sessionSettings, pulses: new PrismaSessionPulseStore(prisma) });
+const runners = buildAgentRunnerRegistry(redactor, {}, { settingsFor: sessionSettings, pulses: new PrismaSessionPulseStore(prisma), transcripts: transcriptSink });
 const reaper = new SpriteReaper({
   // docs/specs/sandbox-provider-spillover.md. The view of the provider each ref names.
   sandboxes: (providerId) => sandbox.forProvider(providerId),
@@ -562,6 +602,22 @@ const worker = await Worker.create({
     sandboxProviderIds: usableProviderIds,
     buildAheadFailures,
     sandboxProviderName: async (providerId) => (await sandboxProviders.find(providerId))?.name ?? null,
+    // docs/specs/retro-agent.md.
+    retro: {
+      retroSettings: retroSettingsStore,
+      retros: retroStore,
+      signalSources: new PrismaSignalSourceStore(prisma),
+      transcripts: transcriptStore,
+      products,
+      repositories,
+      secrets,
+      sandbox,
+      providerSelector,
+      runners,
+      mcpTools: (endpoint, token) => new McpJsonRpcClient({ endpoint, token, fetch }),
+      redactor,
+      logger,
+    },
     runners,
     executions: new PrismaAgentExecutionRepository(prisma),
     sessions: new PrismaAgentSessionStore(prisma),
@@ -675,6 +731,25 @@ const reapTimer = setInterval(() => {
 }, REAP_INTERVAL_MS);
 reapTimer.unref();
 
+// docs/specs/retro-agent.md, SDD section 51. Kept transcripts and signal results stay for the
+// product's retro data retention. One pass an hour, one at a time.
+const RETRO_RETENTION_INTERVAL_MS = 60 * 60_000;
+let retroCleaning = false;
+const retroRetentionTimer = setInterval(() => {
+  if (retroCleaning) return;
+  retroCleaning = true;
+  void transcriptBucket()
+    .then((bucket) => retroStore.deleteExpired(new Date(), bucket))
+    .then((deleted) => {
+      if (deleted.transcripts + deleted.signalResults > 0) logger.info("retro data past its retention deleted", { ...deleted, step: "retention" });
+    })
+    .catch((error: unknown) => logger.error("the retro data retention pass failed", { error: String(error), step: "retention" }))
+    .finally(() => {
+      retroCleaning = false;
+    });
+}, RETRO_RETENTION_INTERVAL_MS);
+retroRetentionTimer.unref();
+
 // docs/specs/host-credentials.md. A `github` installation token expires after 1 hour, so the
 // worker binds a new one on each live sandbox that holds it. One pass at a time.
 let rebinding = false;
@@ -787,6 +862,19 @@ try {
   logger.error("the worker did not end drain mode", { step: "drain", error: String(error) });
 }
 
+// docs/specs/retro-agent.md. The stored retro settings are the truth. A save that could not reach
+// Temporal, or a schedule removed by hand, is put right here, so the schedule follows the settings.
+try {
+  const scheduler = createRetroScheduler(blockerClient, env.FACTOREE_TEMPORAL_TASK_QUEUE);
+  for (const stored of await retroSettingsStore.listAll()) {
+    await scheduler.reconcile(stored).catch((error: unknown) =>
+      logger.warn("the retro schedule of a tenant was not reconciled", { step: "boot", tenant_id: stored.tenantId, error: String(error) }),
+    );
+  }
+} catch (error) {
+  logger.warn("the worker did not reconcile the retro schedules", { step: "boot", error: String(error) });
+}
+
 logger.info("worker started", {
   step: "boot",
   version: buildInfo.version,
@@ -798,6 +886,7 @@ try {
   await worker.run();
 } finally {
   clearInterval(reapTimer);
+  clearInterval(retroRetentionTimer);
   clearInterval(blockerTimer);
   await blockerClient.connection.close();
   repositoryReader.close();

@@ -112,11 +112,24 @@ export interface GitAuthorSettings {
   email: string;
 }
 
+/**
+ * docs/specs/retro-agent.md. The S3-compatible bucket of kept transcripts. With no bucket, the
+ * transcripts stay in Postgres. A `FACTOREE_TRANSCRIPT_S3_*` env var wins over each field.
+ */
+export interface TranscriptBucketSettings {
+  endpoint: string | null;
+  bucket: string | null;
+  region: string | null;
+  accessKey: string | null;
+  secretKey: string | null;
+}
+
 export interface InstallSettings {
   github: GitHubAppSettings;
   linear: LinearAppSettings;
   sandbox: SandboxSettings;
   gitAuthor: GitAuthorSettings;
+  transcriptBucket: TranscriptBucketSettings;
   /** The tenant whose Linear workspace admins administer these settings. Null before setup. */
   operatorTenantId: string | null;
   setupCompletedAt: Date | null;
@@ -131,6 +144,7 @@ export interface InstallSettingsPatch {
   linear?: SettingsPatch<LinearAppSettings> | undefined;
   sandbox?: SettingsPatch<SandboxSettings> | undefined;
   gitAuthor?: SettingsPatch<GitAuthorSettings> | undefined;
+  transcriptBucket?: SettingsPatch<TranscriptBucketSettings> | undefined;
   operatorTenantId?: string | null | undefined;
 }
 

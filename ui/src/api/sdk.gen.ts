@@ -30,12 +30,18 @@ import type {
   CreateProductData,
   CreateProductErrors,
   CreateProductResponses,
+  CreateRetroFindingIssueData,
+  CreateRetroFindingIssueErrors,
+  CreateRetroFindingIssueResponses,
   CreateSandboxProviderData,
   CreateSandboxProviderErrors,
   CreateSandboxProviderResponses,
   CreateSetupProductData,
   CreateSetupProductErrors,
   CreateSetupProductResponses,
+  CreateSignalSourceData,
+  CreateSignalSourceErrors,
+  CreateSignalSourceResponses,
   DecideRepositoryMembershipData,
   DecideRepositoryMembershipErrors,
   DecideRepositoryMembershipResponses,
@@ -51,6 +57,12 @@ import type {
   DeleteSandboxProviderData,
   DeleteSandboxProviderErrors,
   DeleteSandboxProviderResponses,
+  DeleteSignalSourceData,
+  DeleteSignalSourceErrors,
+  DeleteSignalSourceResponses,
+  DismissRetroFindingData,
+  DismissRetroFindingErrors,
+  DismissRetroFindingResponses,
   GetDrainModeData,
   GetDrainModeResponses,
   GetFloorData,
@@ -75,6 +87,12 @@ import type {
   GetProductGitHubAccessErrors,
   GetProductGitHubAccessResponses,
   GetProductResponses,
+  GetRetroData,
+  GetRetroErrors,
+  GetRetroResponses,
+  GetRetroSettingsData,
+  GetRetroSettingsErrors,
+  GetRetroSettingsResponses,
   GetRunData,
   GetRunErrors,
   GetRunResponses,
@@ -83,6 +101,9 @@ import type {
   GetSetupStatusData,
   GetSetupStatusErrors,
   GetSetupStatusResponses,
+  GetSignalResultData,
+  GetSignalResultErrors,
+  GetSignalResultResponses,
   ListApiKeysData,
   ListApiKeysResponses,
   ListContextSourcesData,
@@ -112,6 +133,9 @@ import type {
   ListRepositorySetupsData,
   ListRepositorySetupsErrors,
   ListRepositorySetupsResponses,
+  ListRetrosData,
+  ListRetrosErrors,
+  ListRetrosResponses,
   ListRunEventsData,
   ListRunEventsErrors,
   ListRunEventsResponses,
@@ -126,6 +150,9 @@ import type {
   ListSetupLinearTeamsData,
   ListSetupLinearTeamsErrors,
   ListSetupLinearTeamsResponses,
+  ListSignalSourcesData,
+  ListSignalSourcesErrors,
+  ListSignalSourcesResponses,
   ListWorkspacesData,
   ListWorkspacesResponses,
   PublishRunDraftData,
@@ -143,12 +170,21 @@ import type {
   PutProductSecretData,
   PutProductSecretErrors,
   PutProductSecretResponses,
+  PutRetroSettingsData,
+  PutRetroSettingsErrors,
+  PutRetroSettingsResponses,
   PutSandboxData,
   PutSandboxErrors,
   PutSandboxResponses,
+  RetryRetroScheduleData,
+  RetryRetroScheduleErrors,
+  RetryRetroScheduleResponses,
   RevokeApiKeyData,
   RevokeApiKeyErrors,
   RevokeApiKeyResponses,
+  RunRetroNowData,
+  RunRetroNowErrors,
+  RunRetroNowResponses,
   SetDrainModeData,
   SetDrainModeErrors,
   SetDrainModeResponses,
@@ -167,6 +203,9 @@ import type {
   TestContextSourceData,
   TestContextSourceErrors,
   TestContextSourceResponses,
+  TestSignalSourceData,
+  TestSignalSourceErrors,
+  TestSignalSourceResponses,
   UpdateInstallSettingsData,
   UpdateInstallSettingsErrors,
   UpdateInstallSettingsResponses,
@@ -176,6 +215,9 @@ import type {
   UpdateSandboxProviderData,
   UpdateSandboxProviderErrors,
   UpdateSandboxProviderResponses,
+  UpdateSignalSourceData,
+  UpdateSignalSourceErrors,
+  UpdateSignalSourceResponses,
 } from "./types.gen";
 
 export type Options<
@@ -1398,6 +1440,327 @@ export const revokeApiKey = <ThrowOnError extends boolean = false>(
     ],
     url: "/admin/api-keys/{id}",
     ...options,
+  });
+
+export const getRetroSettings = <ThrowOnError extends boolean = false>(
+  options: Options<GetRetroSettingsData, ThrowOnError>,
+): RequestResult<GetRetroSettingsResponses, GetRetroSettingsErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetRetroSettingsResponses, GetRetroSettingsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/retro/settings",
+    ...options,
+  });
+
+export const putRetroSettings = <ThrowOnError extends boolean = false>(
+  options: Options<PutRetroSettingsData, ThrowOnError>,
+): RequestResult<PutRetroSettingsResponses, PutRetroSettingsErrors, ThrowOnError> =>
+  (options.client ?? client).put<PutRetroSettingsResponses, PutRetroSettingsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/retro/settings",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Saves the Temporal Schedule from the stored retro settings again
+ */
+export const retryRetroSchedule = <ThrowOnError extends boolean = false>(
+  options: Options<RetryRetroScheduleData, ThrowOnError>,
+): RequestResult<RetryRetroScheduleResponses, RetryRetroScheduleErrors, ThrowOnError> =>
+  (options.client ?? client).post<RetryRetroScheduleResponses, RetryRetroScheduleErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/retro/settings/schedule",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+export const runRetroNow = <ThrowOnError extends boolean = false>(
+  options: Options<RunRetroNowData, ThrowOnError>,
+): RequestResult<RunRetroNowResponses, RunRetroNowErrors, ThrowOnError> =>
+  (options.client ?? client).post<RunRetroNowResponses, RunRetroNowErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/retro/run",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+export const listRetros = <ThrowOnError extends boolean = false>(
+  options: Options<ListRetrosData, ThrowOnError>,
+): RequestResult<ListRetrosResponses, ListRetrosErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListRetrosResponses, ListRetrosErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/retros",
+    ...options,
+  });
+
+export const getRetro = <ThrowOnError extends boolean = false>(
+  options: Options<GetRetroData, ThrowOnError>,
+): RequestResult<GetRetroResponses, GetRetroErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetRetroResponses, GetRetroErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/retros/{id}",
+    ...options,
+  });
+
+export const getSignalResult = <ThrowOnError extends boolean = false>(
+  options: Options<GetSignalResultData, ThrowOnError>,
+): RequestResult<GetSignalResultResponses, GetSignalResultErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetSignalResultResponses, GetSignalResultErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/retro/signal-results/{id}",
+    ...options,
+  });
+
+/**
+ * Creates the Linear issue of a finding. A factory or error finding is delegated to Factoree, an idea finding is not.
+ */
+export const createRetroFindingIssue = <ThrowOnError extends boolean = false>(
+  options: Options<CreateRetroFindingIssueData, ThrowOnError>,
+): RequestResult<CreateRetroFindingIssueResponses, CreateRetroFindingIssueErrors, ThrowOnError> =>
+  (options.client ?? client).post<CreateRetroFindingIssueResponses, CreateRetroFindingIssueErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/retro/findings/{id}/issue",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+export const dismissRetroFinding = <ThrowOnError extends boolean = false>(
+  options: Options<DismissRetroFindingData, ThrowOnError>,
+): RequestResult<DismissRetroFindingResponses, DismissRetroFindingErrors, ThrowOnError> =>
+  (options.client ?? client).post<DismissRetroFindingResponses, DismissRetroFindingErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/retro/findings/{id}/dismiss",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+export const listSignalSources = <ThrowOnError extends boolean = false>(
+  options: Options<ListSignalSourcesData, ThrowOnError>,
+): RequestResult<ListSignalSourcesResponses, ListSignalSourcesErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListSignalSourcesResponses, ListSignalSourcesErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/signal-sources",
+    ...options,
+  });
+
+export const createSignalSource = <ThrowOnError extends boolean = false>(
+  options: Options<CreateSignalSourceData, ThrowOnError>,
+): RequestResult<CreateSignalSourceResponses, CreateSignalSourceErrors, ThrowOnError> =>
+  (options.client ?? client).post<CreateSignalSourceResponses, CreateSignalSourceErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/signal-sources",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+export const deleteSignalSource = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteSignalSourceData, ThrowOnError>,
+): RequestResult<DeleteSignalSourceResponses, DeleteSignalSourceErrors, ThrowOnError> =>
+  (options.client ?? client).delete<DeleteSignalSourceResponses, DeleteSignalSourceErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/signal-sources/{sourceId}",
+    ...options,
+  });
+
+export const updateSignalSource = <ThrowOnError extends boolean = false>(
+  options: Options<UpdateSignalSourceData, ThrowOnError>,
+): RequestResult<UpdateSignalSourceResponses, UpdateSignalSourceErrors, ThrowOnError> =>
+  (options.client ?? client).put<UpdateSignalSourceResponses, UpdateSignalSourceErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/signal-sources/{sourceId}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Runs each query of an unsaved signal source and shows its size and its first 500 characters
+ */
+export const testSignalSource = <ThrowOnError extends boolean = false>(
+  options: Options<TestSignalSourceData, ThrowOnError>,
+): RequestResult<TestSignalSourceResponses, TestSignalSourceErrors, ThrowOnError> =>
+  (options.client ?? client).post<TestSignalSourceResponses, TestSignalSourceErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/products/{id}/signal-sources/test",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
   });
 
 export const getDrainMode = <ThrowOnError extends boolean = false>(

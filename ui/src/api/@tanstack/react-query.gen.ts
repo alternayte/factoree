@@ -19,13 +19,17 @@ import {
   createApiKey,
   createGitHubAppManifest,
   createProduct,
+  createRetroFindingIssue,
   createSandboxProvider,
   createSetupProduct,
+  createSignalSource,
   decideRepositoryMembership,
   deleteContextSource,
   deleteProduct,
   deleteProductSecret,
   deleteSandboxProvider,
+  deleteSignalSource,
+  dismissRetroFinding,
   getDrainMode,
   getFloor,
   getFloorReplay,
@@ -35,9 +39,12 @@ import {
   getProduct,
   getProductAutoMergeAttention,
   getProductGitHubAccess,
+  getRetro,
+  getRetroSettings,
   getRun,
   getSetupState,
   getSetupStatus,
+  getSignalResult,
   listApiKeys,
   listContextSources,
   listHostCredentials,
@@ -48,11 +55,13 @@ import {
   listRepositorySetupEvents,
   listRepositorySetupHistory,
   listRepositorySetups,
+  listRetros,
   listRunEvents,
   listRuns,
   listSandboxProviders,
   listSetupDerivedHosts,
   listSetupLinearTeams,
+  listSignalSources,
   listWorkspaces,
   type Options,
   publishRunDraft,
@@ -60,17 +69,22 @@ import {
   putHostCredentials,
   putLinearApp,
   putProductSecret,
+  putRetroSettings,
   putSandbox,
+  retryRetroSchedule,
   revokeApiKey,
+  runRetroNow,
   setDrainMode,
   startLinearInstall,
   startRepositorySetups,
   startSetupLinearInstall,
   stopRun,
   testContextSource,
+  testSignalSource,
   updateInstallSettings,
   updateProduct,
   updateSandboxProvider,
+  updateSignalSource,
 } from "../sdk.gen";
 import type {
   ActivateProductData,
@@ -100,12 +114,18 @@ import type {
   CreateProductData,
   CreateProductError,
   CreateProductResponse,
+  CreateRetroFindingIssueData,
+  CreateRetroFindingIssueError,
+  CreateRetroFindingIssueResponse,
   CreateSandboxProviderData,
   CreateSandboxProviderError,
   CreateSandboxProviderResponse,
   CreateSetupProductData,
   CreateSetupProductError,
   CreateSetupProductResponse,
+  CreateSignalSourceData,
+  CreateSignalSourceError,
+  CreateSignalSourceResponse,
   DecideRepositoryMembershipData,
   DecideRepositoryMembershipError,
   DecideRepositoryMembershipResponse,
@@ -121,6 +141,12 @@ import type {
   DeleteSandboxProviderData,
   DeleteSandboxProviderError,
   DeleteSandboxProviderResponse,
+  DeleteSignalSourceData,
+  DeleteSignalSourceError,
+  DeleteSignalSourceResponse,
+  DismissRetroFindingData,
+  DismissRetroFindingError,
+  DismissRetroFindingResponse,
   GetDrainModeData,
   GetDrainModeResponse,
   GetFloorData,
@@ -145,6 +171,12 @@ import type {
   GetProductGitHubAccessError,
   GetProductGitHubAccessResponse,
   GetProductResponse,
+  GetRetroData,
+  GetRetroError,
+  GetRetroResponse,
+  GetRetroSettingsData,
+  GetRetroSettingsError,
+  GetRetroSettingsResponse,
   GetRunData,
   GetRunError,
   GetRunResponse,
@@ -153,6 +185,9 @@ import type {
   GetSetupStatusData,
   GetSetupStatusError,
   GetSetupStatusResponse,
+  GetSignalResultData,
+  GetSignalResultError,
+  GetSignalResultResponse,
   ListApiKeysData,
   ListApiKeysResponse,
   ListContextSourcesData,
@@ -182,6 +217,9 @@ import type {
   ListRepositorySetupsData,
   ListRepositorySetupsError,
   ListRepositorySetupsResponse,
+  ListRetrosData,
+  ListRetrosError,
+  ListRetrosResponse,
   ListRunEventsData,
   ListRunEventsError,
   ListRunEventsResponse,
@@ -196,6 +234,9 @@ import type {
   ListSetupLinearTeamsData,
   ListSetupLinearTeamsError,
   ListSetupLinearTeamsResponse,
+  ListSignalSourcesData,
+  ListSignalSourcesError,
+  ListSignalSourcesResponse,
   ListWorkspacesData,
   ListWorkspacesResponse,
   PublishRunDraftData,
@@ -213,12 +254,21 @@ import type {
   PutProductSecretData,
   PutProductSecretError,
   PutProductSecretResponse,
+  PutRetroSettingsData,
+  PutRetroSettingsError,
+  PutRetroSettingsResponse,
   PutSandboxData,
   PutSandboxError,
   PutSandboxResponse,
+  RetryRetroScheduleData,
+  RetryRetroScheduleError,
+  RetryRetroScheduleResponse,
   RevokeApiKeyData,
   RevokeApiKeyError,
   RevokeApiKeyResponse,
+  RunRetroNowData,
+  RunRetroNowError,
+  RunRetroNowResponse,
   SetDrainModeData,
   SetDrainModeError,
   SetDrainModeResponse,
@@ -237,6 +287,9 @@ import type {
   TestContextSourceData,
   TestContextSourceError,
   TestContextSourceResponse,
+  TestSignalSourceData,
+  TestSignalSourceError,
+  TestSignalSourceResponse,
   UpdateInstallSettingsData,
   UpdateInstallSettingsError,
   UpdateInstallSettingsResponse,
@@ -246,6 +299,9 @@ import type {
   UpdateSandboxProviderData,
   UpdateSandboxProviderError,
   UpdateSandboxProviderResponse,
+  UpdateSignalSourceData,
+  UpdateSignalSourceError,
+  UpdateSignalSourceResponse,
 } from "../types.gen";
 
 export type QueryKey<TOptions extends Options> = [
@@ -1612,6 +1668,293 @@ export const revokeApiKeyMutation = (
   const mutationOptions: UseMutationOptions<RevokeApiKeyResponse, RevokeApiKeyError, Options<RevokeApiKeyData>> = {
     mutationFn: async (fnOptions) => {
       const { data } = await revokeApiKey({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const getRetroSettingsQueryKey = (options: Options<GetRetroSettingsData>) =>
+  createQueryKey("getRetroSettings", options);
+
+export const getRetroSettingsOptions = (options: Options<GetRetroSettingsData>) =>
+  queryOptions<
+    GetRetroSettingsResponse,
+    GetRetroSettingsError,
+    GetRetroSettingsResponse,
+    ReturnType<typeof getRetroSettingsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getRetroSettings({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getRetroSettingsQueryKey(options),
+  });
+
+export const putRetroSettingsMutation = (
+  options?: Partial<Options<PutRetroSettingsData>>,
+): UseMutationOptions<PutRetroSettingsResponse, PutRetroSettingsError, Options<PutRetroSettingsData>> => {
+  const mutationOptions: UseMutationOptions<
+    PutRetroSettingsResponse,
+    PutRetroSettingsError,
+    Options<PutRetroSettingsData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await putRetroSettings({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+/**
+ * Saves the Temporal Schedule from the stored retro settings again
+ */
+export const retryRetroScheduleMutation = (
+  options?: Partial<Options<RetryRetroScheduleData>>,
+): UseMutationOptions<RetryRetroScheduleResponse, RetryRetroScheduleError, Options<RetryRetroScheduleData>> => {
+  const mutationOptions: UseMutationOptions<
+    RetryRetroScheduleResponse,
+    RetryRetroScheduleError,
+    Options<RetryRetroScheduleData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await retryRetroSchedule({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const runRetroNowMutation = (
+  options?: Partial<Options<RunRetroNowData>>,
+): UseMutationOptions<RunRetroNowResponse, RunRetroNowError, Options<RunRetroNowData>> => {
+  const mutationOptions: UseMutationOptions<RunRetroNowResponse, RunRetroNowError, Options<RunRetroNowData>> = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await runRetroNow({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const listRetrosQueryKey = (options: Options<ListRetrosData>) => createQueryKey("listRetros", options);
+
+export const listRetrosOptions = (options: Options<ListRetrosData>) =>
+  queryOptions<ListRetrosResponse, ListRetrosError, ListRetrosResponse, ReturnType<typeof listRetrosQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listRetros({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listRetrosQueryKey(options),
+  });
+
+export const getRetroQueryKey = (options: Options<GetRetroData>) => createQueryKey("getRetro", options);
+
+export const getRetroOptions = (options: Options<GetRetroData>) =>
+  queryOptions<GetRetroResponse, GetRetroError, GetRetroResponse, ReturnType<typeof getRetroQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getRetro({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getRetroQueryKey(options),
+  });
+
+export const getSignalResultQueryKey = (options: Options<GetSignalResultData>) =>
+  createQueryKey("getSignalResult", options);
+
+export const getSignalResultOptions = (options: Options<GetSignalResultData>) =>
+  queryOptions<
+    GetSignalResultResponse,
+    GetSignalResultError,
+    GetSignalResultResponse,
+    ReturnType<typeof getSignalResultQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getSignalResult({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getSignalResultQueryKey(options),
+  });
+
+/**
+ * Creates the Linear issue of a finding. A factory or error finding is delegated to Factoree, an idea finding is not.
+ */
+export const createRetroFindingIssueMutation = (
+  options?: Partial<Options<CreateRetroFindingIssueData>>,
+): UseMutationOptions<
+  CreateRetroFindingIssueResponse,
+  CreateRetroFindingIssueError,
+  Options<CreateRetroFindingIssueData>
+> => {
+  const mutationOptions: UseMutationOptions<
+    CreateRetroFindingIssueResponse,
+    CreateRetroFindingIssueError,
+    Options<CreateRetroFindingIssueData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await createRetroFindingIssue({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const dismissRetroFindingMutation = (
+  options?: Partial<Options<DismissRetroFindingData>>,
+): UseMutationOptions<DismissRetroFindingResponse, DismissRetroFindingError, Options<DismissRetroFindingData>> => {
+  const mutationOptions: UseMutationOptions<
+    DismissRetroFindingResponse,
+    DismissRetroFindingError,
+    Options<DismissRetroFindingData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await dismissRetroFinding({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const listSignalSourcesQueryKey = (options: Options<ListSignalSourcesData>) =>
+  createQueryKey("listSignalSources", options);
+
+export const listSignalSourcesOptions = (options: Options<ListSignalSourcesData>) =>
+  queryOptions<
+    ListSignalSourcesResponse,
+    ListSignalSourcesError,
+    ListSignalSourcesResponse,
+    ReturnType<typeof listSignalSourcesQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listSignalSources({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listSignalSourcesQueryKey(options),
+  });
+
+export const createSignalSourceMutation = (
+  options?: Partial<Options<CreateSignalSourceData>>,
+): UseMutationOptions<CreateSignalSourceResponse, CreateSignalSourceError, Options<CreateSignalSourceData>> => {
+  const mutationOptions: UseMutationOptions<
+    CreateSignalSourceResponse,
+    CreateSignalSourceError,
+    Options<CreateSignalSourceData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await createSignalSource({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const deleteSignalSourceMutation = (
+  options?: Partial<Options<DeleteSignalSourceData>>,
+): UseMutationOptions<DeleteSignalSourceResponse, DeleteSignalSourceError, Options<DeleteSignalSourceData>> => {
+  const mutationOptions: UseMutationOptions<
+    DeleteSignalSourceResponse,
+    DeleteSignalSourceError,
+    Options<DeleteSignalSourceData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await deleteSignalSource({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const updateSignalSourceMutation = (
+  options?: Partial<Options<UpdateSignalSourceData>>,
+): UseMutationOptions<UpdateSignalSourceResponse, UpdateSignalSourceError, Options<UpdateSignalSourceData>> => {
+  const mutationOptions: UseMutationOptions<
+    UpdateSignalSourceResponse,
+    UpdateSignalSourceError,
+    Options<UpdateSignalSourceData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await updateSignalSource({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+/**
+ * Runs each query of an unsaved signal source and shows its size and its first 500 characters
+ */
+export const testSignalSourceMutation = (
+  options?: Partial<Options<TestSignalSourceData>>,
+): UseMutationOptions<TestSignalSourceResponse, TestSignalSourceError, Options<TestSignalSourceData>> => {
+  const mutationOptions: UseMutationOptions<
+    TestSignalSourceResponse,
+    TestSignalSourceError,
+    Options<TestSignalSourceData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await testSignalSource({
         ...options,
         ...fnOptions,
         throwOnError: true,
