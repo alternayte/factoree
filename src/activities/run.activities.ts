@@ -139,6 +139,8 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
     failureReason?: RunFailureReason;
     /** docs/specs/run-visibility.md. The sentence the human read. Absent in an older history. */
     failureMessage?: string;
+    /** The final response a REPORTED or ANSWERED run posts. Absent in an older history. */
+    finalResponse?: string;
     completedAt: string;
     /** DI-21.56. The total wait for a run slot or a sandbox slot. Absent in an older history. */
     waitedMs?: number;
@@ -152,6 +154,7 @@ export const createRunActivities = (dependencies: RunActivityDependencies) => ({
       ...(input.failureReason === undefined ? {} : { failureReason: input.failureReason }),
       ...(failureCategory === undefined ? {} : { failureCategory }),
       ...(input.failureMessage === undefined ? {} : { failureMessage: dependencies.redactor.redactText(input.failureMessage) }),
+      ...(input.finalResponse === undefined ? {} : { finalResponse: dependencies.redactor.redactText(input.finalResponse) }),
       completedAt: new Date(input.completedAt),
       ...(input.waitedMs === undefined ? {} : { waitedMs: Math.max(0, Math.round(input.waitedMs)) }),
     });

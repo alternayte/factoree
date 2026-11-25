@@ -333,7 +333,7 @@ export class Run {
 
   /** docs/specs/autonomy-levels.md. The Run posts its report as the final response and ends REPORTED. */
   async report(body: string): Promise<never> {
-    await this.complete("REPORTED");
+    await this.complete("REPORTED", { finalResponse: body });
     await notify(() => activities.postFinalResponse({ sessionId: this.input.agentSessionId, body }));
     throw this.ended();
   }
@@ -343,7 +343,7 @@ export class Run {
    * questions answered each one, pushed no commit, and ends ANSWERED. The body is its final response.
    */
   async answer(body: string): Promise<never> {
-    await this.complete("ANSWERED");
+    await this.complete("ANSWERED", { finalResponse: body });
     await notify(() => activities.postFinalResponse({ sessionId: this.input.agentSessionId, body }));
     throw this.ended();
   }

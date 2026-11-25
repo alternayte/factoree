@@ -91,6 +91,7 @@ The image has these commands:
 | [docs/specs/](docs/specs/) | The specs that amend the design. |
 | [docs/architecture.md](docs/architecture.md) | The architecture. |
 | [docs/quickstart.md](docs/quickstart.md) | One live run from a checkout, for development. |
+| [docs/repository-readiness.md](docs/repository-readiness.md) | What a repository needs before setup, and how a new app goes from a design doc to pull requests. |
 | [examples/](examples/) | `.factoree/config.yaml` files to start from. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test and submit a change. |
 | [TESTING.md](TESTING.md) | The test layers and the release checks. |

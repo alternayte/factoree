@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Factoree",
-    "version": "0.22.0"
+    "version": "0.22.1"
   },
   "components": {
     "securitySchemes": {
@@ -9741,6 +9741,12 @@
                     "temporalWorkflowId": {
                       "type": "string"
                     },
+                    "finalResponse": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "terminal": {
                       "type": "boolean"
                     },
@@ -10126,6 +10132,7 @@
                     "blockers",
                     "diagnosis",
                     "temporalWorkflowId",
+                    "finalResponse",
                     "terminal",
                     "stopRequestedAt",
                     "stopSource",

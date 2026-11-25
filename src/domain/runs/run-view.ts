@@ -129,6 +129,8 @@ export interface RunSkillProposalView {
 
 export interface RunDetail extends RunListItem {
   temporalWorkflowId: string;
+  /** The final response of a run that ended REPORTED or ANSWERED, or null. */
+  finalResponse: string | null;
   /** Issue #45. True when the status is terminal, so the run takes no stop. */
   terminal: boolean;
   /** Issue #45, DI-21.65. The first stop that reached the workflow, or null. */
