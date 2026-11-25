@@ -338,3 +338,32 @@ describe("countReviewerFollowUp", () => {
     expect(counted).toEqual(["run-2", "run-3"]);
   });
 });
+
+/** docs/specs/pr-review-merge-and-deploy.md, slice 4, DI-21.117. A stale event starts no bring-current run. */
+describe("planBringCurrent", () => {
+  const plan = (built: ReturnType<typeof build>, reason: "conflict" | "up_to_date") =>
+    built.activities.planBringCurrent({ tenantId: "tenant-1", pullRequestId: "pr-1", reason, triggerKey: "delivery-1" });
+
+  it("starts no run when the head holds the base already", async () => {
+    const built = build({ github: { mergeable: false, mergeableState: "dirty" }, behindBy: 0 });
+    expect(await plan(built, "conflict")).toEqual({ kind: "none", reason: "the head holds the base already" });
+  });
+
+  it("starts no run when GitHub reports no conflict now", async () => {
+    const built = build({ github: { mergeable: true, mergeableState: "clean" }, behindBy: 3 });
+    expect(await plan(built, "conflict")).toEqual({ kind: "none", reason: "the branch does not conflict" });
+  });
+
+  it("starts no run when the head on GitHub is not the recorded head", async () => {
+    const built = build({ github: { headSha: "head-2", mergeable: false, mergeableState: "dirty" }, behindBy: 3 });
+    expect(await plan(built, "conflict")).toEqual({ kind: "none", reason: "the head moved" });
+  });
+
+  it("goes on to plan the run when the branch conflicts and is behind", async () => {
+    // The fake store refuses `originFacts`, so reaching it proves the gate let the update through.
+    const built = build({ github: { mergeable: false, mergeableState: "dirty" }, behindBy: 3 });
+    await expect(plan(built, "conflict")).rejects.toThrow("not used");
+    const strict = build({ github: { mergeableState: "behind" }, behindBy: 1 });
+    await expect(plan(strict, "up_to_date")).rejects.toThrow("not used");
+  });
+});

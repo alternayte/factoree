@@ -93,6 +93,8 @@ export interface RunStatusPatch {
   repairCount?: number;
   /** docs/specs/run-visibility.md. The sentence that told the human why the run ended. */
   failureMessage?: string;
+  /** The final response of a run that ended REPORTED or ANSWERED, redacted. */
+  finalResponse?: string;
 }
 
 export interface RunSandboxPatch {

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A bring-current run starts only when GitHub reports, at plan time, that the head is the recorded head, is behind its base, and still conflicts for a conflict update. A stale merge state in an event no longer starts a run that ends REPORTED after a few seconds with nothing done.
+- The run page shows the final response of a run that ended REPORTED or ANSWERED. Before, that text was only in the Linear agent session, and the page of a short run was empty.
+
 ## [0.22.0] - 2026-11-25
 
 ### Added

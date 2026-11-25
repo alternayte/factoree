@@ -9741,6 +9741,12 @@
                     "temporalWorkflowId": {
                       "type": "string"
                     },
+                    "finalResponse": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "terminal": {
                       "type": "boolean"
                     },
@@ -10126,6 +10132,7 @@
                     "blockers",
                     "diagnosis",
                     "temporalWorkflowId",
+                    "finalResponse",
                     "terminal",
                     "stopRequestedAt",
                     "stopSource",

@@ -171,6 +171,7 @@ export class PrismaRunViewReader implements RunViewReader {
       select: {
         ...runSelect,
         temporalWorkflowId: true,
+        finalResponse: true,
         autonomyLevel: true,
         followUpOfRunId: true,
         skillRegistrySet: true,
@@ -203,6 +204,7 @@ export class PrismaRunViewReader implements RunViewReader {
     return {
       ...toListItem(row, costs.get(runId) ?? null, await this.providerNames()),
       temporalWorkflowId: row.temporalWorkflowId,
+      finalResponse: row.finalResponse,
       terminal: isTerminalRunStatus(row.status as RunStatus),
       stopRequestedAt: row.stopRequestedAt,
       stopSource: row.stopSource,

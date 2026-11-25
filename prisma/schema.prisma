@@ -91,6 +91,9 @@ model Run {
   // docs/specs/run-visibility.md. The sentence that told the human why the run ended, and the
   // work item title and URL, so a run list names the issue. Null on a run from before them.
   failureMessage            String?                     @map("failure_message")
+  // The final response a run that ended REPORTED or ANSWERED posted to its Linear agent session,
+  // redacted, so the run page shows what the run did. Null on every other run.
+  finalResponse             String?                     @map("final_response")
   workItemTitle             String?                     @map("work_item_title")
   workItemUrl               String?                     @map("work_item_url")
   autonomyLevel             String
