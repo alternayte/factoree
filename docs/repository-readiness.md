@@ -72,7 +72,7 @@ The refiner builds the validation contract from the issue text. A good work item
 
 ## Two checks, two questions
 
-Factoree and a design doc check answer different questions. Neither check replaces the other.
+Factoree and a check against the design doc answer different questions. Neither check replaces the other.
 
 - Factoree proves that the patch passes the checks of the repository and the frozen validation contract.
 - A check against the design doc proves that the code covers each requirement of the doc.
