@@ -374,6 +374,7 @@ describe("restore output", () => {
   it("takes no lowest version from an upper bound in NU1102, and marks `= x` exact", () => {
     expect(restoreFailuresOf("A.csproj : error NU1102: Unable to find package Lib with version (<= 2.0.0)")[0]?.version).toBeNull();
     expect(restoreFailuresOf("A.csproj : error NU1102: Unable to find package Lib with version (= 2.0.0)")[0]).toMatchObject({ version: "2.0.0", exact: true });
+    expect(restoreFailuresOf("A.csproj : error NU1102: Unable to find package Lib with version (>= 1.0.0 && <= 2.0.0)")[0]).toMatchObject({ version: "1.0.0", maximum: { version: "2.0.0", inclusive: true } });
   });
 
   it("names the sources whose service index the restore could not load", () => {

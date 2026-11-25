@@ -246,6 +246,17 @@ describe("readNugetPackageReferences", () => {
     expect(readNugetPackageReferences([root, nearest, project]).map((entry) => entry.version)).toEqual(["1.2.0"]);
   });
 
+  it("applies each parent import in document order, so the last one wins", () => {
+    const root = { path: "Directory.Build.props", text: "<Project><PropertyGroup><V>1</V></PropertyGroup></Project>" };
+    const middle = { path: "src/Directory.Build.props", text: "<Project><PropertyGroup><V>2</V></PropertyGroup></Project>" };
+    const nearest = {
+      path: "src/A/Directory.Build.props",
+      text: '<Project><Import Project="..\\..\\Directory.Build.props" /><Import Project="..\\Directory.Build.props" /></Project>',
+    };
+    const project = { path: "src/A/A.csproj", text: '<Project><ItemGroup><PackageReference Include="Lib" Version="$(V).0.0" /></ItemGroup></Project>' };
+    expect(readNugetPackageReferences([root, middle, nearest, project]).map((entry) => entry.version)).toEqual(["2.0.0"]);
+  });
+
   it("takes a GlobalPackageReference only from the Directory.Packages.props a project imports", () => {
     const references = readNugetPackageReferences([
       { path: "Directory.Packages.props", text: '<Project><ItemGroup><GlobalPackageReference Include="Root.Analyzers" Version="1.0.0" /></ItemGroup></Project>' },

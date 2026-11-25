@@ -428,6 +428,16 @@ describe("runNugetPrecheck", () => {
     expect(requests.some((url) => url.endsWith(".nupkg") && url.includes("frontiers.transitive"))).toBe(false);
   });
 
+  it("keeps the upper bound NU1102 names", async () => {
+    const { report } = await run({
+      files: files({ "Frontiers.Core": "3.1.0" }),
+      mirror: { "frontiers.core": ["3.1.0"], "frontiers.transitive": ["3.0.0"] },
+      restore: () => ({ exitCode: 1, output: `${PATH}/src/Api/Api.csproj : error NU1102: Unable to find package Frontiers.Transitive with version (>= 1.0.0 && < 2.0.0)` }),
+    });
+    expect(report.outcome).toBe("failed");
+    expect(report.packages.find((entry) => entry.id === "Frontiers.Transitive")).toMatchObject({ version: "1.0.0", status: "version_missing" });
+  });
+
   it("needs the exact version for a request NuGet pins", async () => {
     const { report } = await run({
       files: files({ "Frontiers.Core": "3.1.0" }),

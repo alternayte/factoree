@@ -280,27 +280,36 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
   // MSBuild imports only the nearest file of a name. A parent one counts when that file imports it:
   // `GetPathOfFileAbove('Directory.Build.props', ...)` finds the nearest one above, and a plain
   // path such as `../../Directory.Build.props` names one file.
-  const parentImportOf = (path: string, name: string): { path: string | null; element: XmlElement } | null => {
-    for (const element of descendantsNamed(documentOf(path), "Import")) {
+  const parentImportsOf = (path: string, name: string): Array<{ path: string; element: XmlElement }> =>
+    descendantsNamed(documentOf(path), "Import").flatMap((element) => {
       const project = (attributeOf(element, "Project") ?? "").trim();
-      if (!project.toLowerCase().includes(name.toLowerCase())) continue;
-      if (project.includes("$(")) return { path: nearestIn(foldersAbove(path).reverse().slice(1), name), element };
-      return { path: fileAt(posix.normalize(posix.join(folderOf(path), project.replace(/\\/g, "/")))), element };
-    }
-    return null;
-  };
-  // A parent file applies where its <Import> stands: the importing file's content before the import
-  // comes first, and its content after the import overrides the parent.
+      if (!project.toLowerCase().includes(name.toLowerCase())) return [];
+      const parent = project.includes("$(")
+        ? nearestIn(foldersAbove(path).reverse().slice(1), name)
+        : fileAt(posix.normalize(posix.join(folderOf(path), project.replace(/\\/g, "/"))));
+      return parent === null ? [] : [{ path: parent, element }];
+    });
+  // Each parent file applies where its <Import> stands: the importing file's content before the
+  // import comes first, and its content after the import overrides the parent.
   const partsOf = (path: string, name: string, seen: readonly string[]): MsbuildPart[] => {
     const document = documentOf(path);
-    const parent = parentImportOf(path, name);
-    if (parent === null || parent.path === null || seen.includes(parent.path)) return [{ path, document }];
     const root = childrenNamed(document, "Project")[0] ?? document;
-    const at = root.children.findIndex((child) => child === parent.element || descendantsNamed(child, "Import").includes(parent.element));
     const slice = (children: XmlElement[]): MsbuildPart => ({ path, document: { ...root, children } });
-    const parentParts = partsOf(parent.path, name, [...seen, parent.path]);
-    if (at < 0) return [...parentParts, { path, document }];
-    return [slice(root.children.slice(0, at)), ...parentParts, slice(root.children.slice(at + 1))];
+    const outside: MsbuildPart[] = [];
+    const parts: MsbuildPart[] = [];
+    let start = 0;
+    for (const parent of parentImportsOf(path, name)) {
+      if (seen.includes(parent.path)) continue;
+      const parentParts = partsOf(parent.path, name, [...seen, parent.path]);
+      const at = root.children.findIndex((child) => child === parent.element || descendantsNamed(child, "Import").includes(parent.element));
+      if (at < 0) outside.push(...parentParts);
+      else if (at < start) parts.push(...parentParts);
+      else {
+        parts.push(slice(root.children.slice(start, at)), ...parentParts);
+        start = at + 1;
+      }
+    }
+    return [...outside, ...parts, slice(root.children.slice(start))];
   };
   const above = (path: string, name: string): MsbuildPart[] => {
     const nearest = nearestIn(foldersAbove(path).reverse(), name);

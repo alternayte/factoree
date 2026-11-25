@@ -437,6 +437,8 @@ export interface RestoreFailure {
   version: string | null;
   /** True when the restore asked for exactly that version, `(= x)`, and not for it or higher. */
   exact: boolean;
+  /** The upper bound of the range, `&& < x` or `&& <= x`, when it has one. */
+  maximum?: { version: string; inclusive: boolean };
   /** The project file the line names, or null. */
   project: string | null;
 }
@@ -455,9 +457,11 @@ export const restoreFailuresOf = (output: string): RestoreFailure[] => {
     // Only `>= x` or `= x` names a lowest version. `< x`, `<= x` and `> x` name none to check.
     const bound = /^\s*(>=|=)?\s*(\d[^\s,)\]&]*)/.exec(match[4] ?? "");
     const version = bound?.[2] ?? null;
+    const upper = /&&\s*(<=|<)\s*(\d[^\s,)\]&]*)/.exec(match[4] ?? "");
+    const maximum = upper === null ? {} : { maximum: { version: upper[2]!, inclusive: upper[1] === "<=" } };
     const project = match[1] === undefined ? null : match[1].trim().replace(/\s*\[.*$/, "");
     const key = `${id.toLowerCase()}/${version ?? ""}`;
-    if (!byKey.has(key)) byKey.set(key, { id, code: match[2]!.toUpperCase() as RestoreFailure["code"], version, exact: bound?.[1] === "=", project: project === "" ? null : project });
+    if (!byKey.has(key)) byKey.set(key, { id, code: match[2]!.toUpperCase() as RestoreFailure["code"], version, exact: bound?.[1] === "=", ...maximum, project: project === "" ? null : project });
   }
   return [...byKey.values()];
 };

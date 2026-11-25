@@ -498,7 +498,9 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
           ? null
           : (await input.sandbox.exec(input.ref, { file: "head", args: ["-c", String(ASSETS_READ_LIMIT), `${posix.dirname(failure.project)}/obj/project.assets.json`], cwd: input.repositoryPath })).stdout;
       const parents = assets === null ? null : parentChainOf(assets, failure.id);
-      const requested = version === null ? (assets === null ? null : requestedVersionOf(assets, failure.id)) : { version, exact: failure.exact };
+      const upper = failure.maximum === undefined ? null : normalizeNugetVersion(failure.maximum.version);
+      const maximum = upper === null ? {} : { maximum: { version: upper, inclusive: failure.maximum?.inclusive === true } };
+      const requested = version === null ? (assets === null ? null : requestedVersionOf(assets, failure.id)) : { version, exact: failure.exact, ...maximum };
       const result = await onMirror(input, NUGET_MIRROR_OWNER, failure.id, requested);
       const project = failure.project === null ? [] : [failure.project.startsWith(`${input.repositoryPath}/`) ? failure.project.slice(input.repositoryPath.length + 1) : failure.project];
       report.packages.push({
