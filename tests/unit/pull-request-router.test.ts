@@ -40,6 +40,8 @@ const pullRequest = (overrides: Partial<PublishedPullRequest> = {}): PublishedPu
   reviewerFollowUpKeys: [],
   answeredFindingFingerprints: [],
   reviewAppNoticeKey: null,
+  previewUrl: null,
+  previewHeadSha: null,
   bringCurrentHeadSha: null,
   workflowId: "pr:tenant-1:acme/api#12",
   ...overrides,

@@ -54,6 +54,8 @@ const build = (options: { followUps?: number; saysoConclusion?: string; answered
     reviewerFollowUpKeys: [],
     answeredFindingFingerprints: options.answered ?? [],
     reviewAppNoticeKey: null,
+    previewUrl: null,
+    previewHeadSha: null,
     bringCurrentHeadSha: null,
     workflowId: "pr:tenant-1:acme/api#12",
   };

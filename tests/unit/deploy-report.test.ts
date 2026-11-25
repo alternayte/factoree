@@ -58,6 +58,8 @@ const build = (options: { previousSuccess?: string | null; failIssueMoveWrites?:
     reviewerFollowUpKeys: [],
     answeredFindingFingerprints: [],
     reviewAppNoticeKey: null,
+    previewUrl: null,
+    previewHeadSha: null,
     bringCurrentHeadSha: null,
     workflowId: "pr:tenant-1:acme/api#12",
   };

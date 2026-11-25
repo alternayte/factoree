@@ -266,6 +266,21 @@ export interface ProofPackInput {
    * after the proof pack was first posted. An amendment renders the whole proof pack again with it.
    */
   afterPublication?: ProofPackAfterPublication;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.220. The reviewer's reading guide and the pull requests
+   * of the run, so a later preview rewrites each body from this input. The proof pack shows neither.
+   */
+  whereToLook?: Array<{ path: string; startLine: number | null; endLine: number | null; reason: string }>;
+  bodyTargets?: Array<{
+    repositorySlug: string;
+    pullRequestNumber: number;
+    pullRequestUrl: string;
+    githubInstallationId: string;
+    baseSha: string;
+    patchSha256: string;
+    changedFileCount: number;
+    commitSha: string;
+  }>;
 }
 
 /** DI-21.122. One deploy result of the merged change, as the repository CI reported it. */

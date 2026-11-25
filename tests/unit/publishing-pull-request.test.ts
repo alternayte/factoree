@@ -32,6 +32,7 @@ const facts = (over: Partial<PullRequestBodyFacts> = {}): PullRequestBodyFacts =
     implied: [],
     notBuilt: ["a readiness endpoint"],
     forYourEye: [],
+    previewUrl: null,
     notProven: [],
     sinceLastCommit: null,
     proofPackUrl: "https://factoree.example/runs/run-1",

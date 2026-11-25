@@ -51,16 +51,27 @@ const toRecord = (row: Row): PublishedPullRequest => ({
   bringCurrentHeadSha: row.bringCurrentHeadSha,
   answeredFindingFingerprints: row.answeredFindingFingerprints,
   reviewAppNoticeKey: row.reviewAppNoticeKey,
+  previewUrl: row.previewUrl,
+  previewHeadSha: row.previewHeadSha,
   workflowId: row.workflowId,
 });
 
-/** The facts an event moves on the record. Every other event changes no column. */
-const factsOf = (event: PullRequestEvent): Prisma.PullRequestUpdateManyMutationInput | null => {
+/**
+ * The facts an event moves on the record. Every other event changes no column. DI-21.220: a new head
+ * clears the preview, and a successful deployment with an environment URL on the head of an open
+ * pull request is its preview. A deployment of any other commit, such as a deploy of the merge
+ * commit, is no preview.
+ */
+const factsOf = (event: PullRequestEvent, current: { state: string; headSha: string }): Prisma.PullRequestUpdateManyMutationInput | null => {
   switch (event.kind) {
     case "synchronized":
-      return { headSha: event.headSha };
+      return { headSha: event.headSha, previewUrl: null, previewHeadSha: null };
     case "reopened":
-      return { state: "open", closedAt: null, mergeCommitSha: null, headSha: event.headSha };
+      return { state: "open", closedAt: null, mergeCommitSha: null, headSha: event.headSha, ...(event.headSha === current.headSha ? {} : { previewUrl: null, previewHeadSha: null }) };
+    case "deployment_status":
+      return current.state === "open" && event.state === "success" && event.sha === current.headSha && event.environmentUrl !== null && /^https?:\/\//.test(event.environmentUrl)
+        ? { previewUrl: event.environmentUrl, previewHeadSha: event.sha }
+        : null;
     case "edited":
       return { baseBranch: event.baseBranch };
     case "base_pushed":
@@ -297,7 +308,7 @@ export class PrismaPullRequestStore implements PullRequestStore, ChangeSetStore 
         skipDuplicates: true,
       });
       if (inserted.count === 0) return { isNew: false, pullRequest: toRecord(current) };
-      const facts = factsOf(event);
+      const facts = factsOf(event, current);
       if (facts === null) return { isNew: true, pullRequest: toRecord(current) };
       const updated = await tx.pullRequest.update({ where: { id: pullRequestId }, data: facts, include });
       return { isNew: true, pullRequest: toRecord(updated) };

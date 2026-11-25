@@ -516,6 +516,7 @@ const createActivityTable = (dependencies: ActivityDependencies) => ({
     sandboxProviderName: dependencies.sandboxProviderName,
     pullRequestBodies: dependencies.pullRequestBodies,
     runPageUrl: dependencies.runPageUrl,
+    pullRequests: dependencies.publishedPullRequests,
   }),
   ...createIssueStatusActivities({
     runs: dependencies.runs,

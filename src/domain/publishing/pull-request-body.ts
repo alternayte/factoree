@@ -25,6 +25,19 @@ export interface WhereToLookEntry {
   reason: string;
 }
 
+/** docs/specs/pr-body-for-humans.md, DI-21.217. One pull request whose body the proof pack step writes. */
+export interface PullRequestBodyTarget {
+  repositorySlug: string;
+  pullRequestNumber: number;
+  pullRequestUrl: string;
+  githubInstallationId: string;
+  baseSha: string;
+  patchSha256: string;
+  changedFileCount: number;
+  /** The head commit, so the reading guide links its lines. */
+  commitSha: string;
+}
+
 /** One frozen criterion of the validation contract, with its last result and its openable evidence. */
 export interface BodyCriterion {
   statement: string;
@@ -81,6 +94,8 @@ export interface PullRequestBodyFacts {
     implied: Array<{ statement: string; quote: string }>;
     notBuilt: string[];
     forYourEye: BodyForYourEye[];
+    /** DI-21.220. The pull request preview of the head, from its successful deployment, or null. */
+    previewUrl: string | null;
     notProven: string[];
     sinceLastCommit: BodySinceLastCommit | null;
     proofPackUrl: string | null;
@@ -189,15 +204,14 @@ export const renderOwnedBlock = (facts: PullRequestBodyFacts): string => {
         lines.push("Not built, because no ticket sentence states or implies it:", "", ...proof.notBuilt.map((item) => `- ${oneLine(item, 300)}`), "");
       }
     }
-    if (proof.forYourEye.length > 0) {
-      lines.push(
-        "### Needs your eye",
-        "",
-        "Factoree does not check these. Look at each one, on the pull request preview if the repository CI posts one, and judge it yourself.",
-        "",
-        ...proof.forYourEye.flatMap(forYourEyeLines),
-        "",
-      );
+    if (proof.forYourEye.length > 0 || proof.previewUrl !== null) {
+      lines.push("### Needs your eye", "");
+      if (proof.previewUrl !== null) {
+        lines.push(`[Open the pull request preview](${proof.previewUrl}). The repository CI deployed this commit there. It is a link for you, not evidence.`, "");
+      }
+      if (proof.forYourEye.length > 0) {
+        lines.push("Factoree does not check these. Look at each one and judge it yourself.", "", ...proof.forYourEye.flatMap(forYourEyeLines), "");
+      }
     }
     lines.push("### What Factoree did not prove", "", ...(proof.notProven.length === 0 ? ["Nothing."] : proof.notProven.map((item) => `- ${oneLine(item, 500)}`)), "");
   }
@@ -285,6 +299,8 @@ export const bodyFactsOfProofPack = (
     whereToLook: WhereToLookEntry[];
     linkTarget: PullRequestBodyFacts["linkTarget"];
     proofPackUrl: string | null;
+    /** DI-21.220. The pull request preview of this head, or null. */
+    previewUrl: string | null;
     /** The changed files and the base of this pull request. A change set gives each target its own. */
     changedFileCount: number;
     baseSha: string;
@@ -357,6 +373,7 @@ export const bodyFactsOfProofPack = (
         screenshotUrl: item.screenshot !== null && openable(item.screenshot.storageRef) ? item.screenshot.storageRef : null,
         reason: item.screenshot === null ? item.reason : openable(item.screenshot.storageRef) ? null : "the screenshot is stored, and its link does not open on GitHub.",
       })),
+      previewUrl: extras.previewUrl,
       notProven,
       sinceLastCommit:
         followUp === undefined

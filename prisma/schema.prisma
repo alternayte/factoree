@@ -1196,6 +1196,10 @@ model PullRequest {
   // DI-21.212. The head and the review apps of the last "Needs your attention" post about review
   // apps that hold back an L4 merge, so one head posts it once.
   reviewAppNoticeKey   String?             @map("review_app_notice_key")
+  // docs/specs/pr-body-for-humans.md, DI-21.220. The environment URL of the last successful
+  // deployment on the head, and that head. A new head clears both until its own deployment.
+  previewUrl           String?             @map("preview_url")
+  previewHeadSha       String?             @map("preview_head_sha")
   // docs/specs/change-sets.md, DI-21.155. The last factoree/change-set commit status Factoree set on
   // this consumer pull request, as `<sha> <state> <description>`, so an unchanged status is not set again.
   changeSetStatusKey   String?             @map("change_set_status_key")

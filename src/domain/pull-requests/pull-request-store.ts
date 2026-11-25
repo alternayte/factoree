@@ -54,6 +54,12 @@ export interface PublishedPullRequest {
   answeredFindingFingerprints: string[];
   /** DI-21.212. The head and the review apps of the last L4 hold notice. */
   reviewAppNoticeKey: string | null;
+  /**
+   * docs/specs/pr-body-for-humans.md, DI-21.220. The pull request preview: the environment URL of the
+   * last successful deployment on the head, and that head. Null until one, and again after a new head.
+   */
+  previewUrl: string | null;
+  previewHeadSha: string | null;
   workflowId: string;
 }
 
