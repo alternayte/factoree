@@ -162,7 +162,8 @@ export type Pick =
   | { kind: "run"; id: string }
   | { kind: "station"; productId: string; station: StationKey }
   | { kind: "line"; productId: string }
-  | { kind: "setup"; id: string };
+  | { kind: "setup"; id: string }
+  | { kind: "retro"; id: string };
 
 export interface SceneLine {
   productId: string;
@@ -345,6 +346,22 @@ interface Figure {
   pill: HTMLDivElement;
 }
 
+/** docs/specs/retro-agent.md. The consultant of one running retro, who walks the lines it reads. */
+interface Consultant {
+  group: THREE.Group;
+  head: THREE.MeshBasicMaterial;
+  pill: HTMLDivElement;
+}
+
+/** How long the consultant walks one line before the next, while no pulse names the product. */
+const CONSULTANT_DWELL_MS = 20_000;
+/** One walk from the intake to the deploy gate and back. */
+const CONSULTANT_LAP_MS = 40_000;
+/** How fast the consultant walks to its next point, in world units a second. */
+const CONSULTANT_SPEED = 8;
+/** The consultant walks the walkway in front of the line. */
+const CONSULTANT_Z = 5.4;
+
 const formatSilence = (ms: number): string => {
   const minutes = Math.floor(ms / 60_000);
   return minutes > 0 ? `silent ${minutes}m` : `silent ${Math.round(ms / 1000)}s`;
@@ -446,6 +463,7 @@ export class FloorScene {
   private crates = new Map<string, CrateView>();
   private figures = new Map<string, Figure>();
   private crews = new Map<string, { group: THREE.Group; pill: HTMLDivElement }>();
+  private consultants = new Map<string, Consultant>();
   private badges: HTMLDivElement[] = [];
   private stationCrew = new Map<string, Crew>();
   private silos = new Map<string, { cap: THREE.MeshBasicMaterial; label: HTMLDivElement; point: THREE.Vector3 }>();
@@ -578,6 +596,8 @@ export class FloorScene {
     this.figures.clear();
     this.crews.forEach((crew) => crew.pill.remove());
     this.crews.clear();
+    this.consultants.forEach((consultant) => consultant.pill.remove());
+    this.consultants.clear();
 
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x171c1e, roughness: 1 }));
     floor.rotation.x = -Math.PI / 2;
@@ -1182,6 +1202,75 @@ export class FloorScene {
         crew.pill.remove();
         this.crews.delete(id);
       }
+
+      // docs/specs/retro-agent.md. A running retro: one consultant who walks the lines it reads.
+      const consultantsSeen = new Set<string>();
+      for (const retro of moment.retros) {
+        const known = new Set(this.lines.map((line) => line.productId));
+        // An empty list names no scope: the retro reads every product on the floor.
+        const order = retro.retro.productIds.length === 0 ? [...known] : retro.retro.productIds.filter((id) => known.has(id));
+        if (order.length === 0) continue;
+        consultantsSeen.add(retro.retro.id);
+        const elapsed = Math.max(0, moment.at - Date.parse(retro.retro.startedAt));
+        // The pulse names the product the session reads. Before the first pulse, the walk goes line by line.
+        const productId =
+          retro.productId !== null && known.has(retro.productId)
+            ? retro.productId
+            : order[Math.floor(elapsed / CONSULTANT_DWELL_MS) % order.length]!;
+        const lap = (moment.at % CONSULTANT_LAP_MS) / CONSULTANT_LAP_MS;
+        const along = motion ? 1 - Math.abs(1 - 2 * lap) : 0.5;
+        const target = new THREE.Vector3(this.x(0) - 1 + along * (this.x(9) + 2), 0, this.lineZ(productId) + CONSULTANT_Z);
+        let consultant = this.consultants.get(retro.retro.id);
+        if (consultant === undefined) {
+          const figure = crewFigure(this.props, "agent");
+          // A consultant wears no helmet and carries a clipboard.
+          figure.group.traverse((node) => {
+            if ((node as THREE.Mesh).isMesh && (node as THREE.Mesh).material === this.props.hazard) node.visible = false;
+          });
+          const board = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.46, 0.05), this.props.light);
+          board.position.set(-0.3, 0.95, 0.28);
+          board.rotation.x = -0.5;
+          const clip = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 0.07), this.props.steel);
+          clip.position.set(-0.3, 1.18, 0.4);
+          clip.rotation.x = -0.5;
+          figure.group.add(board, clip);
+          figure.group.scale.setScalar(1.45);
+          figure.group.position.copy(target);
+          const pick: Pick = { kind: "retro", id: retro.retro.id };
+          figure.group.traverse((node) => (node.userData.pick = pick));
+          this.world.add(figure.group);
+          const pill = this.label("", "floor-pill");
+          pill.style.pointerEvents = "auto";
+          pill.style.cursor = "pointer";
+          pill.addEventListener("click", () => this.options.onPick(pick));
+          consultant = { group: figure.group, head: figure.head, pill };
+          this.consultants.set(retro.retro.id, consultant);
+        }
+        const position = consultant.group.position;
+        const step = target.clone().sub(position).setY(0);
+        const distance = step.length();
+        if (!motion || distance > 80) {
+          position.copy(target);
+        } else if (distance > 0.01) {
+          position.add(step.multiplyScalar(Math.min(1, (CONSULTANT_SPEED * dt) / distance)));
+          consultant.group.rotation.y = Math.atan2(target.x - position.x, target.z - position.z);
+        }
+        position.y = motion && distance > 0.05 ? Math.abs(Math.sin(now / 160)) * 0.06 : 0;
+        const silent = retro.lastOutputAt !== null && moment.at - retro.lastOutputAt > SILENT_MS;
+        consultant.head.color.setHex(silent ? TOKENS.warning : TOKENS.accent);
+        const name = this.lines.find((line) => line.productId === productId)?.name ?? "";
+        const doing = retro.toolKind === null ? "walking the line" : silent ? formatSilence(moment.at - retro.lastOutputAt!) : retro.toolKind;
+        consultant.pill.textContent = `Retro · ${name} · ${doing}`;
+        consultant.pill.dataset.tone = silent ? "warn" : "accent";
+        this.place(consultant.pill, position.clone().setY(2.9));
+      }
+      for (const [id, consultant] of this.consultants) {
+        if (consultantsSeen.has(id)) continue;
+        this.world.remove(consultant.group);
+        disposeTree(consultant.group);
+        consultant.pill.remove();
+        this.consultants.delete(id);
+      }
     }
     for (let index = badges; index < this.badges.length; index += 1) this.badges[index]!.hidden = true;
 
@@ -1310,6 +1399,10 @@ export class FloorScene {
     if (pick.kind === "setup") {
       const crew = this.crews.get(pick.id);
       return crew === undefined ? null : this.toScreen(crew.group.position.clone().setY(3.2));
+    }
+    if (pick.kind === "retro") {
+      const consultant = this.consultants.get(pick.id);
+      return consultant === undefined ? null : this.toScreen(consultant.group.position.clone().setY(3.2));
     }
     return this.toScreen(new THREE.Vector3(this.x(0) - 5, 0, this.lineZ(pick.productId) + 11.5));
   }

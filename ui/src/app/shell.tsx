@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, Boxes, Building2, Factory, KeyRound, LogOut, PanelLeftClose, PanelLeftOpen, Settings2 } from "lucide-react";
+import { Activity, Boxes, Building2, Factory, KeyRound, Lightbulb, LogOut, PanelLeftClose, PanelLeftOpen, Settings2 } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Brand, BrandMark } from "@/app/brand";
 import { Button } from "@/components/button";
@@ -15,6 +15,8 @@ const nav = [
   // docs/specs/factory-floor.md.
   { to: "/floor", label: "Floor", Icon: Factory },
   { to: "/products", label: "Products", Icon: Boxes },
+  // docs/specs/retro-agent.md.
+  { to: "/retro", label: "Retro", Icon: Lightbulb },
   { to: "/workspaces", label: "Workspaces", Icon: Building2 },
   { to: "/settings/install", label: "Install settings", Icon: Settings2 },
   { to: "/api-keys", label: "API keys", Icon: KeyRound },

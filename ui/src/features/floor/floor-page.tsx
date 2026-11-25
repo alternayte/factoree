@@ -143,6 +143,14 @@ function Floor({
   const [pick, setPick] = useState<Pick | null>(search.run !== undefined ? { kind: "run", id: search.run } : null);
   const [panel, setPanel] = useState(search.run !== undefined);
   const reducedMotion = useMemo(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches, []);
+  // docs/specs/retro-agent.md. A click on the retro consultant opens the retro. The scene keeps its
+  // first callback, so the callback reads the workspace through a ref.
+  const workspaceRef = useRef(linearWorkspaceId);
+  const navigateRef = useRef(navigate);
+  useEffect(() => {
+    workspaceRef.current = linearWorkspaceId;
+    navigateRef.current = navigate;
+  }, [linearWorkspaceId, navigate]);
 
   // The clock. Live follows the server time of the newest answer. Replay plays the window.
   const from = Date.parse(floor.from);
@@ -212,6 +220,10 @@ function Floor({
         scene.current = new FloorScene(container, models, {
           reducedMotion,
           onPick: (next) => {
+            if (next?.kind === "retro") {
+              void navigateRef.current({ to: "/retro/$retroId", params: { retroId: next.id }, search: { ws: workspaceRef.current } });
+              return;
+            }
             setPick(next);
             setPanel(next !== null);
           },
@@ -579,6 +591,7 @@ function BubbleContent({ pick, floor, moment, onDetails }: { pick: Pick; floor: 
       </>
     );
   }
+  if (pick.kind === "retro") return null;
   const setup = moment.setups.find((entry) => entry.setup.id === pick.id);
   return (
     <>
@@ -628,6 +641,7 @@ function PanelContent({
   if (pick.kind === "run") return <RunPanel runId={pick.id} floor={floor} linearWorkspaceId={linearWorkspaceId} close={close} onReplayRun={onReplayRun} />;
   if (pick.kind === "station") return <StationPanel productId={pick.productId} station={pick.station} floor={floor} moment={moment} close={close} onPick={onPick} />;
   if (pick.kind === "line") return <LinePanel productId={pick.productId} floor={floor} moment={moment} linearWorkspaceId={linearWorkspaceId} close={close} onPick={onPick} />;
+  if (pick.kind === "retro") return null;
   return <SetupPanel setupId={pick.id} floor={floor} linearWorkspaceId={linearWorkspaceId} close={close} />;
 }
 
