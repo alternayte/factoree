@@ -105,8 +105,10 @@ export const readVersionText = (raw: string): VersionReading => {
 export type MsbuildProperties = Map<string, string[]>;
 
 /**
- * Adds the properties of one MSBuild file. An unconditional definition replaces the values, and
- * a conditional one adds a value, because Factoree evaluates no condition.
+ * Adds the properties of one MSBuild file. MSBuild expands a property where it is assigned, so a
+ * later definition of a property it names does not change it. An unconditional definition
+ * replaces the values, and a conditional one adds its values, because Factoree evaluates no
+ * condition.
  */
 export const addMsbuildProperties = (properties: MsbuildProperties, document: XmlElement): void => {
   for (const group of descendantsNamed(document, "PropertyGroup")) {
@@ -114,27 +116,35 @@ export const addMsbuildProperties = (properties: MsbuildProperties, document: Xm
     for (const property of group.children) {
       const name = property.name.toLowerCase();
       const value = property.text.trim();
+      const values = expandMsbuild(value, properties) ?? [value];
       const conditional = groupCondition !== null || attributeOf(property, "Condition") !== null;
       const current = properties.get(name) ?? [];
-      properties.set(name, conditional ? [...new Set([...current, value])] : [value]);
+      properties.set(name, conditional ? [...new Set([...current, ...values])] : values);
     }
   }
 };
 
 /**
  * Every value of an MSBuild expression, with each `$(Name)` replaced by each value of the
- * property. A property with no value stays as written, so the version reads as unchecked.
+ * property. A property with no value stays as written, so the version reads as unchecked. Null
+ * when the expression has more than MAX_PROPERTY_VALUES values, so no value is dropped unseen.
  */
-export const expandMsbuild = (text: string, properties: MsbuildProperties, depth = 0): string[] => {
+export const expandMsbuild = (text: string, properties: MsbuildProperties, depth = 0): string[] | null => {
   const match = /\$\(([A-Za-z_][\w.-]*)\)/.exec(text);
   if (match === null || depth >= MAX_PROPERTY_DEPTH) return [text];
   const values = properties.get(match[1]!.toLowerCase());
   if (values === undefined || values.length === 0) {
-    // Keep the unresolved name and expand the rest, so the reason names the first missing property.
+    // Keep the unresolved name, so the reason names the first missing property.
     return [text];
   }
-  const expanded = values.flatMap((value) => expandMsbuild(text.replace(match[0], () => value), properties, depth + 1));
-  return [...new Set(expanded)].slice(0, MAX_PROPERTY_VALUES);
+  const expanded = new Set<string>();
+  for (const value of values) {
+    const inner = expandMsbuild(text.replace(match[0], () => value), properties, depth + 1);
+    if (inner === null) return null;
+    for (const entry of inner) expanded.add(entry);
+    if (expanded.size > MAX_PROPERTY_VALUES) return null;
+  }
+  return [...expanded];
 };
 
 const baseName = (path: string): string => path.slice(path.lastIndexOf("/") + 1).toLowerCase();
@@ -201,7 +211,11 @@ const reference = (
   properties: MsbuildProperties,
 ): NugetPackageReference[] => {
   if (versionText === null) return [{ id, version: null, versionText: "", unchecked: "no version", project, condition }];
-  return expandMsbuild(versionText, properties).map((text) => {
+  const expanded = expandMsbuild(versionText, properties);
+  if (expanded === null) {
+    return [{ id, version: null, versionText, unchecked: `the MSBuild expression \`${versionText}\` has more than ${String(MAX_PROPERTY_VALUES)} values`, project, condition }];
+  }
+  return expanded.map((text) => {
     const reading = readVersionText(text);
     return reading.kind === "exact"
       ? { id, version: reading.version, versionText: text, unchecked: null, project, condition }
@@ -228,13 +242,15 @@ const fromToolManifest = (file: RepositoryTextFile): NugetPackageReference[] => 
 
 /**
  * docs/specs/nuget-private-feed-mapping.md, DI-21.224. The package references of a repository:
- * each project file with the `Directory.Build.props`, `Directory.Packages.props` and
- * `Directory.Build.targets` above it, each `packages.config` and each `dotnet-tools.json`.
- * Properties come from every file of a project first, as MSBuild's first pass does. Items follow
- * in import order, so `Update` and `Remove` apply to what came before. Central package management
- * gives a reference its `PackageVersion`, `VersionOverride` wins, and a `GlobalPackageReference`
- * belongs to its `Directory.Packages.props`. Factoree evaluates no condition: each conditional
- * version is one more reference, so a target framework adds a check and never hides one.
+ * each project file with the nearest `Directory.Build.props`, `Directory.Packages.props` and
+ * `Directory.Build.targets` above it, and each parent one that file imports, each
+ * `packages.config` and each `dotnet-tools.json`. Properties come from every file of a project
+ * first, as MSBuild's first pass does. Items follow in import order, so `Update` and `Remove`
+ * apply to what came before. Central package management gives a reference its `PackageVersion`,
+ * `VersionOverride` wins, and a `GlobalPackageReference` belongs to its `Directory.Packages.props`.
+ * Factoree evaluates no condition: each conditional version is one more reference, and a
+ * conditional `Update` or `Remove` keeps what it replaces, so a target framework adds a check and
+ * never hides one.
  */
 export const readNugetPackageReferences = (files: readonly RepositoryTextFile[]): NugetPackageReference[] => {
   const byPath = new Map(files.map((file) => [file.path, file]));
@@ -246,12 +262,21 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     documents.set(path, parsed);
     return parsed;
   };
-  const above = (path: string, name: string): string[] =>
-    foldersAbove(path).flatMap((folder) => {
+  // MSBuild imports only the nearest file of a name. A parent one counts when that file imports it,
+  // as `GetPathOfFileAbove('Directory.Build.props', ...)` or `../Directory.Build.props` does.
+  const importsParent = (path: string, name: string): boolean =>
+    descendantsNamed(documentOf(path), "Import").some((element) => (attributeOf(element, "Project") ?? "").toLowerCase().includes(name.toLowerCase()));
+  const above = (path: string, name: string): string[] => {
+    const chain: string[] = [];
+    for (const folder of foldersAbove(path).reverse()) {
       const wanted = folder === "" ? name : `${folder}/${name}`;
       const found = files.find((file) => file.path.toLowerCase() === wanted.toLowerCase());
-      return found === undefined ? [] : [found.path];
-    });
+      if (found === undefined) continue;
+      chain.unshift(found.path);
+      if (!importsParent(found.path, name)) break;
+    }
+    return chain;
+  };
 
   const found: NugetPackageReference[] = [];
   for (const file of files) {
@@ -275,11 +300,14 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     const properties: MsbuildProperties = new Map();
     for (const path of [...buildProps, ...packageProps, project.path, ...buildTargets]) addMsbuildProperties(properties, documentOf(path));
 
-    const central = new Map<string, { version: string | null; condition: string | null }>();
+    // An unconditional PackageVersion replaces the versions of its id, and a conditional one adds one.
+    const central = new Map<string, Array<{ version: string | null; condition: string | null }>>();
     for (const path of packageProps) {
       for (const { element, group } of itemsOf(documentOf(path), "PackageVersion")) {
+        const condition = conditionOf(element, group);
         for (const id of idsOf(attributeOf(element, "Include") ?? attributeOf(element, "Update"))) {
-          central.set(id.toLowerCase(), { version: valueOf(element, "Version"), condition: conditionOf(element, group) });
+          const entry = { version: valueOf(element, "Version"), condition };
+          central.set(id.toLowerCase(), condition === null ? [entry] : [...(central.get(id.toLowerCase()) ?? []), entry]);
         }
       }
     }
@@ -288,16 +316,19 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     for (const path of [...buildProps, project.path, ...buildTargets]) {
       for (const { element, group } of itemsOf(documentOf(path), "PackageReference")) {
         const condition = conditionOf(element, group);
-        for (const id of idsOf(attributeOf(element, "Remove"))) pending.delete(id.toLowerCase());
+        if (condition === null) for (const id of idsOf(attributeOf(element, "Remove"))) pending.delete(id.toLowerCase());
         for (const id of idsOf(attributeOf(element, "Update"))) {
           const existing = pending.get(id.toLowerCase());
-          if (existing === undefined) continue;
           const version = valueOf(element, "Version");
           const versionOverride = valueOf(element, "VersionOverride");
-          for (const entry of existing) {
-            if (version !== null) entry.version = version;
-            if (versionOverride !== null) entry.versionOverride = versionOverride;
-          }
+          if (existing === undefined || (version === null && versionOverride === null)) continue;
+          const updated = existing.map((entry) => ({
+            id: entry.id,
+            version: version ?? entry.version,
+            versionOverride: versionOverride ?? entry.versionOverride,
+            condition: condition ?? entry.condition,
+          }));
+          pending.set(id.toLowerCase(), condition === null ? updated : [...existing, ...updated]);
         }
         for (const id of idsOf(attributeOf(element, "Include"))) {
           const entry: PendingReference = { id, version: valueOf(element, "Version"), versionOverride: valueOf(element, "VersionOverride"), condition };
@@ -308,9 +339,9 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     }
     for (const entries of pending.values()) {
       for (const entry of entries) {
-        const centralEntry = central.get(entry.id.toLowerCase());
-        const versionText = entry.versionOverride ?? entry.version ?? centralEntry?.version ?? null;
-        found.push(...reference(entry.id, versionText, project.path, entry.condition ?? centralEntry?.condition ?? null, properties));
+        const explicit = entry.versionOverride ?? entry.version;
+        const versions = explicit !== null ? [{ version: explicit, condition: null }] : (central.get(entry.id.toLowerCase()) ?? [{ version: null, condition: null }]);
+        for (const { version, condition } of versions) found.push(...reference(entry.id, version, project.path, entry.condition ?? condition, properties));
       }
     }
   }

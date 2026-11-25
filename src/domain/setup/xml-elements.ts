@@ -1,8 +1,9 @@
 /**
  * docs/specs/nuget-private-feed-mapping.md, DI-21.221. A small reader of the elements of an XML
  * file, enough for `NuGet.config`, MSBuild project files and `packages.config`. It keeps element
- * names and attribute values and drops comments, processing instructions and CDATA. It never
- * fails: a file it cannot read gives fewer elements, as derived-hosts.ts treats a file.
+ * names, attribute values and text, CDATA as literal text, and drops comments and processing
+ * instructions. It never fails: a file it cannot read gives fewer elements, as derived-hosts.ts
+ * treats a file.
  */
 export interface XmlElement {
   name: string;
@@ -15,12 +16,20 @@ export interface XmlElement {
 
 const ENTITIES: Record<string, string> = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'" };
 
+const MAX_CODE_POINT = 0x10ffff;
+
 const decode = (text: string): string =>
   text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, entity: string) => {
-    if (entity.startsWith("#x") || entity.startsWith("#X")) return String.fromCodePoint(Number.parseInt(entity.slice(2), 16));
-    if (entity.startsWith("#")) return String.fromCodePoint(Number.parseInt(entity.slice(1), 10));
+    if (entity.startsWith("#")) {
+      const hex = entity.startsWith("#x") || entity.startsWith("#X");
+      const codePoint = Number.parseInt(entity.slice(hex ? 2 : 1), hex ? 16 : 10);
+      // A code point past Unicode would make String.fromCodePoint throw, and the reader never fails.
+      return codePoint <= MAX_CODE_POINT ? String.fromCodePoint(codePoint) : whole;
+    }
     return ENTITIES[entity.toLowerCase()] ?? whole;
   });
+
+const escapeText = (text: string): string => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const TAG = /<(\/?)([A-Za-z_][\w:.-]*)((?:\s+[^\s=/>]+(?:\s*=\s*(?:"[^"]*"|'[^']*'))?)*)\s*(\/?)>/g;
 const ATTRIBUTE = /([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'))?/g;
@@ -35,10 +44,11 @@ const attributesOf = (text: string): Record<string, string> => {
 export const parseXml = (text: string): XmlElement => {
   const root: XmlElement = { name: "#document", attributes: {}, children: [], text: "" };
   const stack: XmlElement[] = [root];
+  // CDATA is literal text: escaped here, it reads back as written and never as a tag or an entity.
   const source = text
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_, content: string) => escapeText(content))
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<\?[\s\S]*?\?>/g, "")
-    .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, "")
     .replace(/<!DOCTYPE[^>]*>/gi, "");
   let last = 0;
   for (const match of source.matchAll(TAG)) {

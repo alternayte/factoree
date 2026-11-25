@@ -12,7 +12,7 @@ import {
 import { attributeOf, childrenNamed, descendantsNamed, parseXml } from "~/domain/setup/xml-elements.js";
 
 describe("parseXml", () => {
-  it("reads elements, attributes in any case and text, and skips comments, CDATA and the declaration", () => {
+  it("reads elements, attributes in any case and text, CDATA as text, and skips comments and the declaration", () => {
     const document = parseXml(`<?xml version="1.0"?>
 <!-- <PackageReference Include="Commented" Version="1.0.0" /> -->
 <Project>
@@ -26,11 +26,18 @@ describe("parseXml", () => {
     expect(references.map((element) => attributeOf(element, "include"))).toEqual(["A.B", "C"]);
     expect(childrenNamed(references[1]!, "version")[0]?.text).toBe("2.0.0");
     expect(attributeOf(descendantsNamed(document, "ItemGroup")[0]!, "Condition")).toBe("'$(TargetFramework)' == 'net8.0'");
+    expect(descendantsNamed(document, "Description")[0]?.text).toBe("<b>not a tag</b>");
+    expect(descendantsNamed(document, "b")).toEqual([]);
   });
 
   it("decodes entities in attributes", () => {
     const document = parseXml(`<a value="https://x/?a=1&amp;b=2" />`);
     expect(attributeOf(descendantsNamed(document, "a")[0]!, "value")).toBe("https://x/?a=1&b=2");
+  });
+
+  it("keeps a numeric entity past Unicode as written instead of failing", () => {
+    const document = parseXml(`<a value="x&#x110000;y&#65;" />`);
+    expect(attributeOf(descendantsNamed(document, "a")[0]!, "value")).toBe("x&#x110000;yA");
   });
 });
 
@@ -69,6 +76,14 @@ describe("NuGet versions", () => {
     const properties = new Map([["core", ["1.0.0", "2.0.0"]]]);
     expect(expandMsbuild("$(Core)", properties)).toEqual(["1.0.0", "2.0.0"]);
     expect(expandMsbuild("$(Missing)", properties)).toEqual(["$(Missing)"]);
+  });
+
+  it("gives no values for an expression with more values than the cap, instead of dropping some", () => {
+    const properties = new Map([
+      ["major", ["1", "2", "3"]],
+      ["minor", ["0", "1", "2"]],
+    ]);
+    expect(expandMsbuild("$(Major).$(Minor).0", properties)).toBeNull();
   });
 });
 
@@ -133,6 +148,69 @@ describe("readNugetPackageReferences", () => {
     ]);
     expect(references.map((entry) => entry.version)).toEqual(["1.0.0", "2.0.0"]);
     expect(references[0]?.condition).toContain("net48");
+  });
+
+  it("keeps what a conditional Update or Remove may skip, and keeps each conditional central version", () => {
+    const references = readNugetPackageReferences([
+      {
+        path: "Directory.Packages.props",
+        text: `<Project><ItemGroup>
+          <PackageVersion Include="Central" Version="1.0.0" Condition="'$(TargetFramework)' == 'net48'" />
+          <PackageVersion Include="Central" Version="2.0.0" Condition="'$(TargetFramework)' == 'net8.0'" />
+        </ItemGroup></Project>`,
+      },
+      {
+        path: "A.csproj",
+        text: `<Project><ItemGroup>
+          <PackageReference Include="Central" />
+          <PackageReference Include="Updated" Version="1.0.0" />
+          <PackageReference Include="Removed" Version="1.0.0" />
+        </ItemGroup>
+        <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+          <PackageReference Update="Updated" Version="2.0.0" />
+          <PackageReference Remove="Removed" />
+        </ItemGroup></Project>`,
+      },
+    ]);
+    expect(references.map((entry) => `${entry.id} ${entry.version ?? "-"}`)).toEqual(["Central 1.0.0", "Central 2.0.0", "Updated 1.0.0", "Updated 2.0.0", "Removed 1.0.0"]);
+  });
+
+  it("expands a property where it is assigned, as MSBuild does", () => {
+    const references = readNugetPackageReferences([
+      {
+        path: "A.csproj",
+        text: `<Project><PropertyGroup><Base>1</Base><Saved>$(Base).0.0</Saved><Base>2</Base></PropertyGroup>
+          <ItemGroup><PackageReference Include="Lib" Version="$(Saved)" /></ItemGroup></Project>`,
+      },
+    ]);
+    expect(references.map((entry) => entry.version)).toEqual(["1.0.0"]);
+  });
+
+  it("marks a version with more values than the cap unchecked", () => {
+    const references = readNugetPackageReferences([
+      {
+        path: "A.csproj",
+        text: `<Project>${["1", "2", "3"].map((value) => `<PropertyGroup Condition="'$(X)' == '${value}'"><Major>${value}</Major><Minor>${value}</Minor></PropertyGroup>`).join("")}
+          <ItemGroup><PackageReference Include="Lib" Version="$(Major).$(Minor).0" /></ItemGroup></Project>`,
+      },
+    ]);
+    expect(references).toHaveLength(1);
+    expect(references[0]).toMatchObject({ version: null, unchecked: expect.stringContaining("more than 8 values") as string });
+  });
+
+  it("takes the nearest Directory.Build.props, and a parent one only when it imports it", () => {
+    const root = { path: "Directory.Build.props", text: '<Project><ItemGroup><PackageReference Include="Root.Only" Version="1.0.0" /></ItemGroup></Project>' };
+    const project = { path: "src/A/A.csproj", text: '<Project><ItemGroup><PackageReference Include="Own" Version="1.0.0" /></ItemGroup></Project>' };
+    const nested = (text: string) => ({ path: "src/Directory.Build.props", text });
+    const idsOf = (files: Array<{ path: string; text: string }>) => readNugetPackageReferences(files).map((entry) => entry.id);
+    expect(idsOf([root, nested("<Project />"), project])).toEqual(["Own"]);
+    expect(idsOf([root, nested(`<Project><Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" /></Project>`), project])).toEqual(["Root.Only", "Own"]);
+    expect(idsOf([root, project])).toEqual(["Root.Only", "Own"]);
+  });
+
+  it("reads a version written as CDATA", () => {
+    const references = readNugetPackageReferences([{ path: "A.csproj", text: '<Project><ItemGroup><PackageReference Include="Lib"><Version><![CDATA[1.2.3]]></Version></PackageReference></ItemGroup></Project>' }]);
+    expect(references.map((entry) => entry.version)).toEqual(["1.2.3"]);
   });
 
   it("reads packages.config and the dotnet tool manifest, and marks an unresolved version unchecked", () => {

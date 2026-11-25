@@ -23,7 +23,7 @@ const SAMPLE: ImplementerPromptFields = {
  * rendered text, which changes this hash, which fails this test. The failure message tells a
  * developer to bump IMPLEMENTER_PROMPT_VERSION and to record the new hash here.
  */
-const EXPECTED_TEMPLATE_HASH = "d94fe8eed76c7715131b0736782770374a40db3c0c164ff1671ff759907cbe01";
+const EXPECTED_TEMPLATE_HASH = "9515fb70229465c383691802ac9273ded19791b2a5388c3b730d88c08bb0a367";
 
 describe("renderImplementerPrompt version guard", () => {
   it("keeps IMPLEMENTER_PROMPT_VERSION synchronized with the template text", () => {

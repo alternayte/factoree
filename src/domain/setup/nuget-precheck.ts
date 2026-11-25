@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import type { HostCredential } from "~/domain/products/host-credentials.js";
 import { allowListCovers, type Sandbox, type SandboxRef } from "~/domain/runs/sandbox.js";
 import type { RepositoryTextFile } from "./derived-hosts.js";
@@ -15,9 +16,11 @@ import {
   NUGET_MIRROR_OWNER,
   parentChainOf,
   parseNugetConfig,
+  pinnedToPrivateFeed,
   renderNugetConfig,
   requestedVersionOf,
   restoreFailuresOf,
+  unloadedSourcesOf,
   unsupportedFeedFailure,
   type MirrorStatus,
   type NugetFeedCoverage,
@@ -25,6 +28,7 @@ import {
 } from "./nuget-feeds.js";
 import { isNugetPackageFile, lookupsOf, normalizeNugetVersion, readNugetPackageReferences, type NugetPackageLookup } from "./nuget-packages.js";
 import { failureExcerpt } from "./setup-report.js";
+import { attributeOf, descendantsNamed, parseXml } from "./xml-elements.js";
 
 /** docs/specs/nuget-private-feed-mapping.md. What Factoree found for one package. */
 export type NugetPackageStatus = MirrorStatus | "unchecked" | "not_looked_up";
@@ -94,7 +98,7 @@ const PACKAGE_FILES =
   "-o -iname directory.build.props -o -iname directory.build.targets -o -iname packages.config -o -iname dotnet-tools.json -o -iname nuget.config \\) " +
   `-exec sh -c 'for f; do printf "\\036%s\\037" "$f"; cat "$f"; done' sh {} +`;
 
-const SOLUTIONS = `find . ${PRUNE} -type f \\( -iname '*.sln' -o -iname '*.slnx' \\) -print`;
+const SOLUTIONS = `find . ${PRUNE} -type f -size -4096k \\( -iname '*.sln' -o -iname '*.slnx' \\) -exec sh -c 'for f; do printf "\\036%s\\037" "$f"; cat "$f"; done' sh {} +`;
 
 /**
  * DI-21.228. Restores each target with the generated file. A sandbox image with no .NET SDK gets
@@ -113,9 +117,15 @@ exit $status`;
 const relative = (path: string): string => path.replace(/^\.\//, "");
 const depthOf = (path: string): number => path.split("/").length;
 
-/** The .NET files of the checkout, from one command. */
-const readDotnetFiles = async (sandbox: Sandbox, ref: SandboxRef, path: string): Promise<RepositoryTextFile[]> => {
-  const result = await sandbox.exec(ref, { file: "sh", args: ["-c", PACKAGE_FILES], cwd: path, timeoutMs: 120_000 });
+/**
+ * The files one command prints, each as `\036path\037text`. A scan that did not finish throws:
+ * a missing config or project would pass the pre-check unseen.
+ */
+const readCheckoutFiles = async (sandbox: Sandbox, ref: SandboxRef, path: string, script: string, what: string): Promise<RepositoryTextFile[]> => {
+  const result = await sandbox.exec(ref, { file: "sh", args: ["-c", script], cwd: path, timeoutMs: 120_000 });
+  if (result.timedOut || result.exitCode !== 0) {
+    throw new Error(`the scan of the checkout for ${what} did not finish (${result.timedOut ? "timed out" : `exit ${String(result.exitCode)}`})`);
+  }
   return result.stdout
     .split("\u001e")
     .filter((chunk) => chunk.includes("\u001f"))
@@ -123,6 +133,16 @@ const readDotnetFiles = async (sandbox: Sandbox, ref: SandboxRef, path: string):
       const split = chunk.indexOf("\u001f");
       return { path: relative(chunk.slice(0, split)), text: chunk.slice(split + 1) };
     });
+};
+
+/** The project paths a `.sln` or `.slnx` names, relative to the checkout, lower case. */
+const solutionProjectsOf = (solution: RepositoryTextFile): string[] => {
+  const written = solution.path.toLowerCase().endsWith(".slnx")
+    ? descendantsNamed(parseXml(solution.text), "Project").map((element) => attributeOf(element, "Path") ?? "")
+    : [...solution.text.matchAll(/^\s*Project\("[^"]*"\)\s*=\s*"[^"]*"\s*,\s*"([^"]+)"/gm)].map((match) => match[1]!);
+  return written
+    .filter((path) => /\.(cs|fs|vb)proj$/i.test(path))
+    .map((path) => posix.normalize(posix.join(posix.dirname(solution.path), path.replace(/\\/g, "/"))).toLowerCase());
 };
 
 interface HttpAnswer {
@@ -224,7 +244,8 @@ const onMirror = async (
   if (redirectHost === null || !allowListCovers(input.egressHosts, redirectHost)) return { status: "redirect_blocked", detail: redirectHost ?? "an unnamed host" };
   const follow = await input.sandbox.exec(input.ref, { file: "curl", args: [...CURL, "-L", "-r", "0-0", "-o", "/dev/null", "-w", "%{http_code}", file], cwd: "/", timeoutMs: 45_000 });
   const followCode = Number.parseInt(follow.stdout.trim(), 10) || 0;
-  const followStatus = mirrorStatusOf({ exitCode: follow.exitCode, timedOut: follow.timedOut, httpCode: followCode });
+  // Only a 2xx read the byte. A redirect at the end of the chain downloaded nothing.
+  const followStatus = followCode >= 300 && followCode < 400 ? "unreachable" : mirrorStatusOf({ exitCode: follow.exitCode, timedOut: follow.timedOut, httpCode: followCode });
   return { status: followStatus, detail: followStatus === "unreachable" ? `the download from ${redirectHost}: HTTP ${String(followCode)}, curl exit ${String(follow.exitCode)}` : null };
 };
 
@@ -258,15 +279,9 @@ export const nugetFailureOf = (headline: string, packages: readonly NugetPrechec
  * Every decision comes from a Factoree check, never from an agent.
  */
 export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<NugetPrecheckResult> => {
-  const files = await readDotnetFiles(input.sandbox, input.ref, input.repositoryPath);
-  const configs = files
-    .filter((file) => isNugetConfigPath(file.path))
-    .sort((left, right) => depthOf(left.path) - depthOf(right.path) || left.path.localeCompare(right.path))
-    .map((file) => parseNugetConfig(file.path, file.text));
-  const feeds = classifyNugetFeeds(configs, input.coverage);
   const report: NugetPrecheckReport = {
     outcome: "passed",
-    feeds: feeds.map((feed) => ({ key: feed.key, url: feed.url, kind: feed.kind, file: feed.file })),
+    feeds: [],
     credential: "not_needed",
     publicPackages: 0,
     packages: [],
@@ -280,6 +295,20 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
     report.failure = nugetFailureOf(headline, report.packages, owner);
     return { report, config: null };
   };
+  const failedScan = (error: unknown): NugetPrecheckResult => fail(`${error instanceof Error ? error.message : String(error)}. Run the setup again.`);
+
+  let files: RepositoryTextFile[];
+  try {
+    files = await readCheckoutFiles(input.sandbox, input.ref, input.repositoryPath, PACKAGE_FILES, "NuGet configs and projects");
+  } catch (error) {
+    return failedScan(error);
+  }
+  const configs = files
+    .filter((file) => isNugetConfigPath(file.path))
+    .sort((left, right) => depthOf(left.path) - depthOf(right.path) || left.path.localeCompare(right.path))
+    .map((file) => parseNugetConfig(file.path, file.text));
+  const feeds = classifyNugetFeeds(configs, input.coverage);
+  report.feeds = feeds.map((feed) => ({ key: feed.key, url: feed.url, kind: feed.kind, file: feed.file }));
 
   const unsupported = unsupportedFeedFailure(feeds);
   if (unsupported !== null) return fail(unsupported);
@@ -300,13 +329,19 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
   report.packages.push(...unchecked.values());
 
   const lookups = lookupsOf(references);
+  // DI-21.227. An id the repository's own source mapping sends only to the private feed never
+  // comes from nuget.org, whatever nuget.org has.
+  const pinned = lookups.filter((lookup) => pinnedToPrivateFeed(configs, feeds, lookup.id));
+  const open = lookups.filter((lookup) => !pinned.includes(lookup));
   let publicFlags: boolean[];
   try {
-    publicFlags = await mapLimit(lookups, LOOKUP_CONCURRENCY, (lookup) => onNugetOrg(input.sandbox, input.ref, lookup));
+    publicFlags = await mapLimit(open, LOOKUP_CONCURRENCY, (lookup) => onNugetOrg(input.sandbox, input.ref, lookup));
   } catch (error) {
     return fail(`${error instanceof Error ? error.message : String(error)}. Factoree could not tell the public packages from the private ones. Run the setup again.`);
   }
-  const privatePackages = lookups.filter((_, index) => publicFlags[index] !== true);
+  // DI-21.227. The file maps a whole id to the mirror, so each version of a private id reads from the mirror.
+  const privateIds = new Set([...pinned, ...open.filter((_, index) => publicFlags[index] !== true)].map((lookup) => lookup.id.toLowerCase()));
+  const privatePackages = lookups.filter((lookup) => privateIds.has(lookup.id.toLowerCase()));
   report.publicPackages = lookups.length - privatePackages.length;
 
   // DI-21.231. A repository that already restores from GitHub Packages needs no swap: only the
@@ -356,12 +391,23 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
   await input.sandbox.exec(input.ref, { file: "mkdir", args: ["-p", `${input.repositoryPath}/.factoree`], cwd: "/" });
   await input.sandbox.writeFile(input.ref, configFile, config);
 
-  const solutions = (await input.sandbox.exec(input.ref, { file: "sh", args: ["-c", SOLUTIONS], cwd: input.repositoryPath })).stdout
-    .split("\n")
-    .map((line) => relative(line.trim()))
-    .filter((line) => line !== "");
-  const projects = files.map((file) => file.path).filter((path) => /\.(cs|fs|vb)proj$/i.test(path));
-  const targets = (solutions.length > 0 ? solutions : projects).sort().slice(0, MAX_RESTORE_TARGETS);
+  let solutionFiles: RepositoryTextFile[];
+  try {
+    solutionFiles = await readCheckoutFiles(input.sandbox, input.ref, input.repositoryPath, SOLUTIONS, "solutions");
+  } catch (error) {
+    return failedScan(error);
+  }
+  // DI-21.228. Each solution, and each project no solution names, so no project goes unrestored.
+  const inSolutions = new Set(solutionFiles.flatMap(solutionProjectsOf));
+  const solutions = solutionFiles.map((file) => file.path).sort();
+  const standalone = files
+    .map((file) => file.path)
+    .filter((path) => /\.(cs|fs|vb)proj$/i.test(path) && !inSolutions.has(path.toLowerCase()))
+    .sort();
+  const allTargets = [...solutions, ...standalone];
+  const targets = allTargets.slice(0, MAX_RESTORE_TARGETS);
+  const unrestored = allTargets.length - targets.length;
+  const coverage = unrestored === 0 ? null : `Factoree restored the first ${String(targets.length)} of ${String(allTargets.length)} solutions and projects, so ${String(unrestored)} went unchecked.`;
 
   const handled = new Set<string>();
   for (let round = 1; round <= NUGET_RESTORE_ROUNDS && targets.length > 0; round += 1) {
@@ -372,13 +418,19 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
       report.restore = { outcome: "not_run", rounds: round, detail: "No .NET SDK ran or installed in the sandbox, so Factoree checked the direct references only." };
       break;
     }
+    // The setup agent cannot change `.factoree/nuget.config`, so a mirror the restore cannot load fails here.
+    const unloaded = unloadedSourcesOf(output).filter((url) => hostOf(url) === NUGET_MIRROR_HOST);
+    if (unloaded.length > 0) {
+      report.restore = { outcome: "failed", rounds: round, detail: failureExcerpt(output) };
+      return fail(checkCredential() ?? `the restore could not load the service index ${unloaded.join(", ")} (NU1301): ${mirrorStatusText("unreachable")}.`);
+    }
     const failures = restoreFailuresOf(output);
     if (failures.length === 0) {
       // DI-21.228. A restore that fails for a reason other than a missing package is no feed
       // fault. The setup agent sees the same failure and repairs it from `.factoree/`.
       report.restore = restore.exitCode === 0 && !restore.timedOut
-        ? { outcome: "passed", rounds: round, detail: null }
-        : { outcome: "failed", rounds: round, detail: failureExcerpt(output) };
+        ? { outcome: "passed", rounds: round, detail: coverage }
+        : { outcome: "failed", rounds: round, detail: [coverage, failureExcerpt(output)].filter((part) => part !== null).join("\n") };
       break;
     }
     if (round === NUGET_RESTORE_ROUNDS) {
@@ -399,7 +451,7 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
       const assets =
         failure.project === null
           ? null
-          : (await input.sandbox.exec(input.ref, { file: "head", args: ["-c", String(ASSETS_READ_LIMIT), `${failure.project.replace(/\/[^/]+$/, "")}/obj/project.assets.json`], cwd: input.repositoryPath })).stdout;
+          : (await input.sandbox.exec(input.ref, { file: "head", args: ["-c", String(ASSETS_READ_LIMIT), `${posix.dirname(failure.project)}/obj/project.assets.json`], cwd: input.repositoryPath })).stdout;
       const parents = assets === null ? null : parentChainOf(assets, failure.id);
       const lookupVersion = version ?? (assets === null ? null : requestedVersionOf(assets, failure.id));
       const result = await onMirror(input, NUGET_MIRROR_OWNER, failure.id, lookupVersion);

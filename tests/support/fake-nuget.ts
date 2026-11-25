@@ -19,8 +19,12 @@ export interface NugetWorld {
   mirrorStatus?: number;
   /** The host a mirror download redirects to. */
   redirectHost?: string;
-  /** The solutions the find of `*.sln` prints. */
-  solutions?: string[];
+  /** The HTTP status at the end of a followed download. Defaults to 206. */
+  downloadStatus?: number;
+  /** The solutions the find of `*.sln` prints, by path, with their text. */
+  solutions?: Record<string, string>;
+  /** The exit code of the find of the repository files, to model a scan that did not finish. */
+  scanExitCode?: number;
   /**
    * Restore, given the generated config text: the exit code and the output. Defaults to a pass.
    * Return 90 to model a sandbox with no .NET SDK.
@@ -45,9 +49,9 @@ export const installNugetWorld = (sandbox: FakeSandbox, world: NugetWorld, repos
   sandbox.onExec = (command) => {
     const script = command.file === "sh" ? (command.args[1] ?? "") : "";
     if (script.includes("dotnet-tools.json") && script.includes("find")) {
-      return answer(Object.entries(world.files).map(([path, text]) => `\u001e./${path}\u001f${text}`).join(""));
+      return answer(Object.entries(world.files).map(([path, text]) => `\u001e./${path}\u001f${text}`).join(""), world.scanExitCode ?? 0);
     }
-    if (script.includes("*.sln")) return answer((world.solutions ?? []).map((path) => `./${path}\n`).join(""));
+    if (script.includes("*.sln")) return answer(Object.entries(world.solutions ?? {}).map(([path, text]) => `\u001e./${path}\u001f${text}`).join(""));
     if (script.includes("dotnet restore")) {
       rounds += 1;
       const config = sandbox.files.get(`${repositoryPath}/.factoree/nuget.config`) ?? "";
@@ -92,7 +96,7 @@ export const installNugetWorld = (sandbox: FakeSandbox, world: NugetWorld, repos
           if (format.includes("redirect_url")) {
             return answer(code === 302 ? `302 https://${world.redirectHost ?? "nugetregistryv2prod.blob.core.windows.net"}/ghcr1/blobs/sha256:abc?sig=secret` : `${String(code)} `);
           }
-          return answer(code === 302 ? "206" : String(code));
+          return answer(code === 302 ? String(world.downloadStatus ?? 206) : String(code));
         }
         return answer("\n404");
       }

@@ -843,13 +843,15 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         sandboxFault: setup.sandboxFault,
       };
       // docs/specs/nuget-private-feed-mapping.md. A NuGet feed that no sandbox reaches as it is
-      // waits for the pre-check, which reads the mirror and decides the key.
+      // waits for the pre-check, which reads the mirror and decides the key. A config that did not
+      // read, or a tree too large to list, may hide that feed, so the pre-check reads the checkout.
       const nugetConfigs = await readNugetConfigFiles(files, setup.repositoryFullName, headSha, setup.githubInstallationId).catch((error: unknown) => {
-        dependencies.logger.warn("the NuGet configs were not read", { setup_id: setup.id, error: String(error) });
-        return [];
+        dependencies.logger.warn("the NuGet configs were not read, so the pre-check reads the checkout", { setup_id: setup.id, error: String(error) });
+        return null;
       });
-      const nugetFeeds = classifyNugetFeeds(nugetConfigs, { credentialHosts: prompt.credentialHosts ?? [], allowedDomains: product.allowedDomains });
-      if (needsNugetPrecheck(nugetFeeds)) return { kind: "precheck", defaultBranch, headSha, prompt };
+      if (nugetConfigs === null || needsNugetPrecheck(classifyNugetFeeds(nugetConfigs, { credentialHosts: prompt.credentialHosts ?? [], allowedDomains: product.allowedDomains }))) {
+        return { kind: "precheck", defaultBranch, headSha, prompt };
+      }
       return await decide(setup, defaultBranch, headSha, prompt);
     },
 

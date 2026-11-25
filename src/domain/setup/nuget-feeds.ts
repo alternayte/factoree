@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import type { HostCredential } from "~/domain/products/host-credentials.js";
 import { allowListCovers } from "~/domain/runs/sandbox.js";
 import type { DerivedHostFileSource } from "./derived-hosts.js";
@@ -48,6 +49,8 @@ export interface NugetConfigFile {
   sources: NugetSource[];
   /** The keys `<disabledPackageSources>` turns off. */
   disabled: string[];
+  /** The package patterns `<packageSourceMapping>` gives each source key, in file order. */
+  mappings: Array<{ key: string; patterns: string[] }>;
 }
 
 const hostOf = (url: string): string | null => {
@@ -88,7 +91,61 @@ export const parseNugetConfig = (path: string, text: string): NugetConfigFile =>
       .map((entry) => attributeOf(entry, "key") ?? "")
       .filter((key) => key !== ""),
   );
-  return { path, clear, sources, disabled };
+  const mappings = descendantsNamed(document, "packageSourceMapping").flatMap((block) =>
+    childrenNamed(block, "packageSource").flatMap((entry) => {
+      const key = attributeOf(entry, "key");
+      const patterns = childrenNamed(entry, "package")
+        .map((item) => (attributeOf(item, "pattern") ?? "").trim())
+        .filter((pattern) => pattern !== "");
+      return key === null || patterns.length === 0 ? [] : [{ key, patterns }];
+    }),
+  );
+  return { path, clear, sources, disabled, mappings };
+};
+
+/** The patterns every config maps to each source key, by lower-case key. */
+const mappingsOf = (configs: readonly NugetConfigFile[]): Map<string, string[]> => {
+  const byKey = new Map<string, string[]>();
+  for (const { key, patterns } of configs.flatMap((config) => config.mappings)) {
+    const current = byKey.get(key.toLowerCase()) ?? [];
+    byKey.set(key.toLowerCase(), [...current, ...patterns.filter((pattern) => !current.some((entry) => entry.toLowerCase() === pattern.toLowerCase()))]);
+  }
+  return byKey;
+};
+
+/**
+ * The source keys package source mapping sends an id to, lower case, or null when the
+ * repository maps no source. NuGet takes the most specific pattern: the exact id, then the
+ * longest prefix `Name.*`, then `*`.
+ */
+const mappedKeysOf = (mappings: ReadonlyMap<string, readonly string[]>, id: string): string[] | null => {
+  if (mappings.size === 0) return null;
+  const lower = id.toLowerCase();
+  const rank = (pattern: string): number => {
+    const text = pattern.toLowerCase();
+    if (text === lower) return Number.MAX_SAFE_INTEGER;
+    return text.endsWith("*") && lower.startsWith(text.slice(0, -1)) ? text.length : -1;
+  };
+  let best = -1;
+  let keys: string[] = [];
+  for (const [key, patterns] of mappings) {
+    const score = Math.max(...patterns.map(rank));
+    if (score < 0 || score < best) continue;
+    keys = score > best ? [key] : [...keys, key];
+    best = score;
+  }
+  return keys;
+};
+
+/**
+ * DI-21.227. True when the repository's package source mapping sends the id only to the mapped
+ * feed or the mirror. Such an id is private whatever nuget.org has, because the repository never
+ * lets nuget.org serve it.
+ */
+export const pinnedToPrivateFeed = (configs: readonly NugetConfigFile[], feeds: readonly NugetFeed[], id: string): boolean => {
+  const keys = mappedKeysOf(mappingsOf(configs), id);
+  const privateKeys = new Set(feeds.filter((feed) => feed.kind === "mapped" || feed.kind === "mirror").map((feed) => feed.key.toLowerCase()));
+  return keys !== null && keys.length > 0 && keys.every((key) => privateKeys.has(key));
 };
 
 const SKIPPED_FOLDERS = /(^|\/)(node_modules|vendor|bin|obj|\.git|third_party|testdata|fixtures)\//;
@@ -99,18 +156,24 @@ export const isNugetConfigPath = (path: string): boolean => !SKIPPED_FOLDERS.tes
 /** The paths read when the repository tree is too large to list. */
 const ROOT_NUGET_CONFIGS = ["NuGet.config", "nuget.config", "NuGet.Config"];
 
-/** Reads every `NuGet.config` of the repository at a commit through the GitHub App. */
+/**
+ * Reads every `NuGet.config` of the repository at a commit through the GitHub App. A source that
+ * lists no files reads the root names. Null when the tree is too large to list, because a config
+ * below the root may name the private feed. A failed listing or read throws: only a missing file
+ * is no config.
+ */
 export const readNugetConfigFiles = async (
   source: DerivedHostFileSource,
   fullName: string,
   ref: string,
   githubInstallationId: string,
-): Promise<NugetConfigFile[]> => {
-  const listed = source.listFiles === undefined ? null : await source.listFiles(fullName, ref, githubInstallationId).catch(() => null);
-  const paths = listed === null ? ROOT_NUGET_CONFIGS : listed.map((entry) => entry.path).filter(isNugetConfigPath);
+): Promise<NugetConfigFile[] | null> => {
+  const listed = source.listFiles === undefined ? undefined : await source.listFiles(fullName, ref, githubInstallationId);
+  if (listed === null) return null;
+  const paths = listed === undefined ? ROOT_NUGET_CONFIGS : listed.map((entry) => entry.path).filter(isNugetConfigPath);
   const files = await Promise.all(
     paths.map(async (path) => {
-      const text = await source.readFile(fullName, path, ref, githubInstallationId).catch(() => null);
+      const text = await source.readFile(fullName, path, ref, githubInstallationId);
       return text === null ? null : parseNugetConfig(path, text);
     }),
   );
@@ -204,8 +267,8 @@ export const MISSING_MIRROR_CREDENTIAL = `add a host credential for ${NUGET_MIRR
 /**
  * docs/specs/nuget-private-feed-mapping.md. The check of the mirror's host credential, or null
  * when it passes. NuGet on GitHub Packages takes a `header` credential, `Authorization` with a
- * Basic value entered as is. A path prefix, when set, must name the owner, or the provider adds
- * the header to no request of the mirror.
+ * Basic value entered as is. A path prefix, when set, must cover `/<owner>/`, or the provider
+ * leaves the header off the index and download requests of the mirror.
  */
 export const mirrorCredentialFailure = (credentials: readonly HostCredential[], owner: string = NUGET_MIRROR_OWNER): string | null => {
   const credential = credentials.find((entry) => entry.host.toLowerCase() === NUGET_MIRROR_HOST);
@@ -216,15 +279,15 @@ export const mirrorCredentialFailure = (credentials: readonly HostCredential[], 
   if (credential.kind !== "header") {
     return `The host credential for ${NUGET_MIRROR_HOST} is a ${credential.kind} credential, and NuGet on GitHub Packages needs ${shape}.`;
   }
-  if (credential.pathPrefix !== null) {
-    // A path prefix of `/` names no owner and covers every request of the mirror.
-    const prefixOwner = credential.pathPrefix.split("/").filter((part) => part !== "")[0] ?? null;
-    if (prefixOwner !== null && prefixOwner.toLowerCase() !== owner.toLowerCase()) {
-      return (
-        `The host credential for ${NUGET_MIRROR_HOST} has the path prefix ${credential.pathPrefix}, and the mirror is ${NUGET_MIRROR_HOST}/${owner}, ` +
-        `so the credential reaches no request of the mirror. Set the path prefix to /${owner}/ or leave it empty.`
-      );
-    }
+  if ((credential.headerName ?? "").toLowerCase() !== "authorization") {
+    return `The host credential for ${NUGET_MIRROR_HOST} sends the header ${credential.headerName ?? "(none)"}, and NuGet on GitHub Packages needs ${shape}.`;
+  }
+  // `/`, `/<owner>` and `/<owner>/` cover every request of the mirror. A longer prefix leaves some out.
+  if (credential.pathPrefix !== null && !`/${owner}/`.toLowerCase().startsWith(credential.pathPrefix.toLowerCase())) {
+    return (
+      `The host credential for ${NUGET_MIRROR_HOST} has the path prefix ${credential.pathPrefix}, and the mirror is ${NUGET_MIRROR_HOST}/${owner}, ` +
+      `so the credential does not reach the index and the downloads of the mirror. Set the path prefix to /${owner}/ or leave it empty.`
+    );
   }
   return null;
 };
@@ -269,15 +332,33 @@ export const mirrorStatusText = (status: MirrorStatus, detail: string | null = n
 const escapeXml = (text: string): string =>
   text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+/** XML forbids `--` in a comment, and .NET refuses a config that has it. */
+const xmlCommentText = (text: string): string => text.replace(/-(?=-)/g, "- ");
+
+/**
+ * A local folder source as `.factoree/nuget.config` reads it. NuGet resolves a relative folder
+ * from the config that names it, so the path is rebased from that config's folder. An absolute
+ * path, a drive, a share, an environment variable or a URI stays as written.
+ */
+const rebasedLocalSource = (url: string, configPath: string): string => {
+  const text = url.trim();
+  if (/^([/\\~%$]|[A-Za-z]:|[A-Za-z][\w+.-]*:\/\/)/.test(text)) return url;
+  const configFolder = posix.dirname(configPath);
+  const target = posix.normalize(posix.join(configFolder, text.replace(/\\/g, "/")));
+  return posix.relative(posix.dirname(FACTOREE_NUGET_CONFIG), target) || ".";
+};
+
 /**
  * DI-21.227. The `.factoree/nuget.config` Factoree writes. It copies the sources of the
  * repository's configs in order, leaves out a disabled source, and replaces only the mapped
  * private feed: with the mirror when a package needs it, and with nothing when none does,
  * because a source no sandbox reaches fails every restore. It keeps `<clear />` only when the
  * repository had it. `restore --configfile` reads no other file, so it adds nuget.org when no
- * kept source is nuget.org: every package Factoree found public came from there.
+ * kept source is nuget.org: every package Factoree found public came from there. A local folder
+ * source moves to the generated file's folder, so a relative path is rebased.
  * `packageSourceMapping` sends each mirrored id to the mirror and `*` to every other source, so
- * no other source can serve a private id.
+ * no other source can serve a private id. When the repository maps its sources itself, its
+ * patterns stay, and those of the mapped feed move to the mirror.
  */
 export const renderNugetConfig = (configs: readonly NugetConfigFile[], feeds: readonly NugetFeed[], mirroredIds: readonly string[]): string => {
   const ids = [...new Set(mirroredIds.map((id) => id.trim()).filter((id) => id !== ""))].sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()));
@@ -285,43 +366,51 @@ export const renderNugetConfig = (configs: readonly NugetConfigFile[], feeds: re
   const existingMirror = feeds.find((feed) => feed.kind === "mirror" && githubPackagesOwnerOf(feed.url)?.toLowerCase() === NUGET_MIRROR_OWNER.toLowerCase());
   const mapped = feeds.find((feed) => feed.kind === "mapped");
   const mirrorKey = existingMirror?.key ?? mapped?.key ?? "github-packages";
-  const sources: Array<{ key: string; url: string; protocolVersion: string | null; mirror: boolean }> = [];
+  const repositoryMappings = mappingsOf(configs);
+  const patternsOf = (key: string): string[] => repositoryMappings.get(key.toLowerCase()) ?? [];
+  const sources: Array<{ key: string; url: string; protocolVersion: string | null; patterns: string[]; mirror: boolean }> = [];
   for (const feed of feeds) {
     if (feed.kind === "unsupported") continue;
     if (feed.kind === "mapped") {
-      if (ids.length > 0 && existingMirror === undefined) sources.push({ key: feed.key, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", mirror: true });
+      if (ids.length > 0 && existingMirror === undefined) sources.push({ key: feed.key, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: patternsOf(feed.key), mirror: true });
       continue;
     }
     if (feed.kind === "mirror" && feed === existingMirror) {
-      sources.push({ key: feed.key, url: feed.url, protocolVersion: feed.protocolVersion, mirror: ids.length > 0 });
+      sources.push({ key: feed.key, url: feed.url, protocolVersion: feed.protocolVersion, patterns: [...patternsOf(feed.key), ...(mapped === undefined ? [] : patternsOf(mapped.key))], mirror: ids.length > 0 });
       continue;
     }
-    sources.push({ key: feed.key, url: feed.url, protocolVersion: feed.protocolVersion, mirror: false });
+    sources.push({ key: feed.key, url: feed.kind === "local" ? rebasedLocalSource(feed.url, feed.file) : feed.url, protocolVersion: feed.protocolVersion, patterns: patternsOf(feed.key), mirror: false });
   }
   if (ids.length > 0 && !sources.some((source) => source.mirror)) {
-    sources.push({ key: mirrorKey, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", mirror: true });
+    sources.push({ key: mirrorKey, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: mapped === undefined ? [] : patternsOf(mapped.key), mirror: true });
   }
   if (!sources.some((source) => hostOf(source.url) === NUGET_ORG_HOST)) {
     const key = sources.some((source) => source.key.toLowerCase() === "nuget.org") ? "nuget.org (Factoree)" : "nuget.org";
-    sources.push({ key, url: NUGET_ORG_INDEX, protocolVersion: "3", mirror: false });
+    sources.push({ key, url: NUGET_ORG_INDEX, protocolVersion: "3", patterns: ["*"], mirror: false });
   }
   const add = (source: (typeof sources)[number]): string =>
     `    <add key="${escapeXml(source.key)}" value="${escapeXml(source.url)}"${source.protocolVersion === null ? "" : ` protocolVersion="${escapeXml(source.protocolVersion)}"`} />`;
   const lines = [
     '<?xml version="1.0" encoding="utf-8"?>',
-    `<!-- Written by Factoree from ${configs.map((config) => config.path).join(", ") || "no NuGet.config"}. docs/specs/nuget-private-feed-mapping.md -->`,
-    `<!-- ${NUGET_FEED_MAPPING.from} maps to ${NUGET_FEED_MAPPING.to}. Restore with: dotnet restore --configfile ${FACTOREE_NUGET_CONFIG} -->`,
+    `<!-- Written by Factoree from ${xmlCommentText(configs.map((config) => config.path).join(", ") || "no NuGet.config")}. docs/specs/nuget-private-feed-mapping.md -->`,
+    `<!-- ${NUGET_FEED_MAPPING.from} maps to ${NUGET_FEED_MAPPING.to}. Every restore passes this file as its configfile. -->`,
     "<configuration>",
     "  <packageSources>",
     ...(clear ? ["    <clear />"] : []),
     ...sources.map(add),
     "  </packageSources>",
   ];
-  if (ids.length > 0) {
+  const mapping = sources
+    .map((source) => {
+      const patterns = source.mirror ? [...ids, ...source.patterns] : repositoryMappings.size > 0 ? source.patterns : ["*"];
+      return { key: source.key, patterns: patterns.filter((pattern, index) => patterns.findIndex((entry) => entry.toLowerCase() === pattern.toLowerCase()) === index) };
+    })
+    .filter((entry) => entry.patterns.length > 0);
+  if (ids.length > 0 || repositoryMappings.size > 0) {
     lines.push("  <packageSourceMapping>");
-    for (const source of sources) {
-      lines.push(`    <packageSource key="${escapeXml(source.key)}">`);
-      lines.push(...(source.mirror ? ids.map((id) => `      <package pattern="${escapeXml(id)}" />`) : ['      <package pattern="*" />']));
+    for (const entry of mapping) {
+      lines.push(`    <packageSource key="${escapeXml(entry.key)}">`);
+      lines.push(...entry.patterns.map((pattern) => `      <package pattern="${escapeXml(pattern)}" />`));
       lines.push("    </packageSource>");
     }
     lines.push("  </packageSourceMapping>");
@@ -351,7 +440,8 @@ export const restoreFailuresOf = (output: string): RestoreFailure[] => {
   for (const match of output.matchAll(RESTORE_FAILURE)) {
     // The sentence ends with a period right after the id.
     const id = match[3]!.replace(/\.+$/, "");
-    const version = /(\d[^\s,)\]]*)/.exec(match[4] ?? "")?.[1] ?? null;
+    // Only `>= x` or `= x` names a lowest version. `< x`, `<= x` and `> x` name none to check.
+    const version = /^\s*(?:>=|=)?\s*(\d[^\s,)\]&]*)/.exec(match[4] ?? "")?.[1] ?? null;
     const project = match[1] === undefined ? null : match[1].trim().replace(/\s*\[.*$/, "");
     const key = `${id.toLowerCase()}/${version ?? ""}`;
     if (!byKey.has(key)) byKey.set(key, { id, code: match[2]!.toUpperCase() as RestoreFailure["code"], version, project: project === "" ? null : project });
@@ -359,6 +449,12 @@ export const restoreFailuresOf = (output: string): RestoreFailure[] => {
   return [...byKey.values()];
 };
 
+const SERVICE_INDEX_FAILURE = /error NU1301:[^\n]*?(https?:\/\/[^\s'"]+)/gi;
+
+/** The sources whose service index a `dotnet restore` output says it could not load (NU1301). */
+export const unloadedSourcesOf = (output: string): string[] => [
+  ...new Set([...output.matchAll(SERVICE_INDEX_FAILURE)].map((match) => match[1]!.replace(/[.,;]+$/, ""))),
+];
 /**
  * The parents of a package that a restore could not find, from `obj/project.assets.json`: the
  * direct reference first, then each package down to the one that depends on it, as `id version`.
@@ -398,8 +494,21 @@ export const parentChainOf = (assetsText: string, id: string): string[] | null =
 };
 
 /**
+ * The inclusive lower bound of a NuGet dependency version, normalised, or null when it has none:
+ * `1.0` and `[1.0, )` give 1.0, `[1.0]` gives 1.0, and `(1.0, )` and `(, 2.0]` give null.
+ */
+const lowerBoundOf = (range: string): string | null => {
+  const text = range.trim();
+  if (text.startsWith("(")) return null;
+  if (!text.startsWith("[")) return normalizeNugetVersion(text);
+  const lower = (text.slice(1).split(",")[0] ?? "").replace(/\]$/, "").trim();
+  return lower === "" ? null : normalizeNugetVersion(lower);
+};
+
+/**
  * DI-21.232. The lowest version the parents of a package ask for in `obj/project.assets.json`, normalised,
- * or null. NU1101 names no version, and the mirror check downloads an exact one.
+ * or null. NU1101 names no version, and the mirror check downloads an exact one. A range with no
+ * inclusive lower bound names no version to check.
  */
 export const requestedVersionOf = (assetsText: string, id: string): string | null => {
   let assets: { targets?: Record<string, Record<string, { dependencies?: Record<string, string> }>> };
@@ -412,7 +521,7 @@ export const requestedVersionOf = (assetsText: string, id: string): string | nul
     .flatMap((target) => Object.values(target))
     .flatMap((entry) => Object.entries(entry.dependencies ?? {}))
     .filter(([name]) => name.toLowerCase() === id.toLowerCase())
-    .map(([, range]) => normalizeNugetVersion(/(\d[^\s,)\]]*)/.exec(range)?.[1] ?? ""))
+    .map(([, range]) => lowerBoundOf(range))
     .filter((version): version is string => version !== null);
   return versions.reduce<string | null>((lowest, version) => (lowest === null || (compareNugetVersions(version, lowest) ?? 0) < 0 ? version : lowest), null);
 };

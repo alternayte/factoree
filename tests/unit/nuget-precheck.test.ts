@@ -297,6 +297,86 @@ describe("runNugetPrecheck", () => {
     expect(report.failure).toContain(`after ${String(NUGET_RESTORE_ROUNDS)} restore rounds`);
   });
 
+  it("fails, and asks for a new setup, when the scan of the checkout did not finish", async () => {
+    const { report, requests } = await run({ files: files({ "Frontiers.Core": "3.1.0" }), scanExitCode: 1 });
+    expect(report.outcome).toBe("failed");
+    expect(report.failure).toContain("the scan of the checkout for NuGet configs and projects did not finish (exit 1)");
+    expect(requests).toEqual([]);
+  });
+
+  it("fails a download whose redirect chain ends on another redirect", async () => {
+    const { report } = await run({ files: files({ "Frontiers.Core": "3.1.0" }), mirror: { "frontiers.core": ["3.1.0"] }, downloadStatus: 302 });
+    expect(report.packages[0]).toMatchObject({ status: "unreachable" });
+    expect(report.outcome).toBe("failed");
+  });
+
+  it("checks on the mirror the nuget.org version of an id another version of which is private", async () => {
+    const { report, requests } = await run({
+      files: { ...files({ Lib: "2.0.0" }), "src/Old/Old.csproj": project({ Lib: "1.0.0" }) },
+      nugetOrg: { lib: { versions: ["1.0.0"] } },
+      mirror: { lib: ["2.0.0"] },
+    });
+    expect(report.outcome).toBe("failed");
+    expect(report.publicPackages).toBe(0);
+    expect(report.packages.map((entry) => `${entry.id} ${entry.version} ${entry.status}`)).toEqual(["Lib 1.0.0 version_missing", "Lib 2.0.0 mirrored"]);
+    expect(requests).toContain("https://nuget.pkg.github.com/frontiersin/download/lib/index.json");
+  });
+
+  it("keeps private an id the repository maps only to the private feed, whatever nuget.org has", async () => {
+    const config = `<configuration><packageSources>
+      <clear />
+      <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+      <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+    </packageSources><packageSourceMapping>
+      <packageSource key="nuget.org"><package pattern="*" /></packageSource>
+      <packageSource key="frontiers"><package pattern="Frontiers.*" /></packageSource>
+    </packageSourceMapping></configuration>`;
+    const { report, config: written, requests } = await run({
+      files: files({ "Frontiers.Core": "3.1.0", Serilog: "3.1.1" }, config),
+      nugetOrg: { ...PUBLIC, "frontiers.core": { versions: ["3.1.0"] } },
+      mirror: { "frontiers.core": ["3.1.0"] },
+    });
+    expect(report.outcome).toBe("passed");
+    expect(report.mirroredIds).toEqual(["Frontiers.Core"]);
+    expect(requests.some((url) => url.includes("api.nuget.org/v3-flatcontainer/frontiers.core"))).toBe(false);
+    expect(written).toContain('<package pattern="Frontiers.*" />');
+  });
+
+  it("restores each solution and each project no solution names", async () => {
+    const { report, sandbox } = await run({
+      files: { ...files({ "Frontiers.Core": "3.1.0" }), "tools/B/B.csproj": project({}) },
+      mirror: { "frontiers.core": ["3.1.0"] },
+      solutions: { "App.sln": 'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Api", "src\\Api\\Api.csproj", "{1}"\nEndProject\n' },
+    });
+    expect(report.outcome).toBe("passed");
+    const restore = sandbox.commands.find((command) => command.file === "sh" && (command.args[1] ?? "").includes("dotnet restore"));
+    expect(restore?.args.slice(3)).toEqual(["App.sln", "tools/B/B.csproj"]);
+  });
+
+  it("fails when the restore cannot load the mirror's service index", async () => {
+    const { report } = await run({
+      files: files({ "Frontiers.Core": "3.1.0" }),
+      mirror: { "frontiers.core": ["3.1.0"] },
+      restore: () => ({ exitCode: 1, output: `${PATH}/src/Api/Api.csproj : error NU1301: Unable to load the service index for source https://nuget.pkg.github.com/frontiersin/index.json.` }),
+    });
+    expect(report.outcome).toBe("failed");
+    expect(report.failure).toContain("could not load the service index https://nuget.pkg.github.com/frontiersin/index.json (NU1301)");
+  });
+
+  it("reads the assets file of a project at the root of the checkout", async () => {
+    const { report, sandbox } = await run({
+      files: { "NuGet.config": PRIVATE_FEED_CONFIG, "App.csproj": project({ "Frontiers.Core": "3.1.0" }) },
+      mirror: { "frontiers.core": ["3.1.0"], "frontiers.transitive": ["1.0.0"] },
+      restore: (text) =>
+        text.includes('pattern="Frontiers.Transitive"')
+          ? { exitCode: 0, output: "Restore complete." }
+          : { exitCode: 1, output: "App.csproj : error NU1101: Unable to find package Frontiers.Transitive. No packages exist with this id" },
+      assets: { ".": JSON.stringify({ targets: { "net8.0": { "Frontiers.Core/3.1.0": { dependencies: { "Frontiers.Transitive": "1.0.0" } } } }, project: { frameworks: { "net8.0": { dependencies: { "Frontiers.Core": {} } } } } }) },
+    });
+    expect(sandbox.commands.find((command) => command.file === "head")?.args[2]).toBe("./obj/project.assets.json");
+    expect(report.packages.find((entry) => entry.id === "Frontiers.Transitive")).toMatchObject({ version: "1.0.0", parents: ["Frontiers.Core 3.1.0"] });
+  });
+
   it("changes the key part when the mirrored packages change", async () => {
     const one = await run({ files: files({ "Frontiers.Core": "3.1.0" }), mirror: { "frontiers.core": ["3.1.0"] } });
     const two = await run({ files: files({ "Frontiers.Core": "3.1.0", "Hangfire.Pro": "1.8.6" }), mirror: { "frontiers.core": ["3.1.0"], "hangfire.pro": ["1.8.6"] } });

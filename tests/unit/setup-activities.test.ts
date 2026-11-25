@@ -37,6 +37,8 @@ interface World {
   previous?: RepositorySetupRecord | null;
   latest?: RepositorySetupRecord | null;
   files?: Record<string, string>;
+  /** The paths whose GitHub read fails. */
+  unreadable?: string[];
   testSecrets?: string[];
   /** The session result over a finished session. */
   result?: { completed: boolean; outcome: string; summary: string };
@@ -98,7 +100,8 @@ const build = (status: string, world: World = {}) => {
     discoveryClient: { listInstallationRepositories: () => Promise.resolve([{ fullName: "acme/anthology", defaultBranch: "main" }]) },
     repositoryFiles: {
       headSha: () => Promise.resolve("b".repeat(40)),
-      readFile: (_fullName: string, path: string) => Promise.resolve(world.files?.[path] ?? null),
+      readFile: (_fullName: string, path: string) =>
+        world.unreadable?.includes(path) === true ? Promise.reject(new Error(`HTTP 502 for ${path}`)) : Promise.resolve(world.files?.[path] ?? null),
     },
     hostCredentials: () =>
       Promise.resolve({
@@ -370,6 +373,14 @@ describe("precheckNugetFeeds (docs/specs/nuget-private-feed-mapping.md)", () => 
   it("starts no pre-check for a repository whose feeds every sandbox reaches", async () => {
     const { activities } = build("", { files: { "NuGet.config": '<configuration><packageSources><add key="nuget.org" value="https://api.nuget.org/v3/index.json" /></packageSources></configuration>' } });
     expect((await activities.prepareSetup({ setupId: "setup-1", temporalRunId: "run-1" })).kind).toBe("run");
+  });
+
+  it("sends a setup whose NuGet config did not read to the pre-check, which reads the checkout", async () => {
+    const world = { ...nugetWorld({ "Frontiers.Core": "3.1.0" }), unreadable: ["NuGet.config"] };
+    const { activities, ready } = build("", world);
+    expect((await activities.prepareSetup({ setupId: "setup-1", temporalRunId: "run-1" })).kind).toBe("precheck");
+    const outcome = await ready();
+    expect(outcome.kind === "run" ? outcome.nuget?.mirroredIds : outcome.kind).toEqual(["Frontiers.Core"]);
   });
 
   it("waits for the pre-check, before the key, when the repository names the private feed", async () => {

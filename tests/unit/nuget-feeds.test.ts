@@ -11,10 +11,12 @@ import {
   NUGET_FEED_MAPPING,
   parentChainOf,
   parseNugetConfig,
+  pinnedToPrivateFeed,
   readNugetConfigFiles,
   renderNugetConfig,
   requestedVersionOf,
   restoreFailuresOf,
+  unloadedSourcesOf,
   unsupportedFeedFailure,
 } from "~/domain/setup/nuget-feeds.js";
 import { descendantsNamed, parseXml, attributeOf } from "~/domain/setup/xml-elements.js";
@@ -63,11 +65,57 @@ describe("parseNugetConfig", () => {
       },
       listFiles: () => Promise.resolve([{ path: "NuGet.config" }, { path: "src/NuGet.Config" }, { path: "README.md" }]),
     };
-    expect((await readNugetConfigFiles(source as never, "o/r", "sha", "1")).map((file) => file.path)).toEqual(["NuGet.config", "src/NuGet.Config"]);
+    expect((await readNugetConfigFiles(source as never, "o/r", "sha", "1"))?.map((file) => file.path)).toEqual(["NuGet.config", "src/NuGet.Config"]);
     const rootOnly = { readFile: source.readFile };
     read.length = 0;
-    expect((await readNugetConfigFiles(rootOnly as never, "o/r", "sha", "1")).map((file) => file.path)).toEqual(["NuGet.config"]);
+    expect((await readNugetConfigFiles(rootOnly as never, "o/r", "sha", "1"))?.map((file) => file.path)).toEqual(["NuGet.config"]);
     expect(read).toEqual(["NuGet.config", "nuget.config", "NuGet.Config"]);
+  });
+
+  it("calls a tree too large to list an incomplete inventory, and lets a failed read throw", async () => {
+    const truncated = { readFile: () => Promise.resolve(PRIVATE_FEED_CONFIG), listFiles: () => Promise.resolve(null) };
+    expect(await readNugetConfigFiles(truncated as never, "o/r", "sha", "1")).toBeNull();
+    const failing = { readFile: () => Promise.reject(new Error("HTTP 502")), listFiles: () => Promise.resolve([{ path: "src/NuGet.Config" }]) };
+    await expect(readNugetConfigFiles(failing as never, "o/r", "sha", "1")).rejects.toThrow("HTTP 502");
+  });
+
+  it("reads the package source mapping of each key", () => {
+    const config = parseNugetConfig(
+      "NuGet.config",
+      `<configuration><packageSourceMapping>
+        <packageSource key="nuget.org"><package pattern="*" /></packageSource>
+        <packageSource key="frontiers"><package pattern="Frontiers.*" /><package pattern="Hangfire.Pro" /></packageSource>
+      </packageSourceMapping></configuration>`,
+    );
+    expect(config.mappings).toEqual([
+      { key: "nuget.org", patterns: ["*"] },
+      { key: "frontiers", patterns: ["Frontiers.*", "Hangfire.Pro"] },
+    ]);
+  });
+});
+
+describe("pinnedToPrivateFeed", () => {
+  const config = parseNugetConfig(
+    "NuGet.config",
+    `<configuration><packageSources>
+      <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+      <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+    </packageSources><packageSourceMapping>
+      <packageSource key="nuget.org"><package pattern="*" /><package pattern="Frontiers.Public.*" /></packageSource>
+      <packageSource key="frontiers"><package pattern="Frontiers.*" /></packageSource>
+    </packageSourceMapping></configuration>`,
+  );
+  const feeds = classifyNugetFeeds([config], NO_COVERAGE);
+
+  it("pins an id whose most specific pattern names only the private feed", () => {
+    expect(pinnedToPrivateFeed([config], feeds, "frontiers.core")).toBe(true);
+    expect(pinnedToPrivateFeed([config], feeds, "Frontiers.Public.Lib")).toBe(false);
+    expect(pinnedToPrivateFeed([config], feeds, "Serilog")).toBe(false);
+  });
+
+  it("pins nothing when the repository maps no source", () => {
+    const plain = parseNugetConfig("NuGet.config", PRIVATE_FEED_CONFIG);
+    expect(pinnedToPrivateFeed([plain], classifyNugetFeeds([plain], NO_COVERAGE), "Frontiers.Core")).toBe(false);
   });
 });
 
@@ -129,6 +177,12 @@ describe("the mirror credential", () => {
   it("fails a path prefix of another owner and a credential of another kind", () => {
     expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/acme/" })])).toContain("path prefix /acme/");
     expect(mirrorCredentialFailure([mirrorCredential({ kind: "registry", headerName: null, pathPrefix: null })])).toContain("registry credential");
+  });
+
+  it("fails a path prefix that leaves out the index or the downloads, and a header other than Authorization", () => {
+    expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/frontiersin/metadata/" })])).toContain("path prefix /frontiersin/metadata/");
+    expect(mirrorCredentialFailure([mirrorCredential({ headerName: "X-NuGet-ApiKey" })])).toContain("sends the header X-NuGet-ApiKey");
+    expect(mirrorCredentialFailure([mirrorCredential({ headerName: "authorization" })])).toBeNull();
   });
 
   it("reads the owner of a GitHub Packages URL", () => {
@@ -197,6 +251,46 @@ describe("renderNugetConfig", () => {
     expect(sourcesOf(text)).toEqual([["nuget.org", "https://api.nuget.org/v3/index.json"]]);
     expect(text).not.toContain("packageSourceMapping");
   });
+
+  it("writes comments with no `--`, which .NET refuses, whatever the config paths are", () => {
+    const configs = [parseNugetConfig("src/api--legacy/NuGet.Config", PRIVATE_FEED_CONFIG)];
+    const text = renderNugetConfig(configs, classifyNugetFeeds(configs, NO_COVERAGE), ["Frontiers.Core"]);
+    const comments = [...text.matchAll(/<!--([\s\S]*?)-->/g)].map((match) => match[1]!);
+    expect(comments).toHaveLength(2);
+    for (const comment of comments) expect(comment).not.toContain("--");
+  });
+
+  it("rebases a relative local folder from the config that names it", () => {
+    const configs = [
+      parseNugetConfig(
+        "src/NuGet.config",
+        `<configuration><packageSources>
+          <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+          <add key="local" value=".\\packages" />
+          <add key="absolute" value="/opt/packages" />
+        </packageSources></configuration>`,
+      ),
+    ];
+    const text = renderNugetConfig(configs, classifyNugetFeeds(configs, NO_COVERAGE), ["Frontiers.Core"]);
+    expect(Object.fromEntries(sourcesOf(text))).toMatchObject({ local: "../src/packages", absolute: "/opt/packages" });
+  });
+
+  it("keeps the repository's own source mapping and moves the patterns of the private feed to the mirror", () => {
+    const configs = [
+      parseNugetConfig(
+        "NuGet.config",
+        `<configuration><packageSources>
+          <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+          <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+        </packageSources><packageSourceMapping>
+          <packageSource key="nuget.org"><package pattern="*" /></packageSource>
+          <packageSource key="frontiers"><package pattern="Frontiers.*" /></packageSource>
+        </packageSourceMapping></configuration>`,
+      ),
+    ];
+    const text = renderNugetConfig(configs, classifyNugetFeeds(configs, NO_COVERAGE), ["Hangfire.Pro"]);
+    expect(mappingOf(text)).toEqual({ "nuget.org": ["*"], frontiers: ["Hangfire.Pro", "Frontiers.*"] });
+  });
 });
 
 describe("restore output", () => {
@@ -211,6 +305,16 @@ describe("restore output", () => {
       { id: "Frontiers.Transitive", code: "NU1101", version: null, project: "/repo/src/Api/Api.csproj" },
       { id: "Hangfire.Pro", code: "NU1102", version: "1.8.6", project: "/repo/src/Api/Api.csproj" },
     ]);
+  });
+
+  it("takes no lowest version from an upper bound in NU1102", () => {
+    expect(restoreFailuresOf("A.csproj : error NU1102: Unable to find package Lib with version (<= 2.0.0)")[0]?.version).toBeNull();
+  });
+
+  it("names the sources whose service index the restore could not load", () => {
+    const output = "/repo/A.csproj : error NU1301: Unable to load the service index for source https://nuget.pkg.github.com/frontiersin/index.json.\nRestore failed.";
+    expect(unloadedSourcesOf(output)).toEqual(["https://nuget.pkg.github.com/frontiersin/index.json"]);
+    expect(unloadedSourcesOf("error NU1101: Unable to find package X.")).toEqual([]);
   });
 
   it("names the parent chain from project.assets.json, direct reference first", () => {
@@ -237,5 +341,12 @@ describe("restore output", () => {
     expect(requestedVersionOf(assets, "Hangfire.Pro")).toBe("2.3.2");
     expect(requestedVersionOf(assets, "Frontiers.Other")).toBeNull();
     expect(requestedVersionOf("not json", "x")).toBeNull();
+  });
+
+  it("takes no version from a range with no inclusive lower bound", () => {
+    const assetsOf = (range: string): string => JSON.stringify({ targets: { "net8.0": { "Parent/1.0.0": { dependencies: { Lib: range } } } } });
+    expect(requestedVersionOf(assetsOf("(, 2.0.0]"), "Lib")).toBeNull();
+    expect(requestedVersionOf(assetsOf("(1.0.0, )"), "Lib")).toBeNull();
+    expect(requestedVersionOf(assetsOf("[1.5.0]"), "Lib")).toBe("1.5.0");
   });
 });
