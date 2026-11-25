@@ -48,29 +48,31 @@ Keep the skeleton small. Each feature belongs in a work item, not in the skeleto
 
 Do these steps in this order:
 
-1. Write the SDD. Review it with Speccy until the verdict is Build Ready.
-2. Build the skeleton. Commit the SDD in it.
+1. Write the design doc. Review it until a builder can build from it without questions to the author.
+2. Build the skeleton. Commit the design doc in it.
 3. Install the Factoree GitHub App on the repository. The repository then shows on the product page with the badge **no config**.
 4. Start a setup run from the product page. Fix each denied host and each failed part that the setup report names. Merge the setup pull request.
-5. In Speccy, break the SDD into work items. Fix each MUST finding. Assign each work item to Factoree.
-6. Push the breakdown to the Linear team of the product.
-7. Factoree starts a run for each work item. A work item with a blocker waits until each blocker is completed or canceled.
-8. Merge each pull request after review.
-9. Run `speccy verify` on each pull request and its merge commit. The Speccy verify Action finds the work item from the Linear key in the pull request title.
+5. Break the design doc into work items. Create each one as a Linear issue in the team of the product.
+6. Delegate each work item to Factoree. A work item with a blocker waits until each blocker is completed or canceled.
+7. Merge each pull request after review.
+8. Check each merged pull request against the requirements of its work item.
 
-## What a Speccy work item gives the refiner
+[alternayte/speccy](https://github.com/alternayte/speccy) is one example of a tool that reviews a design doc, breaks it into work items, pushes them to Linear and checks the code against each requirement.
 
-The Speccy push writes these sections into the Linear issue:
+## What a work item needs
 
-- `Acceptance criteria`: each criterion quoted from the SDD, with its heading path. The refiner cites these quotes, so it does not drop them as new criteria.
-- `Build answers`: the answers that independent readers agreed on. The refiner can use them as determined proposals.
-- `Open questions`: the questions that the SDD does not answer. When the code does not answer one, the refiner asks a question in Linear with a proposed answer, and the run waits for the reply. A question that stays unanswered ends the run with VALIDATION_MANUAL_REQUIRED.
+The refiner builds the validation contract from the issue text. A good work item has these properties:
 
-Answer each open question in the SDD before you push. Then the refiner has fewer questions to ask, and the run needs fewer human steps.
+- It quotes each acceptance criterion from the design doc, with the section it comes from. The refiner cites the quotes, so it does not drop them as new criteria.
+- Each criterion is one that a test, a command, an HTTP request or a browser route can check.
+- It changes one repository.
+- It holds a small number of requirements.
+- It uses a Linear "blocks" relation for each work item that must merge first.
+- It has no open questions. When the code does not answer a question, the refiner asks it in Linear with a proposed answer, and the run waits for the reply. A question that stays unanswered ends the run with VALIDATION_MANUAL_REQUIRED.
 
 ## Two checks, two questions
 
-Factoree and Speccy check different things. Neither check replaces the other.
+Factoree and a design doc check answer different questions. Neither check replaces the other.
 
 - Factoree proves that the patch passes the checks of the repository and the frozen validation contract.
-- `speccy verify` proves that the code covers each requirement of the SDD, by trace ID.
+- A check against the design doc proves that the code covers each requirement of the doc.
