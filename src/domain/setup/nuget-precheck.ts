@@ -111,6 +111,13 @@ const PACKAGE_FILES = scanScriptOf(
 const SOLUTIONS = scanScriptOf("-iname '*.sln' -o -iname '*.slnx'", "4096k");
 
 /**
+ * DI-21.228. The global packages folder and HTTP cache of the restore. The pre-check empties them
+ * first: a warm sandbox holds the packages its bootstrap restored, and a package restore takes from
+ * them is never read from the mirror.
+ */
+const RESTORE_CACHE = "/tmp/factoree-nuget-precheck";
+
+/**
  * DI-21.228. Restores each target with the generated file. A sandbox image with no .NET SDK gets
  * the one global.json names, or the LTS one, from dotnet-install.sh on the ecosystem host list.
  */
@@ -120,6 +127,7 @@ const RESTORE_SCRIPT = `if ! dotnet --version >/dev/null 2>&1; then
   bash /tmp/factoree-dotnet-install.sh $channel --install-dir "$HOME/.dotnet" >/dev/null 2>&1 || exit ${String(NO_SDK_EXIT)}
   export PATH="$HOME/.dotnet:$PATH"
 fi
+export NUGET_PACKAGES=${RESTORE_CACHE}/packages NUGET_HTTP_CACHE_PATH=${RESTORE_CACHE}/http-cache
 status=0
 for target in "$@"; do dotnet restore "$target" --configfile ${FACTOREE_NUGET_CONFIG} || status=1; done
 exit $status`;
@@ -435,6 +443,8 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
   const coverage = unrestored === 0 ? null : `Factoree restored the first ${String(targets.length)} of ${String(allTargets.length)} solutions and projects, so ${String(unrestored)} went unchecked.`;
 
   const handled = new Set<string>();
+  const emptied = await input.sandbox.exec(input.ref, { file: "rm", args: ["-rf", RESTORE_CACHE], cwd: "/" });
+  if (emptied.exitCode !== 0) return fail(`the restore cache ${RESTORE_CACHE} could not be emptied (exit ${String(emptied.exitCode)}). Run the setup again.`);
   for (let round = 1; round <= NUGET_RESTORE_ROUNDS && targets.length > 0; round += 1) {
     report.restore.rounds = round;
     const restore = await input.sandbox.exec(input.ref, { file: "sh", args: ["-c", RESTORE_SCRIPT, "sh", ...targets], cwd: input.repositoryPath, timeoutMs: RESTORE_TIMEOUT_MS });

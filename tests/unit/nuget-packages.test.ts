@@ -39,6 +39,12 @@ describe("parseXml", () => {
     const document = parseXml(`<a value="x&#x110000;y&#65;" />`);
     expect(attributeOf(descendantsNamed(document, "a")[0]!, "value")).toBe("x&#x110000;yA");
   });
+
+  it("reads many tags with no closing `>` in linear time", () => {
+    const started = performance.now();
+    expect(descendantsNamed(parseXml(`${"<a ".repeat(40_000)}<b />`), "b")).toHaveLength(1);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
 });
 
 describe("NuGet versions", () => {

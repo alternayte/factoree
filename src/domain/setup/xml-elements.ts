@@ -31,7 +31,8 @@ const decode = (text: string): string =>
 
 const escapeText = (text: string): string => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-const TAG = /<(\/?)([A-Za-z_][\w:.-]*)((?:\s+[^\s=/>]+(?:\s*=\s*(?:"[^"]*"|'[^']*'))?)*)\s*(\/?)>/g;
+/** An attribute name holds no `<`, so a tag with no `>` stops at the next tag and the scan stays linear. */
+const TAG = /<(\/?)([A-Za-z_][\w:.-]*)((?:\s+[^\s=/<>]+(?:\s*=\s*(?:"[^"]*"|'[^']*'))?)*)\s*(\/?)>/g;
 const ATTRIBUTE = /([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'))?/g;
 
 const attributesOf = (text: string): Record<string, string> => {
