@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { HostCredential } from "~/domain/products/host-credentials.js";
 import { NUGET_RESTORE_ROUNDS, nugetPrecheckKeyOf, nugetPromptFactsOf, runNugetPrecheck } from "~/domain/setup/nuget-precheck.js";
@@ -377,9 +381,80 @@ describe("runNugetPrecheck", () => {
     expect(report.packages.find((entry) => entry.id === "Frontiers.Transitive")).toMatchObject({ version: "1.0.0", parents: ["Frontiers.Core 3.1.0"] });
   });
 
+  it("takes the lowest mirror version at or above a non-exact transitive request", async () => {
+    const { report, requests } = await run({
+      files: files({ "Frontiers.Core": "3.1.0" }),
+      mirror: { "frontiers.core": ["3.1.0"], "frontiers.transitive": ["0.9.0", "1.5.0-beta", "1.5.0", "1.6.0"] },
+      restore: (text) =>
+        text.includes('pattern="Frontiers.Transitive"')
+          ? { exitCode: 0, output: "Restore complete." }
+          : { exitCode: 1, output: `${PATH}/src/Api/Api.csproj : error NU1101: Unable to find package Frontiers.Transitive. No packages exist with this id` },
+      assets: {
+        [`${PATH}/src/Api`]: JSON.stringify({
+          targets: { "net8.0": { "Frontiers.Core/3.1.0": { dependencies: { "Frontiers.Transitive": "[1.0.0, 2.0.0]" } } } },
+          project: { frameworks: { "net8.0": { dependencies: { "Frontiers.Core": {} } } } },
+        }),
+      },
+    });
+    expect(report.outcome).toBe("passed");
+    expect(report.packages.find((entry) => entry.id === "Frontiers.Transitive")).toMatchObject({ version: "1.5.0", status: "mirrored" });
+    expect(requests).toContain("https://nuget.pkg.github.com/frontiersin/download/frontiers.transitive/1.5.0/frontiers.transitive.1.5.0.nupkg");
+  });
+
+  it("needs the exact version for a request NuGet pins", async () => {
+    const { report } = await run({
+      files: files({ "Frontiers.Core": "3.1.0" }),
+      mirror: { "frontiers.core": ["3.1.0"], "frontiers.transitive": ["1.6.0"] },
+      restore: () => ({ exitCode: 1, output: `${PATH}/src/Api/Api.csproj : error NU1102: Unable to find package Frontiers.Transitive with version (= 1.5.0)` }),
+    });
+    expect(report.outcome).toBe("failed");
+    expect(report.packages.find((entry) => entry.id === "Frontiers.Transitive")).toMatchObject({ version: "1.5.0", status: "version_missing" });
+  });
+
   it("changes the key part when the mirrored packages change", async () => {
     const one = await run({ files: files({ "Frontiers.Core": "3.1.0" }), mirror: { "frontiers.core": ["3.1.0"] } });
     const two = await run({ files: files({ "Frontiers.Core": "3.1.0", "Hangfire.Pro": "1.8.6" }), mirror: { "frontiers.core": ["3.1.0"], "hangfire.pro": ["1.8.6"] } });
     expect(JSON.stringify(nugetPrecheckKeyOf(one.report))).not.toBe(JSON.stringify(nugetPrecheckKeyOf(two.report)));
+  });
+});
+
+describe("the checkout scan in a real shell", () => {
+  const scan = async (write: (dir: string) => void) => {
+    const dir = mkdtempSync(join(tmpdir(), "factoree-nuget-scan-"));
+    try {
+      write(dir);
+      const sandbox = new FakeSandbox();
+      sandbox.onExec = (command) => {
+        if (command.file !== "sh") return { exitCode: 0, stdout: "", stderr: "" };
+        const result = spawnSync("sh", ["-c", command.args[1] ?? ""], { cwd: dir, encoding: "utf8" });
+        return { exitCode: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+      };
+      return await runNugetPrecheck({ sandbox, ref: REF, repositoryPath: dir, credentials: [mirrorCredential()], coverage: { credentialHosts: ["nuget.pkg.github.com"], allowedDomains: [] }, egressHosts: EGRESS });
+    } finally {
+      for (const path of [dir, join(dir, "NuGet.config")]) chmodSync(path, 0o700);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it.skipIf(process.getuid?.() === 0)("fails when one file does not read, even when the files after it do", async () => {
+    const { report } = await scan((dir) => {
+      writeFileSync(join(dir, "NuGet.config"), PRIVATE_FEED_CONFIG);
+      chmodSync(join(dir, "NuGet.config"), 0o000);
+      for (const name of ["A", "B", "C"]) {
+        mkdirSync(join(dir, name));
+        writeFileSync(join(dir, name, `${name}.csproj`), project({ "Frontiers.Core": "3.1.0" }));
+      }
+    });
+    expect(report.outcome).toBe("failed");
+    expect(report.failure).toContain("the scan of the checkout for NuGet configs and projects did not finish (exit 1)");
+  });
+
+  it("fails on a project too large to read instead of skipping it", async () => {
+    const { report } = await scan((dir) => {
+      writeFileSync(join(dir, "NuGet.config"), PRIVATE_FEED_CONFIG);
+      writeFileSync(join(dir, "Big.csproj"), `${project({ "Frontiers.Core": "3.1.0" })}<!--${"x".repeat(1_100_000)}-->`);
+    });
+    expect(report.outcome).toBe("failed");
+    expect(report.failure).toContain("found files too large to read: Big.csproj");
   });
 });

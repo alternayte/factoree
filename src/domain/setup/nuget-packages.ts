@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { attributeOf, childrenNamed, descendantsNamed, parseXml, type XmlElement } from "./xml-elements.js";
 import type { RepositoryTextFile } from "./derived-hosts.js";
 
@@ -21,7 +22,7 @@ export interface NugetPackageReference {
 
 /** The most values one MSBuild expression expands to, so a property matrix stays small. */
 const MAX_PROPERTY_VALUES = 8;
-const MAX_PROPERTY_DEPTH = 6;
+const PROPERTY_REFERENCE = /\$\(([A-Za-z_][\w.-]*)\)/;
 
 const VERSION = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -126,25 +127,24 @@ export const addMsbuildProperties = (properties: MsbuildProperties, document: Xm
 
 /**
  * Every value of an MSBuild expression, with each `$(Name)` replaced by each value of the
- * property. A property with no value stays as written, so the version reads as unchecked. Null
- * when the expression has more than MAX_PROPERTY_VALUES values, so no value is dropped unseen.
+ * property. A stored value was expanded where it was assigned, so a substituted value is never
+ * expanded again: a `$(Name)` left in it was unknown there and stays unresolved. A property with
+ * no value stays as written, so the version reads as unchecked. Null when the expression has more
+ * than MAX_PROPERTY_VALUES values, so no value is dropped unseen.
  */
-export const expandMsbuild = (text: string, properties: MsbuildProperties, depth = 0): string[] | null => {
-  const match = /\$\(([A-Za-z_][\w.-]*)\)/.exec(text);
-  if (match === null || depth >= MAX_PROPERTY_DEPTH) return [text];
-  const values = properties.get(match[1]!.toLowerCase());
-  if (values === undefined || values.length === 0) {
-    // Keep the unresolved name, so the reason names the first missing property.
-    return [text];
+export const expandMsbuild = (text: string, properties: MsbuildProperties): string[] | null => {
+  let results = [""];
+  let rest = text;
+  for (let match = PROPERTY_REFERENCE.exec(rest); match !== null; match = PROPERTY_REFERENCE.exec(rest)) {
+    const prefix = rest.slice(0, match.index);
+    const values = properties.get(match[1]!.toLowerCase());
+    const choices = values === undefined || values.length === 0 ? [match[0]] : values;
+    const next = new Set(results.flatMap((result) => choices.map((choice) => `${result}${prefix}${choice}`)));
+    if (next.size > MAX_PROPERTY_VALUES) return null;
+    results = [...next];
+    rest = rest.slice(match.index + match[0].length);
   }
-  const expanded = new Set<string>();
-  for (const value of values) {
-    const inner = expandMsbuild(text.replace(match[0], () => value), properties, depth + 1);
-    if (inner === null) return null;
-    for (const entry of inner) expanded.add(entry);
-    if (expanded.size > MAX_PROPERTY_VALUES) return null;
-  }
-  return [...expanded];
+  return results.map((result) => `${result}${rest}`);
 };
 
 const baseName = (path: string): string => path.slice(path.lastIndexOf("/") + 1).toLowerCase();
@@ -262,18 +262,31 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     documents.set(path, parsed);
     return parsed;
   };
-  // MSBuild imports only the nearest file of a name. A parent one counts when that file imports it,
-  // as `GetPathOfFileAbove('Directory.Build.props', ...)` or `../Directory.Build.props` does.
-  const importsParent = (path: string, name: string): boolean =>
-    descendantsNamed(documentOf(path), "Import").some((element) => (attributeOf(element, "Project") ?? "").toLowerCase().includes(name.toLowerCase()));
+  const fileAt = (path: string): string | null => files.find((file) => file.path.toLowerCase() === path.toLowerCase())?.path ?? null;
+  /** The nearest file of the name in the folders, nearest first. */
+  const nearestIn = (folders: readonly string[], name: string): string | null => {
+    for (const folder of folders) {
+      const found = fileAt(folder === "" ? name : `${folder}/${name}`);
+      if (found !== null) return found;
+    }
+    return null;
+  };
+  // MSBuild imports only the nearest file of a name. A parent one counts when that file imports it:
+  // `GetPathOfFileAbove('Directory.Build.props', ...)` finds the nearest one above, and a plain
+  // path such as `../../Directory.Build.props` names one file.
+  const parentImportOf = (path: string, name: string): string | null => {
+    for (const element of descendantsNamed(documentOf(path), "Import")) {
+      const project = (attributeOf(element, "Project") ?? "").trim();
+      if (!project.toLowerCase().includes(name.toLowerCase())) continue;
+      if (project.includes("$(")) return nearestIn(foldersAbove(path).reverse().slice(1), name);
+      return fileAt(posix.normalize(posix.join(folderOf(path), project.replace(/\\/g, "/"))));
+    }
+    return null;
+  };
   const above = (path: string, name: string): string[] => {
     const chain: string[] = [];
-    for (const folder of foldersAbove(path).reverse()) {
-      const wanted = folder === "" ? name : `${folder}/${name}`;
-      const found = files.find((file) => file.path.toLowerCase() === wanted.toLowerCase());
-      if (found === undefined) continue;
-      chain.unshift(found.path);
-      if (!importsParent(found.path, name)) break;
+    for (let found = nearestIn(foldersAbove(path).reverse(), name); found !== null && !chain.includes(found); found = parentImportOf(found, name)) {
+      chain.unshift(found);
     }
     return chain;
   };
@@ -285,20 +298,27 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     if (name === "dotnet-tools.json") found.push(...fromToolManifest(file));
   }
 
-  for (const file of files.filter((entry) => baseName(entry.path) === "directory.packages.props")) {
-    const properties: MsbuildProperties = new Map();
-    for (const path of [...above(file.path, "Directory.Build.props"), file.path]) addMsbuildProperties(properties, documentOf(path));
-    for (const { element, group } of itemsOf(documentOf(file.path), "GlobalPackageReference")) {
-      for (const id of idsOf(attributeOf(element, "Include"))) found.push(...reference(id, valueOf(element, "Version"), file.path, conditionOf(element, group), properties));
-    }
-  }
-
+  // A GlobalPackageReference counts once per `Directory.Packages.props` that a project imports.
+  const globals = new Set<string>();
   for (const project of files.filter((entry) => PROJECT.test(entry.path))) {
     const buildProps = above(project.path, "Directory.Build.props");
     const packageProps = above(project.path, "Directory.Packages.props");
     const buildTargets = above(project.path, "Directory.Build.targets");
     const properties: MsbuildProperties = new Map();
     for (const path of [...buildProps, ...packageProps, project.path, ...buildTargets]) addMsbuildProperties(properties, documentOf(path));
+
+    for (const path of packageProps) {
+      for (const { element, group } of itemsOf(documentOf(path), "GlobalPackageReference")) {
+        for (const id of idsOf(attributeOf(element, "Include"))) {
+          for (const entry of reference(id, valueOf(element, "Version"), path, conditionOf(element, group), properties)) {
+            const key = `${path} ${entry.id.toLowerCase()} ${entry.versionText}`;
+            if (globals.has(key)) continue;
+            globals.add(key);
+            found.push(entry);
+          }
+        }
+      }
+    }
 
     // An unconditional PackageVersion replaces the versions of its id, and a conditional one adds one.
     const central = new Map<string, Array<{ version: string | null; condition: string | null }>>();

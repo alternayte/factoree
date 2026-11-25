@@ -114,38 +114,36 @@ const mappingsOf = (configs: readonly NugetConfigFile[]): Map<string, string[]> 
 };
 
 /**
- * The source keys package source mapping sends an id to, lower case, or null when the
- * repository maps no source. NuGet takes the most specific pattern: the exact id, then the
- * longest prefix `Name.*`, then `*`.
+ * The source keys package source mapping sends an id to, lower case, by its most specific
+ * pattern: the exact id, then the longest prefix `Name.*`, then `*`, which ranks 0. Null when no
+ * pattern matches.
  */
-const mappedKeysOf = (mappings: ReadonlyMap<string, readonly string[]>, id: string): string[] | null => {
-  if (mappings.size === 0) return null;
+const mappedKeysOf = (mappings: ReadonlyMap<string, readonly string[]>, id: string): { keys: string[]; rank: number } | null => {
   const lower = id.toLowerCase();
-  const rank = (pattern: string): number => {
+  const rankOf = (pattern: string): number => {
     const text = pattern.toLowerCase();
     if (text === lower) return Number.MAX_SAFE_INTEGER;
-    return text.endsWith("*") && lower.startsWith(text.slice(0, -1)) ? text.length : -1;
+    return text.endsWith("*") && lower.startsWith(text.slice(0, -1)) ? text.length - 1 : -1;
   };
-  let best = -1;
-  let keys: string[] = [];
+  let best: { keys: string[]; rank: number } | null = null;
   for (const [key, patterns] of mappings) {
-    const score = Math.max(...patterns.map(rank));
-    if (score < 0 || score < best) continue;
-    keys = score > best ? [key] : [...keys, key];
-    best = score;
+    const rank = Math.max(...patterns.map(rankOf));
+    if (rank < 0 || (best !== null && rank < best.rank)) continue;
+    best = best === null || rank > best.rank ? { keys: [key], rank } : { keys: [...best.keys, key], rank };
   }
-  return keys;
+  return best;
 };
 
 /**
  * DI-21.227. True when the repository's package source mapping sends the id only to the mapped
- * feed or the mirror. Such an id is private whatever nuget.org has, because the repository never
- * lets nuget.org serve it.
+ * feed or the mirror by a pattern more specific than `*`. Such an id is private whatever nuget.org
+ * has, because the repository never lets nuget.org serve it. A `*` on the mapped feed makes it the
+ * fallback for every id, such as a proxy of nuget.org, and pins nothing.
  */
 export const pinnedToPrivateFeed = (configs: readonly NugetConfigFile[], feeds: readonly NugetFeed[], id: string): boolean => {
-  const keys = mappedKeysOf(mappingsOf(configs), id);
+  const mapped = mappedKeysOf(mappingsOf(configs), id);
   const privateKeys = new Set(feeds.filter((feed) => feed.kind === "mapped" || feed.kind === "mirror").map((feed) => feed.key.toLowerCase()));
-  return keys !== null && keys.length > 0 && keys.every((key) => privateKeys.has(key));
+  return mapped !== null && mapped.rank > 0 && mapped.keys.every((key) => privateKeys.has(key));
 };
 
 const SKIPPED_FOLDERS = /(^|\/)(node_modules|vendor|bin|obj|\.git|third_party|testdata|fixtures)\//;
@@ -282,8 +280,9 @@ export const mirrorCredentialFailure = (credentials: readonly HostCredential[], 
   if ((credential.headerName ?? "").toLowerCase() !== "authorization") {
     return `The host credential for ${NUGET_MIRROR_HOST} sends the header ${credential.headerName ?? "(none)"}, and NuGet on GitHub Packages needs ${shape}.`;
   }
-  // `/`, `/<owner>` and `/<owner>/` cover every request of the mirror. A longer prefix leaves some out.
-  if (credential.pathPrefix !== null && !`/${owner}/`.toLowerCase().startsWith(credential.pathPrefix.toLowerCase())) {
+  // `/`, `/<owner>` and `/<owner>/` cover every request of the mirror. A longer prefix leaves some
+  // out. The provider matches the path as written, and Factoree requests the owner as it names it.
+  if (credential.pathPrefix !== null && !`/${owner}/`.startsWith(credential.pathPrefix)) {
     return (
       `The host credential for ${NUGET_MIRROR_HOST} has the path prefix ${credential.pathPrefix}, and the mirror is ${NUGET_MIRROR_HOST}/${owner}, ` +
       `so the credential does not reach the index and the downloads of the mirror. Set the path prefix to /${owner}/ or leave it empty.`
@@ -358,7 +357,10 @@ const rebasedLocalSource = (url: string, configPath: string): string => {
  * source moves to the generated file's folder, so a relative path is rebased.
  * `packageSourceMapping` sends each mirrored id to the mirror and `*` to every other source, so
  * no other source can serve a private id. When the repository maps its sources itself, its
- * patterns stay, and those of the mapped feed move to the mirror.
+ * patterns stay, and those of the mapped feed move to the mirror, except `*`: a `*` made the
+ * mapped feed the fallback for every id, as a proxy of nuget.org does, and the mirror serves only
+ * mirrored packages, so the fallback moves to nuget.org. An added nuget.org then gets `*` only
+ * when it takes that fallback, so it widens no restriction of the repository.
  */
 export const renderNugetConfig = (configs: readonly NugetConfigFile[], feeds: readonly NugetFeed[], mirroredIds: readonly string[]): string => {
   const ids = [...new Set(mirroredIds.map((id) => id.trim()).filter((id) => id !== ""))].sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()));
@@ -368,25 +370,29 @@ export const renderNugetConfig = (configs: readonly NugetConfigFile[], feeds: re
   const mirrorKey = existingMirror?.key ?? mapped?.key ?? "github-packages";
   const repositoryMappings = mappingsOf(configs);
   const patternsOf = (key: string): string[] => repositoryMappings.get(key.toLowerCase()) ?? [];
+  const mappedPatterns = mapped === undefined ? [] : patternsOf(mapped.key);
+  const mirrorPatterns = mappedPatterns.filter((pattern) => pattern !== "*");
+  const fallback = repositoryMappings.size === 0 || mappedPatterns.includes("*") ? ["*"] : [];
   const sources: Array<{ key: string; url: string; protocolVersion: string | null; patterns: string[]; mirror: boolean }> = [];
   for (const feed of feeds) {
     if (feed.kind === "unsupported") continue;
     if (feed.kind === "mapped") {
-      if (ids.length > 0 && existingMirror === undefined) sources.push({ key: feed.key, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: patternsOf(feed.key), mirror: true });
+      if (ids.length > 0 && existingMirror === undefined) sources.push({ key: feed.key, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: mirrorPatterns, mirror: true });
       continue;
     }
     if (feed.kind === "mirror" && feed === existingMirror) {
-      sources.push({ key: feed.key, url: feed.url, protocolVersion: feed.protocolVersion, patterns: [...patternsOf(feed.key), ...(mapped === undefined ? [] : patternsOf(mapped.key))], mirror: ids.length > 0 });
+      sources.push({ key: feed.key, url: feed.url, protocolVersion: feed.protocolVersion, patterns: [...patternsOf(feed.key), ...mirrorPatterns], mirror: ids.length > 0 });
       continue;
     }
-    sources.push({ key: feed.key, url: feed.kind === "local" ? rebasedLocalSource(feed.url, feed.file) : feed.url, protocolVersion: feed.protocolVersion, patterns: patternsOf(feed.key), mirror: false });
+    const url = feed.kind === "local" ? rebasedLocalSource(feed.url, feed.file) : feed.url;
+    sources.push({ key: feed.key, url, protocolVersion: feed.protocolVersion, patterns: [...patternsOf(feed.key), ...(hostOf(url) === NUGET_ORG_HOST ? fallback : [])], mirror: false });
   }
   if (ids.length > 0 && !sources.some((source) => source.mirror)) {
-    sources.push({ key: mirrorKey, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: mapped === undefined ? [] : patternsOf(mapped.key), mirror: true });
+    sources.push({ key: mirrorKey, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: mirrorPatterns, mirror: true });
   }
   if (!sources.some((source) => hostOf(source.url) === NUGET_ORG_HOST)) {
     const key = sources.some((source) => source.key.toLowerCase() === "nuget.org") ? "nuget.org (Factoree)" : "nuget.org";
-    sources.push({ key, url: NUGET_ORG_INDEX, protocolVersion: "3", patterns: ["*"], mirror: false });
+    sources.push({ key, url: NUGET_ORG_INDEX, protocolVersion: "3", patterns: fallback, mirror: false });
   }
   const add = (source: (typeof sources)[number]): string =>
     `    <add key="${escapeXml(source.key)}" value="${escapeXml(source.url)}"${source.protocolVersion === null ? "" : ` protocolVersion="${escapeXml(source.protocolVersion)}"`} />`;
@@ -425,6 +431,8 @@ export interface RestoreFailure {
   code: "NU1101" | "NU1102";
   /** The lowest version the restore asked for, normalised by the caller, or null for NU1101. */
   version: string | null;
+  /** True when the restore asked for exactly that version, `(= x)`, and not for it or higher. */
+  exact: boolean;
   /** The project file the line names, or null. */
   project: string | null;
 }
@@ -441,10 +449,11 @@ export const restoreFailuresOf = (output: string): RestoreFailure[] => {
     // The sentence ends with a period right after the id.
     const id = match[3]!.replace(/\.+$/, "");
     // Only `>= x` or `= x` names a lowest version. `< x`, `<= x` and `> x` name none to check.
-    const version = /^\s*(?:>=|=)?\s*(\d[^\s,)\]&]*)/.exec(match[4] ?? "")?.[1] ?? null;
+    const bound = /^\s*(>=|=)?\s*(\d[^\s,)\]&]*)/.exec(match[4] ?? "");
+    const version = bound?.[2] ?? null;
     const project = match[1] === undefined ? null : match[1].trim().replace(/\s*\[.*$/, "");
     const key = `${id.toLowerCase()}/${version ?? ""}`;
-    if (!byKey.has(key)) byKey.set(key, { id, code: match[2]!.toUpperCase() as RestoreFailure["code"], version, project: project === "" ? null : project });
+    if (!byKey.has(key)) byKey.set(key, { id, code: match[2]!.toUpperCase() as RestoreFailure["code"], version, exact: bound?.[1] === "=", project: project === "" ? null : project });
   }
   return [...byKey.values()];
 };
@@ -494,23 +503,36 @@ export const parentChainOf = (assetsText: string, id: string): string[] | null =
 };
 
 /**
- * The inclusive lower bound of a NuGet dependency version, normalised, or null when it has none:
- * `1.0` and `[1.0, )` give 1.0, `[1.0]` gives 1.0, and `(1.0, )` and `(, 2.0]` give null.
+ * A version a restore asks for: the exact one, or the lowest one it accepts, which the restore
+ * takes when no lower version exists.
  */
-const lowerBoundOf = (range: string): string | null => {
+export interface RequestedVersion {
+  version: string;
+  exact: boolean;
+}
+
+/**
+ * The inclusive lower bound of a NuGet dependency version, normalised, or null when it has none:
+ * `1.0` and `[1.0, )` accept 1.0 and up, `[1.0]` is exactly 1.0, and `(1.0, )` and `(, 2.0]` name
+ * no version.
+ */
+const lowerBoundOf = (range: string): RequestedVersion | null => {
   const text = range.trim();
   if (text.startsWith("(")) return null;
-  if (!text.startsWith("[")) return normalizeNugetVersion(text);
-  const lower = (text.slice(1).split(",")[0] ?? "").replace(/\]$/, "").trim();
-  return lower === "" ? null : normalizeNugetVersion(lower);
+  if (!text.startsWith("[")) {
+    const version = normalizeNugetVersion(text);
+    return version === null ? null : { version, exact: false };
+  }
+  const [lower = "", upper] = text.slice(1).split(",");
+  const version = normalizeNugetVersion(lower.replace(/\]$/, "").trim());
+  return version === null ? null : { version, exact: upper === undefined };
 };
 
 /**
- * DI-21.232. The lowest version the parents of a package ask for in `obj/project.assets.json`, normalised,
- * or null. NU1101 names no version, and the mirror check downloads an exact one. A range with no
- * inclusive lower bound names no version to check.
+ * DI-21.232. The lowest version the parents of a package ask for in `obj/project.assets.json`,
+ * normalised, or null. NU1101 names no version. A range with no inclusive lower bound names none.
  */
-export const requestedVersionOf = (assetsText: string, id: string): string | null => {
+export const requestedVersionOf = (assetsText: string, id: string): RequestedVersion | null => {
   let assets: { targets?: Record<string, Record<string, { dependencies?: Record<string, string> }>> };
   try {
     assets = JSON.parse(assetsText) as typeof assets;
@@ -522,6 +544,6 @@ export const requestedVersionOf = (assetsText: string, id: string): string | nul
     .flatMap((entry) => Object.entries(entry.dependencies ?? {}))
     .filter(([name]) => name.toLowerCase() === id.toLowerCase())
     .map(([, range]) => lowerBoundOf(range))
-    .filter((version): version is string => version !== null);
-  return versions.reduce<string | null>((lowest, version) => (lowest === null || (compareNugetVersions(version, lowest) ?? 0) < 0 ? version : lowest), null);
+    .filter((requested): requested is RequestedVersion => requested !== null);
+  return versions.reduce<RequestedVersion | null>((lowest, requested) => (lowest === null || (compareNugetVersions(requested.version, lowest.version) ?? 0) < 0 ? requested : lowest), null);
 };

@@ -153,6 +153,12 @@ describe("renderSetupReport, the NuGet pre-check (nuget-private-feed-mapping.md)
     expect(text).toContain("Factoree proved every part");
   });
 
+  it("names what a passed restore did not cover", () => {
+    const detail = "Factoree restored the first 20 of 23 solutions and projects, so 3 went unchecked.";
+    const text = renderSetupReport({ ...base, nuget: { ...nuget, restore: { outcome: "passed", rounds: 1, detail } } });
+    expect(text).toContain(`\`dotnet restore\` with the file passed after 1 round. ${detail}`);
+  });
+
   it("renders only the pre-check evidence when it failed, and never the parts of the setup before it", () => {
     const failure = "The NuGet pre-check failed: 1 of 1 private packages do not read from nuget.pkg.github.com/frontiersin.\n- Frontiers.Missing 2.0.0 (src/Api/Api.csproj): not on the mirror, or the token cannot read it.";
     const text = renderSetupReport({

@@ -23,10 +23,11 @@ import {
   unloadedSourcesOf,
   unsupportedFeedFailure,
   type MirrorStatus,
+  type RequestedVersion,
   type NugetFeedCoverage,
   type NugetFeedKind,
 } from "./nuget-feeds.js";
-import { isNugetPackageFile, lookupsOf, normalizeNugetVersion, readNugetPackageReferences, type NugetPackageLookup } from "./nuget-packages.js";
+import { compareNugetVersions, isNugetPackageFile, lookupsOf, normalizeNugetVersion, readNugetPackageReferences, type NugetPackageLookup } from "./nuget-packages.js";
 import { failureExcerpt } from "./setup-report.js";
 import { attributeOf, descendantsNamed, parseXml } from "./xml-elements.js";
 
@@ -93,12 +94,21 @@ const NO_SDK_EXIT = 90;
 
 const PRUNE = "\\( -name node_modules -o -name bin -o -name obj -o -name .git \\) -prune -o";
 
-const PACKAGE_FILES =
-  `find . ${PRUNE} -type f -size -1024k \\( -iname '*.csproj' -o -iname '*.fsproj' -o -iname '*.vbproj' -o -iname directory.packages.props ` +
-  "-o -iname directory.build.props -o -iname directory.build.targets -o -iname packages.config -o -iname dotnet-tools.json -o -iname nuget.config \\) " +
-  `-exec sh -c 'for f; do printf "\\036%s\\037" "$f"; cat "$f"; done' sh {} +`;
+/**
+ * Prints each matching file under the size limit as `\036path\037text`, then the path of each one
+ * over it as `\035path\035`. A file that does not read fails the whole scan.
+ */
+const scanScriptOf = (names: string, limit: string): string =>
+  `find . ${PRUNE} -type f \\( ${names} \\) -size -${limit} -exec sh -c 'for f; do printf "\\036%s\\037" "$f"; cat "$f" || exit 1; done' sh {} + && ` +
+  `find . ${PRUNE} -type f \\( ${names} \\) ! -size -${limit} -exec sh -c 'for f; do printf "\\035%s\\035" "$f"; done' sh {} +`;
 
-const SOLUTIONS = `find . ${PRUNE} -type f -size -4096k \\( -iname '*.sln' -o -iname '*.slnx' \\) -exec sh -c 'for f; do printf "\\036%s\\037" "$f"; cat "$f"; done' sh {} +`;
+const PACKAGE_FILES = scanScriptOf(
+  "-iname '*.csproj' -o -iname '*.fsproj' -o -iname '*.vbproj' -o -iname directory.packages.props -o -iname directory.build.props " +
+    "-o -iname directory.build.targets -o -iname packages.config -o -iname dotnet-tools.json -o -iname nuget.config",
+  "1024k",
+);
+
+const SOLUTIONS = scanScriptOf("-iname '*.sln' -o -iname '*.slnx'", "4096k");
 
 /**
  * DI-21.228. Restores each target with the generated file. A sandbox image with no .NET SDK gets
@@ -118,15 +128,18 @@ const relative = (path: string): string => path.replace(/^\.\//, "");
 const depthOf = (path: string): number => path.split("/").length;
 
 /**
- * The files one command prints, each as `\036path\037text`. A scan that did not finish throws:
- * a missing config or project would pass the pre-check unseen.
+ * The files a scan script prints. A scan that did not finish, or a file over the size limit,
+ * throws: a config or project it did not read would pass the pre-check unseen.
  */
 const readCheckoutFiles = async (sandbox: Sandbox, ref: SandboxRef, path: string, script: string, what: string): Promise<RepositoryTextFile[]> => {
   const result = await sandbox.exec(ref, { file: "sh", args: ["-c", script], cwd: path, timeoutMs: 120_000 });
   if (result.timedOut || result.exitCode !== 0) {
     throw new Error(`the scan of the checkout for ${what} did not finish (${result.timedOut ? "timed out" : `exit ${String(result.exitCode)}`})`);
   }
-  return result.stdout
+  const split = result.stdout.indexOf("\u001d");
+  const oversized = split < 0 ? [] : [...result.stdout.slice(split).matchAll(/\u001d([^\u001d]*)\u001d/g)].map((match) => relative(match[1]!));
+  if (oversized.length > 0) throw new Error(`the scan of the checkout for ${what} found files too large to read: ${oversized.join(", ")}`);
+  return (split < 0 ? result.stdout : result.stdout.slice(0, split))
     .split("\u001e")
     .filter((chunk) => chunk.includes("\u001f"))
     .map((chunk) => {
@@ -218,35 +231,47 @@ const hostOf = (url: string): string | null => {
 /**
  * DI-21.226. One package on the mirror: the flat container index, then a one-byte download of
  * the exact version, because the download redirects to another host and the index alone passes
- * where the file fails. A null version checks the index only.
+ * where the file fails. A null request checks the index only. A request that is not exact checks
+ * the lowest version the index lists at or above it, which is the one restore takes.
  */
 const onMirror = async (
   input: NugetPrecheckInput,
   owner: string,
   id: string,
-  version: string | null,
-): Promise<{ status: MirrorStatus; detail: string | null }> => {
+  requested: RequestedVersion | null,
+): Promise<{ status: MirrorStatus; detail: string | null; version: string | null }> => {
   const base = `https://${NUGET_MIRROR_HOST}/${owner}/download/${id.toLowerCase()}`;
   const index = await get(input.sandbox, input.ref, `${base}/index.json`);
   const indexStatus = mirrorStatusOf(index);
-  if (indexStatus !== "mirrored") return { status: indexStatus, detail: indexStatus === "unreachable" ? `HTTP ${String(index.httpCode)}, curl exit ${String(index.exitCode)}` : null };
-  if (version === null) return { status: "mirrored", detail: null };
-  if (!versionsOf(index.body).includes(version)) return { status: "version_missing", detail: null };
+  const answer = (status: MirrorStatus, detail: string | null, version: string | null = requested?.version ?? null) => ({ status, detail, version });
+  if (indexStatus !== "mirrored") return answer(indexStatus, indexStatus === "unreachable" ? `HTTP ${String(index.httpCode)}, curl exit ${String(index.exitCode)}` : null);
+  if (requested === null) return answer("mirrored", null);
+  const listed = versionsOf(index.body);
+  const version = requested.exact ? (listed.includes(requested.version) ? requested.version : null) : lowestAtLeast(listed, requested.version);
+  if (version === null) return answer("version_missing", null);
   const file = `${base}/${version}/${id.toLowerCase()}.${version}.nupkg`;
   const first = await input.sandbox.exec(input.ref, { file: "curl", args: [...CURL, "-o", "/dev/null", "-w", "%{http_code} %{redirect_url}", file], cwd: "/", timeoutMs: 45_000 });
   const [code = "0", redirect = ""] = first.stdout.trim().split(" ");
   const firstCode = Number.parseInt(code, 10) || 0;
   const firstStatus = mirrorStatusOf({ exitCode: first.exitCode, timedOut: first.timedOut, httpCode: firstCode });
-  if (firstStatus !== "mirrored") return { status: firstStatus, detail: firstStatus === "unreachable" ? `HTTP ${String(firstCode)}, curl exit ${String(first.exitCode)}` : null };
-  if (firstCode < 300 || firstCode >= 400) return { status: "mirrored", detail: null };
+  if (firstStatus !== "mirrored") return answer(firstStatus, firstStatus === "unreachable" ? `HTTP ${String(firstCode)}, curl exit ${String(first.exitCode)}` : null, version);
+  if (firstCode < 300 || firstCode >= 400) return answer("mirrored", null, version);
   // The redirect URL holds a signed query, so only its host leaves this function.
   const redirectHost = hostOf(redirect);
-  if (redirectHost === null || !allowListCovers(input.egressHosts, redirectHost)) return { status: "redirect_blocked", detail: redirectHost ?? "an unnamed host" };
+  if (redirectHost === null || !allowListCovers(input.egressHosts, redirectHost)) return answer("redirect_blocked", redirectHost ?? "an unnamed host", version);
   const follow = await input.sandbox.exec(input.ref, { file: "curl", args: [...CURL, "-L", "-r", "0-0", "-o", "/dev/null", "-w", "%{http_code}", file], cwd: "/", timeoutMs: 45_000 });
   const followCode = Number.parseInt(follow.stdout.trim(), 10) || 0;
   // Only a 2xx read the byte. A redirect at the end of the chain downloaded nothing.
   const followStatus = followCode >= 300 && followCode < 400 ? "unreachable" : mirrorStatusOf({ exitCode: follow.exitCode, timedOut: follow.timedOut, httpCode: followCode });
-  return { status: followStatus, detail: followStatus === "unreachable" ? `the download from ${redirectHost}: HTTP ${String(followCode)}, curl exit ${String(follow.exitCode)}` : null };
+  return answer(followStatus, followStatus === "unreachable" ? `the download from ${redirectHost}: HTTP ${String(followCode)}, curl exit ${String(follow.exitCode)}` : null, version);
+};
+
+/** The lowest listed version at or above the minimum. A prerelease counts only when the minimum is one, as in NuGet. */
+const lowestAtLeast = (listed: readonly string[], minimum: string): string | null => {
+  const prerelease = minimum.includes("-");
+  return listed
+    .filter((version) => (prerelease || !version.includes("-")) && (compareNugetVersions(version, minimum) ?? -1) >= 0)
+    .reduce<string | null>((lowest, version) => (lowest === null || (compareNugetVersions(version, lowest) ?? 0) < 0 ? version : lowest), null);
 };
 
 const packageLabel = (entry: NugetPrecheckPackage): string => {
@@ -371,7 +396,7 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
       report.packages.push(...privatePackages.map((lookup) => ({ id: lookup.id, version: lookup.version, projects: lookup.projects, status: "not_looked_up" as const, detail: "not looked up, because the credential check failed" })));
       return fail(credentialFailure);
     }
-    const results = await mapLimit(privatePackages, LOOKUP_CONCURRENCY, (lookup) => onMirror(input, NUGET_MIRROR_OWNER, lookup.id, lookup.version));
+    const results = await mapLimit(privatePackages, LOOKUP_CONCURRENCY, (lookup) => onMirror(input, NUGET_MIRROR_OWNER, lookup.id, { version: lookup.version, exact: true }));
     report.packages.push(
       ...privatePackages.map((lookup, index) => ({
         id: lookup.id,
@@ -453,12 +478,12 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
           ? null
           : (await input.sandbox.exec(input.ref, { file: "head", args: ["-c", String(ASSETS_READ_LIMIT), `${posix.dirname(failure.project)}/obj/project.assets.json`], cwd: input.repositoryPath })).stdout;
       const parents = assets === null ? null : parentChainOf(assets, failure.id);
-      const lookupVersion = version ?? (assets === null ? null : requestedVersionOf(assets, failure.id));
-      const result = await onMirror(input, NUGET_MIRROR_OWNER, failure.id, lookupVersion);
+      const requested = version === null ? (assets === null ? null : requestedVersionOf(assets, failure.id)) : { version, exact: failure.exact };
+      const result = await onMirror(input, NUGET_MIRROR_OWNER, failure.id, requested);
       const project = failure.project === null ? [] : [failure.project.startsWith(`${input.repositoryPath}/`) ? failure.project.slice(input.repositoryPath.length + 1) : failure.project];
       report.packages.push({
         id: failure.id,
-        version: lookupVersion ?? "(any)",
+        version: result.version ?? "(any)",
         projects: project,
         ...(parents === null ? {} : { parents }),
         status: result.status,

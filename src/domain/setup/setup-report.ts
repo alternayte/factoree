@@ -217,7 +217,9 @@ const renderNugetPrecheck = (nuget: NugetPrecheckReport): string[] => {
     `nuget.org has ${String(nuget.publicPackages)} of the referenced packages, listed, at the exact version.`,
     `The host credential for ${NUGET_MIRROR_HOST} is ${CREDENTIAL_TEXT[nuget.credential]}.`,
   );
-  if (nuget.restore.outcome === "passed") lines.push(`\`dotnet restore\` with the file passed after ${String(nuget.restore.rounds)} round${nuget.restore.rounds === 1 ? "" : "s"}.`);
+  if (nuget.restore.outcome === "passed") {
+    lines.push(`\`dotnet restore\` with the file passed after ${String(nuget.restore.rounds)} round${nuget.restore.rounds === 1 ? "" : "s"}.${nuget.restore.detail === null ? "" : ` ${nuget.restore.detail}`}`);
+  }
   if (nuget.restore.outcome === "not_run" && nuget.restore.detail !== null) lines.push(nuget.restore.detail);
   if (nuget.restore.outcome === "failed") lines.push(`\`dotnet restore\` with the file failed in round ${String(nuget.restore.rounds)}.`);
   lines.push("");

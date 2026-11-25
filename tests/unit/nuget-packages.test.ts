@@ -186,6 +186,18 @@ describe("readNugetPackageReferences", () => {
     expect(references.map((entry) => entry.version)).toEqual(["1.0.0"]);
   });
 
+  it("leaves a property that a later assignment defines unexpanded, so the version stays unchecked", () => {
+    const references = readNugetPackageReferences([
+      {
+        path: "A.csproj",
+        text: `<Project><PropertyGroup><Saved>$(Base).0.0</Saved><Base>1</Base></PropertyGroup>
+          <ItemGroup><PackageReference Include="Lib" Version="$(Saved)" /></ItemGroup></Project>`,
+      },
+    ]);
+    expect(references).toHaveLength(1);
+    expect(references[0]).toMatchObject({ version: null, unchecked: expect.stringContaining("$(Base)") as string });
+  });
+
   it("marks a version with more values than the cap unchecked", () => {
     const references = readNugetPackageReferences([
       {
@@ -206,6 +218,24 @@ describe("readNugetPackageReferences", () => {
     expect(idsOf([root, nested("<Project />"), project])).toEqual(["Own"]);
     expect(idsOf([root, nested(`<Project><Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" /></Project>`), project])).toEqual(["Root.Only", "Own"]);
     expect(idsOf([root, project])).toEqual(["Root.Only", "Own"]);
+  });
+
+  it("resolves an explicit import path from the importing file, skipping the props in between", () => {
+    const root = { path: "Directory.Build.props", text: '<Project><ItemGroup><PackageReference Include="Root.Only" Version="1.0.0" /></ItemGroup></Project>' };
+    const middle = { path: "src/Directory.Build.props", text: '<Project><ItemGroup><PackageReference Include="Middle.Only" Version="1.0.0" /></ItemGroup></Project>' };
+    const nearest = { path: "src/A/Directory.Build.props", text: '<Project><Import Project="..\\..\\Directory.Build.props" /></Project>' };
+    const project = { path: "src/A/A.csproj", text: '<Project><ItemGroup><PackageReference Include="Own" Version="1.0.0" /></ItemGroup></Project>' };
+    expect(readNugetPackageReferences([root, middle, nearest, project]).map((entry) => entry.id)).toEqual(["Root.Only", "Own"]);
+  });
+
+  it("takes a GlobalPackageReference only from the Directory.Packages.props a project imports", () => {
+    const references = readNugetPackageReferences([
+      { path: "Directory.Packages.props", text: '<Project><ItemGroup><GlobalPackageReference Include="Root.Analyzers" Version="1.0.0" /></ItemGroup></Project>' },
+      { path: "src/Directory.Packages.props", text: '<Project><ItemGroup><GlobalPackageReference Include="Src.Analyzers" Version="1.0.0" /></ItemGroup></Project>' },
+      { path: "src/A/A.csproj", text: "<Project />" },
+      { path: "src/B/B.csproj", text: "<Project />" },
+    ]);
+    expect(references.map((entry) => `${entry.id} ${entry.project}`)).toEqual(["Src.Analyzers src/Directory.Packages.props"]);
   });
 
   it("reads a version written as CDATA", () => {

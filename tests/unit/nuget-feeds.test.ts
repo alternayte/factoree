@@ -166,7 +166,11 @@ describe("the mirror credential", () => {
     expect(mirrorCredentialFailure([mirrorCredential()])).toBeNull();
     expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: null })])).toBeNull();
     expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/" })])).toBeNull();
-    expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/FrontiersIn" })])).toBeNull();
+    expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/frontiersin" })])).toBeNull();
+  });
+
+  it("fails a path prefix in another case, since the provider matches the path as written", () => {
+    expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/FrontiersIn/" })])).toContain("path prefix /FrontiersIn/");
   });
 
   it("names the host when the credential is missing", () => {
@@ -291,6 +295,43 @@ describe("renderNugetConfig", () => {
     const text = renderNugetConfig(configs, classifyNugetFeeds(configs, NO_COVERAGE), ["Hangfire.Pro"]);
     expect(mappingOf(text)).toEqual({ "nuget.org": ["*"], frontiers: ["Hangfire.Pro", "Frontiers.*"] });
   });
+
+  it("adds nuget.org with no pattern when the repository maps every id elsewhere, so it widens nothing", () => {
+    const configs = [
+      parseNugetConfig(
+        "NuGet.config",
+        `<configuration><packageSources>
+          <clear />
+          <add key="proxy" value="https://packages.allowed.example/v3/index.json" />
+          <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+        </packageSources><packageSourceMapping>
+          <packageSource key="proxy"><package pattern="*" /></packageSource>
+          <packageSource key="frontiers"><package pattern="Frontiers.*" /></packageSource>
+        </packageSourceMapping></configuration>`,
+      ),
+    ];
+    const text = renderNugetConfig(configs, classifyNugetFeeds(configs, { credentialHosts: [], allowedDomains: ["packages.allowed.example"] }), ["Frontiers.Core"]);
+    expect(sourcesOf(text).map(([key]) => key)).toEqual(["proxy", "frontiers", "nuget.org"]);
+    expect(mappingOf(text)).toEqual({ proxy: ["*"], frontiers: ["Frontiers.Core", "Frontiers.*"] });
+  });
+
+  it("moves a `*` of the private feed to nuget.org, not to the mirror", () => {
+    const configs = [
+      parseNugetConfig(
+        "NuGet.config",
+        `<configuration><packageSources>
+          <clear />
+          <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+        </packageSources><packageSourceMapping>
+          <packageSource key="frontiers"><package pattern="*" /></packageSource>
+        </packageSourceMapping></configuration>`,
+      ),
+    ];
+    const feeds = classifyNugetFeeds(configs, NO_COVERAGE);
+    expect(pinnedToPrivateFeed(configs, feeds, "Serilog")).toBe(false);
+    const text = renderNugetConfig(configs, feeds, ["Frontiers.Core"]);
+    expect(mappingOf(text)).toEqual({ frontiers: ["Frontiers.Core"], "nuget.org": ["*"] });
+  });
 });
 
 describe("restore output", () => {
@@ -302,13 +343,14 @@ describe("restore output", () => {
       "/repo/src/Web/Web.csproj : error NU1101: Unable to find package Frontiers.Transitive. No packages exist with this id",
     ].join("\n");
     expect(restoreFailuresOf(output)).toEqual([
-      { id: "Frontiers.Transitive", code: "NU1101", version: null, project: "/repo/src/Api/Api.csproj" },
-      { id: "Hangfire.Pro", code: "NU1102", version: "1.8.6", project: "/repo/src/Api/Api.csproj" },
+      { id: "Frontiers.Transitive", code: "NU1101", version: null, exact: false, project: "/repo/src/Api/Api.csproj" },
+      { id: "Hangfire.Pro", code: "NU1102", version: "1.8.6", exact: false, project: "/repo/src/Api/Api.csproj" },
     ]);
   });
 
-  it("takes no lowest version from an upper bound in NU1102", () => {
+  it("takes no lowest version from an upper bound in NU1102, and marks `= x` exact", () => {
     expect(restoreFailuresOf("A.csproj : error NU1102: Unable to find package Lib with version (<= 2.0.0)")[0]?.version).toBeNull();
+    expect(restoreFailuresOf("A.csproj : error NU1102: Unable to find package Lib with version (= 2.0.0)")[0]).toMatchObject({ version: "2.0.0", exact: true });
   });
 
   it("names the sources whose service index the restore could not load", () => {
@@ -338,15 +380,16 @@ describe("restore output", () => {
         "net6.0": { "Hangfire.Pro.Redis/2.8.20": { dependencies: { "hangfire.pro": "2.4.0" } } },
       },
     });
-    expect(requestedVersionOf(assets, "Hangfire.Pro")).toBe("2.3.2");
+    expect(requestedVersionOf(assets, "Hangfire.Pro")).toEqual({ version: "2.3.2", exact: false });
     expect(requestedVersionOf(assets, "Frontiers.Other")).toBeNull();
     expect(requestedVersionOf("not json", "x")).toBeNull();
   });
 
-  it("takes no version from a range with no inclusive lower bound", () => {
+  it("takes no version from a range with no inclusive lower bound, and only `[x]` as exact", () => {
     const assetsOf = (range: string): string => JSON.stringify({ targets: { "net8.0": { "Parent/1.0.0": { dependencies: { Lib: range } } } } });
     expect(requestedVersionOf(assetsOf("(, 2.0.0]"), "Lib")).toBeNull();
     expect(requestedVersionOf(assetsOf("(1.0.0, )"), "Lib")).toBeNull();
-    expect(requestedVersionOf(assetsOf("[1.5.0]"), "Lib")).toBe("1.5.0");
+    expect(requestedVersionOf(assetsOf("[1.5.0]"), "Lib")).toEqual({ version: "1.5.0", exact: true });
+    expect(requestedVersionOf(assetsOf("[1.0.0, 2.0.0]"), "Lib")).toEqual({ version: "1.0.0", exact: false });
   });
 });
