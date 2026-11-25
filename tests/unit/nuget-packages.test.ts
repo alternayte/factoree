@@ -234,6 +234,18 @@ describe("readNugetPackageReferences", () => {
     expect(readNugetPackageReferences([root, middle, nearest, project]).map((entry) => entry.id)).toEqual(["Root.Only", "Own"]);
   });
 
+  it("applies a parent props where its import stands, so only what follows the import overrides it", () => {
+    const root = { path: "Directory.Build.props", text: "<Project><PropertyGroup><Before>1</Before><After>1</After></PropertyGroup></Project>" };
+    const nearest = {
+      path: "src/Directory.Build.props",
+      text: `<Project><PropertyGroup><Before>2</Before></PropertyGroup>
+        <Import Project="..\\Directory.Build.props" />
+        <PropertyGroup><After>2</After></PropertyGroup></Project>`,
+    };
+    const project = { path: "src/A/A.csproj", text: '<Project><ItemGroup><PackageReference Include="Lib" Version="$(Before).$(After).0" /></ItemGroup></Project>' };
+    expect(readNugetPackageReferences([root, nearest, project]).map((entry) => entry.version)).toEqual(["1.2.0"]);
+  });
+
   it("takes a GlobalPackageReference only from the Directory.Packages.props a project imports", () => {
     const references = readNugetPackageReferences([
       { path: "Directory.Packages.props", text: '<Project><ItemGroup><GlobalPackageReference Include="Root.Analyzers" Version="1.0.0" /></ItemGroup></Project>' },

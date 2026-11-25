@@ -363,7 +363,8 @@ describe("runNugetPrecheck", () => {
     const restore = sandbox.commands.findIndex((command) => command.file === "sh" && (command.args[1] ?? "").includes("dotnet restore"));
     expect(emptied).toBeGreaterThanOrEqual(0);
     expect(restore).toBeGreaterThan(emptied);
-    expect(sandbox.commands[restore]?.args[1]).toContain("export NUGET_PACKAGES=/tmp/factoree-nuget-precheck/packages NUGET_HTTP_CACHE_PATH=/tmp/factoree-nuget-precheck/http-cache");
+    expect(sandbox.commands[restore]?.args[1]).toContain("export NUGET_HTTP_CACHE_PATH=/tmp/factoree-nuget-precheck/http-cache");
+    expect(sandbox.commands[restore]?.args[1]).toContain("--packages /tmp/factoree-nuget-precheck/packages");
   });
 
   it("fails when the restore cannot load the mirror's service index", async () => {

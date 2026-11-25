@@ -357,13 +357,15 @@ const rebasedLocalSource = (url: string, configPath: string): string => {
  * source moves to the generated file's folder, so a relative path is rebased.
  * `packageSourceMapping` sends each mirrored id to the mirror and `*` to every other source, so
  * no other source can serve a private id. When the repository maps its sources itself, its
- * patterns stay, and those of the mapped feed move to the mirror, except `*`: a `*` made the
- * mapped feed the fallback for every id, as a proxy of nuget.org does, and the mirror serves only
- * mirrored packages, so the fallback moves to nuget.org. An added nuget.org then gets `*` only
- * when it takes that fallback, so it widens no restriction of the repository.
+ * patterns stay, but for an exact pattern of a mirrored id on another source, since two equal
+ * exact patterns leave both sources eligible. Those of the mapped feed move to the mirror, except
+ * `*`: a `*` made the mapped feed the fallback for every id, as a proxy of nuget.org does, and the
+ * mirror serves only mirrored packages, so the fallback moves to nuget.org. An added nuget.org
+ * then gets `*` only when it takes that fallback, so it widens no restriction of the repository.
  */
 export const renderNugetConfig = (configs: readonly NugetConfigFile[], feeds: readonly NugetFeed[], mirroredIds: readonly string[]): string => {
   const ids = [...new Set(mirroredIds.map((id) => id.trim()).filter((id) => id !== ""))].sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()));
+  const mirroredKeys = new Set(ids.map((id) => id.toLowerCase()));
   const clear = configs[0]?.clear ?? false;
   const existingMirror = feeds.find((feed) => feed.kind === "mirror" && githubPackagesOwnerOf(feed.url)?.toLowerCase() === NUGET_MIRROR_OWNER.toLowerCase());
   const mapped = feeds.find((feed) => feed.kind === "mapped");
@@ -385,7 +387,8 @@ export const renderNugetConfig = (configs: readonly NugetConfigFile[], feeds: re
       continue;
     }
     const url = feed.kind === "local" ? rebasedLocalSource(feed.url, feed.file) : feed.url;
-    sources.push({ key: feed.key, url, protocolVersion: feed.protocolVersion, patterns: [...patternsOf(feed.key), ...(hostOf(url) === NUGET_ORG_HOST ? fallback : [])], mirror: false });
+    const patterns = patternsOf(feed.key).filter((pattern) => !mirroredKeys.has(pattern.toLowerCase()));
+    sources.push({ key: feed.key, url, protocolVersion: feed.protocolVersion, patterns: [...patterns, ...(hostOf(url) === NUGET_ORG_HOST ? fallback : [])], mirror: false });
   }
   if (ids.length > 0 && !sources.some((source) => source.mirror)) {
     sources.push({ key: mirrorKey, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: mirrorPatterns, mirror: true });

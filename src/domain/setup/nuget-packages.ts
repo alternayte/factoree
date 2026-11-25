@@ -196,6 +196,12 @@ const itemsOf = (document: XmlElement, kind: string): Array<{ element: XmlElemen
   return found;
 };
 
+/** One file, or the part of it before or after the import of a parent file. */
+interface MsbuildPart {
+  path: string;
+  document: XmlElement;
+}
+
 interface PendingReference {
   id: string;
   version: string | null;
@@ -244,9 +250,9 @@ const fromToolManifest = (file: RepositoryTextFile): NugetPackageReference[] => 
  * docs/specs/nuget-private-feed-mapping.md, DI-21.224. The package references of a repository:
  * each project file with the nearest `Directory.Build.props`, `Directory.Packages.props` and
  * `Directory.Build.targets` above it, and each parent one that file imports, each
- * `packages.config` and each `dotnet-tools.json`. Properties come from every file of a project
- * first, as MSBuild's first pass does. Items follow in import order, so `Update` and `Remove`
- * apply to what came before. Central package management gives a reference its `PackageVersion`,
+ * `packages.config` and each `dotnet-tools.json`. A parent file applies where its `<Import>`
+ * stands. Properties come from every file of a project first, as MSBuild's first pass does. Items
+ * follow in import order, so `Update` and `Remove` apply to what came before. Central package management gives a reference its `PackageVersion`,
  * `VersionOverride` wins, and a `GlobalPackageReference` belongs to its `Directory.Packages.props`.
  * Factoree evaluates no condition: each conditional version is one more reference, and a
  * conditional `Update` or `Remove` keeps what it replaces, so a target framework adds a check and
@@ -274,21 +280,31 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
   // MSBuild imports only the nearest file of a name. A parent one counts when that file imports it:
   // `GetPathOfFileAbove('Directory.Build.props', ...)` finds the nearest one above, and a plain
   // path such as `../../Directory.Build.props` names one file.
-  const parentImportOf = (path: string, name: string): string | null => {
+  const parentImportOf = (path: string, name: string): { path: string | null; element: XmlElement } | null => {
     for (const element of descendantsNamed(documentOf(path), "Import")) {
       const project = (attributeOf(element, "Project") ?? "").trim();
       if (!project.toLowerCase().includes(name.toLowerCase())) continue;
-      if (project.includes("$(")) return nearestIn(foldersAbove(path).reverse().slice(1), name);
-      return fileAt(posix.normalize(posix.join(folderOf(path), project.replace(/\\/g, "/"))));
+      if (project.includes("$(")) return { path: nearestIn(foldersAbove(path).reverse().slice(1), name), element };
+      return { path: fileAt(posix.normalize(posix.join(folderOf(path), project.replace(/\\/g, "/")))), element };
     }
     return null;
   };
-  const above = (path: string, name: string): string[] => {
-    const chain: string[] = [];
-    for (let found = nearestIn(foldersAbove(path).reverse(), name); found !== null && !chain.includes(found); found = parentImportOf(found, name)) {
-      chain.unshift(found);
-    }
-    return chain;
+  // A parent file applies where its <Import> stands: the importing file's content before the import
+  // comes first, and its content after the import overrides the parent.
+  const partsOf = (path: string, name: string, seen: readonly string[]): MsbuildPart[] => {
+    const document = documentOf(path);
+    const parent = parentImportOf(path, name);
+    if (parent === null || parent.path === null || seen.includes(parent.path)) return [{ path, document }];
+    const root = childrenNamed(document, "Project")[0] ?? document;
+    const at = root.children.findIndex((child) => child === parent.element || descendantsNamed(child, "Import").includes(parent.element));
+    const slice = (children: XmlElement[]): MsbuildPart => ({ path, document: { ...root, children } });
+    const parentParts = partsOf(parent.path, name, [...seen, parent.path]);
+    if (at < 0) return [...parentParts, { path, document }];
+    return [slice(root.children.slice(0, at)), ...parentParts, slice(root.children.slice(at + 1))];
+  };
+  const above = (path: string, name: string): MsbuildPart[] => {
+    const nearest = nearestIn(foldersAbove(path).reverse(), name);
+    return nearest === null ? [] : partsOf(nearest, name, [nearest]);
   };
 
   const found: NugetPackageReference[] = [];
@@ -304,11 +320,12 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     const buildProps = above(project.path, "Directory.Build.props");
     const packageProps = above(project.path, "Directory.Packages.props");
     const buildTargets = above(project.path, "Directory.Build.targets");
+    const own: MsbuildPart = { path: project.path, document: documentOf(project.path) };
     const properties: MsbuildProperties = new Map();
-    for (const path of [...buildProps, ...packageProps, project.path, ...buildTargets]) addMsbuildProperties(properties, documentOf(path));
+    for (const { document } of [...buildProps, ...packageProps, own, ...buildTargets]) addMsbuildProperties(properties, document);
 
-    for (const path of packageProps) {
-      for (const { element, group } of itemsOf(documentOf(path), "GlobalPackageReference")) {
+    for (const { path, document } of packageProps) {
+      for (const { element, group } of itemsOf(document, "GlobalPackageReference")) {
         for (const id of idsOf(attributeOf(element, "Include"))) {
           for (const entry of reference(id, valueOf(element, "Version"), path, conditionOf(element, group), properties)) {
             const key = `${path} ${entry.id.toLowerCase()} ${entry.versionText}`;
@@ -322,8 +339,8 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
 
     // An unconditional PackageVersion replaces the versions of its id, and a conditional one adds one.
     const central = new Map<string, Array<{ version: string | null; condition: string | null }>>();
-    for (const path of packageProps) {
-      for (const { element, group } of itemsOf(documentOf(path), "PackageVersion")) {
+    for (const { document } of packageProps) {
+      for (const { element, group } of itemsOf(document, "PackageVersion")) {
         const condition = conditionOf(element, group);
         for (const id of idsOf(attributeOf(element, "Include") ?? attributeOf(element, "Update"))) {
           const entry = { version: valueOf(element, "Version"), condition };
@@ -333,8 +350,8 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     }
 
     const pending = new Map<string, PendingReference[]>();
-    for (const path of [...buildProps, project.path, ...buildTargets]) {
-      for (const { element, group } of itemsOf(documentOf(path), "PackageReference")) {
+    for (const { document } of [...buildProps, own, ...buildTargets]) {
+      for (const { element, group } of itemsOf(document, "PackageReference")) {
         const condition = conditionOf(element, group);
         if (condition === null) for (const id of idsOf(attributeOf(element, "Remove"))) pending.delete(id.toLowerCase());
         for (const id of idsOf(attributeOf(element, "Update"))) {

@@ -315,6 +315,24 @@ describe("renderNugetConfig", () => {
     expect(mappingOf(text)).toEqual({ proxy: ["*"], frontiers: ["Frontiers.Core", "Frontiers.*"] });
   });
 
+  it("drops an exact pattern of a mirrored id from every other source, so only the mirror serves it", () => {
+    const configs = [
+      parseNugetConfig(
+        "NuGet.config",
+        `<configuration><packageSources>
+          <clear />
+          <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+          <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+        </packageSources><packageSourceMapping>
+          <packageSource key="nuget.org"><package pattern="*" /><package pattern="hangfire.pro" /></packageSource>
+          <packageSource key="frontiers"><package pattern="Frontiers.*" /></packageSource>
+        </packageSourceMapping></configuration>`,
+      ),
+    ];
+    const text = renderNugetConfig(configs, classifyNugetFeeds(configs, NO_COVERAGE), ["Hangfire.Pro"]);
+    expect(mappingOf(text)).toEqual({ "nuget.org": ["*"], frontiers: ["Hangfire.Pro", "Frontiers.*"] });
+  });
+
   it("moves a `*` of the private feed to nuget.org, not to the mirror", () => {
     const configs = [
       parseNugetConfig(

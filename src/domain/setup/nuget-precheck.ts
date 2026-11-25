@@ -113,7 +113,8 @@ const SOLUTIONS = scanScriptOf("-iname '*.sln' -o -iname '*.slnx'", "4096k");
 /**
  * DI-21.228. The global packages folder and HTTP cache of the restore. The pre-check empties them
  * first: a warm sandbox holds the packages its bootstrap restored, and a package restore takes from
- * them is never read from the mirror.
+ * them is never read from the mirror. `--packages` sets the folder, since it wins over a project's
+ * `RestorePackagesPath` and `NUGET_PACKAGES` does not.
  */
 const RESTORE_CACHE = "/tmp/factoree-nuget-precheck";
 
@@ -127,9 +128,9 @@ const RESTORE_SCRIPT = `if ! dotnet --version >/dev/null 2>&1; then
   bash /tmp/factoree-dotnet-install.sh $channel --install-dir "$HOME/.dotnet" >/dev/null 2>&1 || exit ${String(NO_SDK_EXIT)}
   export PATH="$HOME/.dotnet:$PATH"
 fi
-export NUGET_PACKAGES=${RESTORE_CACHE}/packages NUGET_HTTP_CACHE_PATH=${RESTORE_CACHE}/http-cache
+export NUGET_HTTP_CACHE_PATH=${RESTORE_CACHE}/http-cache
 status=0
-for target in "$@"; do dotnet restore "$target" --configfile ${FACTOREE_NUGET_CONFIG} || status=1; done
+for target in "$@"; do dotnet restore "$target" --packages ${RESTORE_CACHE}/packages --configfile ${FACTOREE_NUGET_CONFIG} || status=1; done
 exit $status`;
 
 const relative = (path: string): string => path.replace(/^\.\//, "");
