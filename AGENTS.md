@@ -98,7 +98,10 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - retro agent: the fresh agent role that reads the ended runs of a tenant's products on a schedule and proposes findings. Avoid: review agent, improvement agent, meta agent.
 - retro: one pass of the retro agent, run as its own workflow outside any run. Avoid: retrospective run, improvement pass, analysis run.
 - retro finding: one proposed improvement that targets one product and cites its runs, and that becomes a Linear issue only when a human creates it. Avoid: insight, recommendation, lesson.
-- retro goal: the optional product text that tells the retro agent what to improve first. Only the retro agent reads it. Avoid: product goal, factory goal, mandate.
+- product goal: the optional markdown text per product that tells the retro agent what the product must achieve and what to improve first. Only the retro agent reads it. Avoid: retro goal, factory goal, mandate.
+- signal source: a product's MCP server for production errors or analytics, with the queries that the operator set, which Factoree runs before a retro. Avoid: data source, telemetry source.
+- signal result: the redacted output of one signal source query in one retro, which a finding cites by id. Avoid: signal item, signal output.
+- idea finding: a retro finding that proposes a product change from analytics, created in Linear but never delegated by Factoree. Avoid: feature suggestion, product idea.
 - kept transcript: the redacted, gzipped full output and tool inputs of one agent session, stored only when the product turns it on. Avoid: session log, trace, full log.
 - review app: a GitHub App, other than Factoree, that submitted a review on a Factoree pull request. Its check on the head is its verdict, and its unresolved threads and annotations are its findings. Avoid: PR reviewer, PR bot, review bot.
 - PR follow-up run: a follow-up run that targets an existing PR branch, started by review app findings, a failed CI check, a human decision on the PR or in Linear, or a base conflict, that pushes a new verified commit or answers. Avoid: PR repair, autofix, PR fix.
