@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-25
+
+### Added
+
+- Factoree acts on every review app on its pull request, with no product setting. After the reviews of a head settle (2 minutes quiet, at most 30 minutes), one PR follow-up run takes the unresolved threads, check annotations and review bodies of each review app whose check is failure or neutral, or that has no check. A product deny list mutes an app (docs/specs/pr-feedback-loop.md, DI-21.206 to DI-21.211).
+- A failed repository CI check on a Factoree pull request starts a PR follow-up run with the check output, annotations and job log tail, unless the same check fails on the base. The proof pack names the check as not covered by the config (DI-21.208).
+- A comment that mentions the Factoree app from a user with write access, and a Linear reply while the pull request is open, are human decisions. Factoree adds 👀, and a question gets an answer with no commit: the run ends ANSWERED (`refiner@15`, DI-21.204, DI-21.211, DI-21.215).
+- Factoree replies "Fixed in", "Done in" or the drop reason in each thread a run handled, and never resolves a thread (DI-21.216).
+- The pull request body is for a human reviewer: summary, Where to look from the reviewer (`reviewer@7`), what was asked with results, Needs your eye with the preview link, what Factoree did not prove, and the run metadata in a collapsed block. Each verified push rewrites the owned block. The title is the work item title with the Linear key (docs/specs/pr-body-for-humans.md, DI-21.217 to DI-21.220).
+
+### Changed
+
+- The product setting "automatic follow-ups per PR" (default 3) replaces the fixed limit. At L4, auto-merge needs every review app check to pass on the verified head (DI-21.203, DI-21.212).
+
+### Removed
+
+- The PR reviewer product setting, and the proof pack lists of PR comments and passed-check suggestions (DI-21.213).
+
+### Upgrade
+
+- The GitHub App asks for Actions read and the events `issue_comment`, `pull_request_review_comment` and `pull_request_review_thread`. Accept them on the installation, or mentions and threads do not arrive.
+- Migrations `20261224100000_review_apps` and `20261224110000_review_app_answers`.
+
 ## [0.21.8] - 2026-11-23
 
 ### Added
