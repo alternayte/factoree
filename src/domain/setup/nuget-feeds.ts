@@ -281,8 +281,9 @@ export const mirrorCredentialFailure = (credentials: readonly HostCredential[], 
     return `The host credential for ${NUGET_MIRROR_HOST} sends the header ${credential.headerName ?? "(none)"}, and NuGet on GitHub Packages needs ${shape}.`;
   }
   // `/`, `/<owner>` and `/<owner>/` cover every request of the mirror. A longer prefix leaves some
-  // out. The provider matches the path as written, and Factoree requests the owner as it names it.
-  if (credential.pathPrefix !== null && !`/${owner}/`.startsWith(credential.pathPrefix)) {
+  // out, and a part of the owner name also covers other owners. The provider matches the path as
+  // written, and Factoree requests the owner as it names it.
+  if (credential.pathPrefix !== null && !["/", `/${owner}`, `/${owner}/`].includes(credential.pathPrefix)) {
     return (
       `The host credential for ${NUGET_MIRROR_HOST} has the path prefix ${credential.pathPrefix}, and the mirror is ${NUGET_MIRROR_HOST}/${owner}, ` +
       `so the credential does not reach the index and the downloads of the mirror. Set the path prefix to /${owner}/ or leave it empty.`
@@ -512,12 +513,14 @@ export const parentChainOf = (assetsText: string, id: string): string[] | null =
 export interface RequestedVersion {
   version: string;
   exact: boolean;
+  /** The upper bound of a range, when it has one. */
+  maximum?: { version: string; inclusive: boolean };
 }
 
 /**
- * The inclusive lower bound of a NuGet dependency version, normalised, or null when it has none:
- * `1.0` and `[1.0, )` accept 1.0 and up, `[1.0]` is exactly 1.0, and `(1.0, )` and `(, 2.0]` name
- * no version.
+ * The inclusive lower bound of a NuGet dependency version, normalised, with its upper bound, or
+ * null when it has no lower bound: `1.0` and `[1.0, )` accept 1.0 and up, `[1.0, 2.0)` stops
+ * below 2.0, `[1.0]` is exactly 1.0, and `(1.0, )` and `(, 2.0]` name no version.
  */
 const lowerBoundOf = (range: string): RequestedVersion | null => {
   const text = range.trim();
@@ -528,7 +531,11 @@ const lowerBoundOf = (range: string): RequestedVersion | null => {
   }
   const [lower = "", upper] = text.slice(1).split(",");
   const version = normalizeNugetVersion(lower.replace(/\]$/, "").trim());
-  return version === null ? null : { version, exact: upper === undefined };
+  if (version === null) return null;
+  if (upper === undefined) return { version, exact: true };
+  const close = upper.trim();
+  const maximum = normalizeNugetVersion(close.slice(0, -1).trim());
+  return maximum === null ? { version, exact: false } : { version, exact: false, maximum: { version: maximum, inclusive: close.endsWith("]") } };
 };
 
 /**

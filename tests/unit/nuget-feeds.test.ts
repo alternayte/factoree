@@ -173,6 +173,11 @@ describe("the mirror credential", () => {
     expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/FrontiersIn/" })])).toContain("path prefix /FrontiersIn/");
   });
 
+  it("fails a path prefix that names only part of the owner, since it also covers other owners", () => {
+    expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/f" })])).toContain("path prefix /f");
+    expect(mirrorCredentialFailure([mirrorCredential({ pathPrefix: "/frontiers" })])).toContain("path prefix /frontiers");
+  });
+
   it("names the host when the credential is missing", () => {
     expect(mirrorCredentialFailure([])).toContain(MISSING_MIRROR_CREDENTIAL);
     expect(MISSING_MIRROR_CREDENTIAL).toBe("add a host credential for nuget.pkg.github.com");
@@ -408,6 +413,8 @@ describe("restore output", () => {
     expect(requestedVersionOf(assetsOf("(, 2.0.0]"), "Lib")).toBeNull();
     expect(requestedVersionOf(assetsOf("(1.0.0, )"), "Lib")).toBeNull();
     expect(requestedVersionOf(assetsOf("[1.5.0]"), "Lib")).toEqual({ version: "1.5.0", exact: true });
-    expect(requestedVersionOf(assetsOf("[1.0.0, 2.0.0]"), "Lib")).toEqual({ version: "1.0.0", exact: false });
+    expect(requestedVersionOf(assetsOf("[1.0.0, 2.0.0]"), "Lib")).toEqual({ version: "1.0.0", exact: false, maximum: { version: "2.0.0", inclusive: true } });
+    expect(requestedVersionOf(assetsOf("[1.0.0, 2.0.0)"), "Lib")).toEqual({ version: "1.0.0", exact: false, maximum: { version: "2.0.0", inclusive: false } });
+    expect(requestedVersionOf(assetsOf("[1.0.0, )"), "Lib")).toEqual({ version: "1.0.0", exact: false });
   });
 });

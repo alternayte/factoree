@@ -411,6 +411,23 @@ describe("runNugetPrecheck", () => {
     expect(requests).toContain("https://nuget.pkg.github.com/frontiersin/download/frontiers.transitive/1.5.0/frontiers.transitive.1.5.0.nupkg");
   });
 
+  it("finds no version when the mirror lists none within the range's upper bound", async () => {
+    const { report, requests } = await run({
+      files: files({ "Frontiers.Core": "3.1.0" }),
+      mirror: { "frontiers.core": ["3.1.0"], "frontiers.transitive": ["2.0.0", "3.0.0"] },
+      restore: () => ({ exitCode: 1, output: `${PATH}/src/Api/Api.csproj : error NU1101: Unable to find package Frontiers.Transitive. No packages exist with this id` }),
+      assets: {
+        [`${PATH}/src/Api`]: JSON.stringify({
+          targets: { "net8.0": { "Frontiers.Core/3.1.0": { dependencies: { "Frontiers.Transitive": "[1.0.0, 2.0.0)" } } } },
+          project: { frameworks: { "net8.0": { dependencies: { "Frontiers.Core": {} } } } },
+        }),
+      },
+    });
+    expect(report.outcome).toBe("failed");
+    expect(report.packages.find((entry) => entry.id === "Frontiers.Transitive")).toMatchObject({ version: "1.0.0", status: "version_missing" });
+    expect(requests.some((url) => url.endsWith(".nupkg") && url.includes("frontiers.transitive"))).toBe(false);
+  });
+
   it("needs the exact version for a request NuGet pins", async () => {
     const { report } = await run({
       files: files({ "Frontiers.Core": "3.1.0" }),

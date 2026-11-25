@@ -256,7 +256,7 @@ const onMirror = async (
   if (indexStatus !== "mirrored") return answer(indexStatus, indexStatus === "unreachable" ? `HTTP ${String(index.httpCode)}, curl exit ${String(index.exitCode)}` : null);
   if (requested === null) return answer("mirrored", null);
   const listed = versionsOf(index.body);
-  const version = requested.exact ? (listed.includes(requested.version) ? requested.version : null) : lowestAtLeast(listed, requested.version);
+  const version = requested.exact ? (listed.includes(requested.version) ? requested.version : null) : lowestAccepted(listed, requested);
   if (version === null) return answer("version_missing", null);
   const file = `${base}/${version}/${id.toLowerCase()}.${version}.nupkg`;
   const first = await input.sandbox.exec(input.ref, { file: "curl", args: [...CURL, "-o", "/dev/null", "-w", "%{http_code} %{redirect_url}", file], cwd: "/", timeoutMs: 45_000 });
@@ -275,11 +275,20 @@ const onMirror = async (
   return answer(followStatus, followStatus === "unreachable" ? `the download from ${redirectHost}: HTTP ${String(followCode)}, curl exit ${String(follow.exitCode)}` : null, version);
 };
 
-/** The lowest listed version at or above the minimum. A prerelease counts only when the minimum is one, as in NuGet. */
-const lowestAtLeast = (listed: readonly string[], minimum: string): string | null => {
-  const prerelease = minimum.includes("-");
+/**
+ * The lowest listed version the request accepts: at or above its minimum and within its maximum. A
+ * prerelease counts only when the minimum is one, as in NuGet.
+ */
+const lowestAccepted = (listed: readonly string[], requested: RequestedVersion): string | null => {
+  const prerelease = requested.version.includes("-");
+  const { maximum } = requested;
+  const withinMaximum = (version: string): boolean => {
+    if (maximum === undefined) return true;
+    const order = compareNugetVersions(version, maximum.version) ?? 1;
+    return order < 0 || (order === 0 && maximum.inclusive);
+  };
   return listed
-    .filter((version) => (prerelease || !version.includes("-")) && (compareNugetVersions(version, minimum) ?? -1) >= 0)
+    .filter((version) => (prerelease || !version.includes("-")) && (compareNugetVersions(version, requested.version) ?? -1) >= 0 && withinMaximum(version))
     .reduce<string | null>((lowest, version) => (lowest === null || (compareNugetVersions(version, lowest) ?? 0) < 0 ? version : lowest), null);
 };
 
