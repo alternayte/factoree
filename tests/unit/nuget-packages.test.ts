@@ -257,6 +257,36 @@ describe("readNugetPackageReferences", () => {
     expect(readNugetPackageReferences([root, middle, nearest, project]).map((entry) => entry.version)).toEqual(["2.0.0"]);
   });
 
+  it("applies a parent imported twice only at its first import, as MSBuild skips the second", () => {
+    const root = { path: "Directory.Build.props", text: "<Project><PropertyGroup><V>1</V></PropertyGroup></Project>" };
+    const nearest = {
+      path: "src/Directory.Build.props",
+      text: `<Project><Import Project="..\\Directory.Build.props" />
+        <PropertyGroup><V>2</V></PropertyGroup>
+        <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" /></Project>`,
+    };
+    const project = { path: "src/A/A.csproj", text: '<Project><ItemGroup><PackageReference Include="Lib" Version="$(V).0.0" /></ItemGroup></Project>' };
+    expect(readNugetPackageReferences([root, nearest, project]).map((entry) => entry.version)).toEqual(["2.0.0"]);
+  });
+
+  it("applies an unconditional PackageVersion Remove before later versions, and keeps what a conditional one may skip", () => {
+    const root = { path: "Directory.Packages.props", text: '<Project><ItemGroup><PackageVersion Include="Lib" Version="1.0.0" /><PackageVersion Include="Kept" Version="1.0.0" /></ItemGroup></Project>' };
+    const nearest = {
+      path: "src/Directory.Packages.props",
+      text: `<Project><Import Project="..\\Directory.Packages.props" />
+        <ItemGroup><PackageVersion Remove="Lib" /><PackageVersion Include="Lib" Version="2.0.0" Condition="'$(TargetFramework)' == 'net8.0'" /></ItemGroup>
+        <ItemGroup Condition="'$(TargetFramework)' == 'net48'"><PackageVersion Remove="Kept" /></ItemGroup></Project>`,
+    };
+    const project = { path: "src/A/A.csproj", text: '<Project><ItemGroup><PackageReference Include="Lib" /><PackageReference Include="Kept" /></ItemGroup></Project>' };
+    expect(readNugetPackageReferences([root, nearest, project]).map((entry) => `${entry.id} ${entry.version ?? "-"}`)).toEqual(["Lib 2.0.0", "Kept 1.0.0"]);
+  });
+
+  it("keeps equal states of a chain of conditional updates once, so the list does not double per update", () => {
+    const updates = Array.from({ length: 24 }, (_, index) => `<PackageReference Update="Lib" Version="2.0.0" Condition="'$(C)' == '${String(index % 2)}'" />`).join("");
+    const references = readNugetPackageReferences([{ path: "A.csproj", text: `<Project><ItemGroup><PackageReference Include="Lib" Version="1.0.0" />${updates}</ItemGroup></Project>` }]);
+    expect(references.map((entry) => `${entry.version ?? "-"} ${entry.condition ?? ""}`)).toEqual(["1.0.0 ", "2.0.0 '$(C)' == '0'", "2.0.0 '$(C)' == '1'"]);
+  });
+
   it("takes a GlobalPackageReference only from the Directory.Packages.props a project imports", () => {
     const references = readNugetPackageReferences([
       { path: "Directory.Packages.props", text: '<Project><ItemGroup><GlobalPackageReference Include="Root.Analyzers" Version="1.0.0" /></ItemGroup></Project>' },

@@ -284,6 +284,20 @@ describe("renderNugetConfig", () => {
     expect(Object.fromEntries(sourcesOf(text))).toMatchObject({ local: "../src/packages", absolute: "/opt/packages" });
   });
 
+  it("keeps two local sources of one key that name two folders, and one that names the same folder once", () => {
+    const local = (value: string) => `<configuration><packageSources><add key="local" value="${value}" /></packageSources></configuration>`;
+    const root = parseNugetConfig("NuGet.config", PRIVATE_FEED_CONFIG.replace("</packageSources>", '<add key="local" value="./packages" /></packageSources>'));
+    const twoFolders = [root, parseNugetConfig("src/NuGet.config", local("./packages"))];
+    const text = renderNugetConfig(twoFolders, classifyNugetFeeds(twoFolders, NO_COVERAGE), ["Frontiers.Core"]);
+    expect(sourcesOf(text).filter(([, value = ""]) => value.endsWith("packages"))).toEqual([
+      ["local", "../packages"],
+      ["local (src/NuGet.config)", "../src/packages"],
+    ]);
+    expect(mappingOf(text)).toMatchObject({ local: ["*"], "local (src/NuGet.config)": ["*"] });
+    const sameFolder = [root, parseNugetConfig("src/NuGet.config", local("../packages"))];
+    expect(classifyNugetFeeds(sameFolder, NO_COVERAGE).filter((feed) => feed.kind === "local")).toHaveLength(1);
+  });
+
   it("keeps the repository's own source mapping and moves the patterns of the private feed to the mirror", () => {
     const configs = [
       parseNugetConfig(
@@ -366,8 +380,15 @@ describe("restore output", () => {
       "/repo/src/Web/Web.csproj : error NU1101: Unable to find package Frontiers.Transitive. No packages exist with this id",
     ].join("\n");
     expect(restoreFailuresOf(output)).toEqual([
-      { id: "Frontiers.Transitive", code: "NU1101", version: null, exact: false, request: "frontiers.transitive", project: "/repo/src/Api/Api.csproj" },
-      { id: "Hangfire.Pro", code: "NU1102", version: "1.8.6", exact: false, request: "hangfire.pro >=1.8.6", project: "/repo/src/Api/Api.csproj" },
+      { id: "Frontiers.Transitive", code: "NU1101", version: null, exact: false, request: "frontiers.transitive", projects: ["/repo/src/Api/Api.csproj", "/repo/src/Web/Web.csproj"] },
+      { id: "Hangfire.Pro", code: "NU1102", version: "1.8.6", exact: false, request: "hangfire.pro >=1.8.6", projects: ["/repo/src/Api/Api.csproj"] },
+    ]);
+  });
+
+  it("reads the source-mapping NU1100 with its id and range", () => {
+    const output = "/repo/src/Api/Api.csproj : error NU1100: Unable to resolve 'Frontiers.Child (>= 1.0.0)' for 'net8.0'. PackageSourceMapping is enabled, the following source(s) were not considered: nuget.org.";
+    expect(restoreFailuresOf(output)).toEqual([
+      { id: "Frontiers.Child", code: "NU1100", version: "1.0.0", exact: false, request: "frontiers.child >=1.0.0", projects: ["/repo/src/Api/Api.csproj"] },
     ]);
   });
 
@@ -378,10 +399,10 @@ describe("restore output", () => {
       "C.csproj : error NU1102: Unable to find package Lib with version (>= 1.0.0 && <= 2.0.0)",
       "D.csproj : error NU1102: Unable to find package lib with version (>= 1.0.0 && < 2.0)",
     ].join("\n");
-    expect(restoreFailuresOf(output).map((failure) => [failure.project, failure.maximum])).toEqual([
-      ["A.csproj", { version: "4.0.0", inclusive: false }],
-      ["B.csproj", { version: "2.0.0", inclusive: false }],
-      ["C.csproj", { version: "2.0.0", inclusive: true }],
+    expect(restoreFailuresOf(output).map((failure) => [failure.projects, failure.maximum])).toEqual([
+      [["A.csproj"], { version: "4.0.0", inclusive: false }],
+      [["B.csproj", "D.csproj"], { version: "2.0.0", inclusive: false }],
+      [["C.csproj"], { version: "2.0.0", inclusive: true }],
     ]);
   });
 
@@ -409,6 +430,17 @@ describe("restore output", () => {
     });
     expect(parentChainOf(assets, "Frontiers.Transitive")).toEqual(["Frontiers.Core 3.1.0", "Frontiers.Http 2.0.0"]);
     expect(parentChainOf("not json", "x")).toBeNull();
+  });
+
+  it("builds each parent chain within one restore target and its framework's direct references", () => {
+    const assets = JSON.stringify({
+      targets: {
+        "net48": { "A/1.0.0": { dependencies: { B: "1.0.0" } }, "B/1.0.0": {} },
+        "net8.0": { "C/1.0.0": { dependencies: { B: "2.0.0" } }, "B/2.0.0": { dependencies: { Lib: "1.0.0" } } },
+      },
+      project: { frameworks: { "net48": { dependencies: { A: {} } }, "net8.0": { dependencies: { C: {} } } } },
+    });
+    expect(parentChainOf(assets, "Lib")).toEqual(["C 1.0.0", "B 2.0.0"]);
   });
 
   it("reads the lowest version the parents ask for, normalised, since NU1101 names none", () => {

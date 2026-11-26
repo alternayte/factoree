@@ -202,7 +202,11 @@ export interface NugetFeedCoverage {
   allowedDomains: readonly string[];
 }
 
-/** Every enabled source of the repository's configs, once per key and URL, classified. */
+/**
+ * Every enabled source of the repository's configs, once per key and location, classified. A
+ * relative local folder is located from the config that names it, so one key and one value in two
+ * configs can be two folders.
+ */
 export const classifyNugetFeeds = (configs: readonly NugetConfigFile[], coverage: NugetFeedCoverage): NugetFeed[] => {
   const feeds: NugetFeed[] = [];
   const seen = new Set<string>();
@@ -210,7 +214,8 @@ export const classifyNugetFeeds = (configs: readonly NugetConfigFile[], coverage
     const disabled = new Set(config.disabled.map((key) => key.toLowerCase()));
     for (const source of config.sources) {
       if (disabled.has(source.key.toLowerCase())) continue;
-      const identity = `${source.key.toLowerCase()} ${source.url.toLowerCase()}`;
+      const location = source.host === null ? (localSourcePathOf(source.url, config.path) ?? source.url.trim()) : source.url.toLowerCase();
+      const identity = `${source.key.toLowerCase()} ${location}`;
       if (seen.has(identity)) continue;
       seen.add(identity);
       const host = source.host;
@@ -336,16 +341,20 @@ const escapeXml = (text: string): string =>
 const xmlCommentText = (text: string): string => text.replace(/-(?=-)/g, "- ");
 
 /**
- * A local folder source as `.factoree/nuget.config` reads it. NuGet resolves a relative folder
- * from the config that names it, so the path is rebased from that config's folder. An absolute
- * path, a drive, a share, an environment variable or a URI stays as written.
+ * The folder of a relative local source from the checkout root, since NuGet resolves it from the
+ * config that names it. Null for an absolute path, a drive, a share, an environment variable or a
+ * URI, which mean the same from every config.
  */
-const rebasedLocalSource = (url: string, configPath: string): string => {
+const localSourcePathOf = (url: string, configPath: string): string | null => {
   const text = url.trim();
-  if (/^([/\\~%$]|[A-Za-z]:|[A-Za-z][\w+.-]*:\/\/)/.test(text)) return url;
-  const configFolder = posix.dirname(configPath);
-  const target = posix.normalize(posix.join(configFolder, text.replace(/\\/g, "/")));
-  return posix.relative(posix.dirname(FACTOREE_NUGET_CONFIG), target) || ".";
+  if (/^([/\\~%$]|[A-Za-z]:|[A-Za-z][\w+.-]*:\/\/)/.test(text)) return null;
+  return posix.normalize(posix.join(posix.dirname(configPath), text.replace(/\\/g, "/")));
+};
+
+/** A local folder source as `.factoree/nuget.config` reads it: a relative one is rebased to that file's folder. */
+const rebasedLocalSource = (url: string, configPath: string): string => {
+  const target = localSourcePathOf(url, configPath);
+  return target === null ? url : posix.relative(posix.dirname(FACTOREE_NUGET_CONFIG), target) || ".";
 };
 
 /**
@@ -376,27 +385,35 @@ export const renderNugetConfig = (configs: readonly NugetConfigFile[], feeds: re
   const mappedPatterns = mapped === undefined ? [] : patternsOf(mapped.key);
   const mirrorPatterns = mappedPatterns.filter((pattern) => pattern !== "*");
   const fallback = repositoryMappings.size === 0 || mappedPatterns.includes("*") ? ["*"] : [];
-  const sources: Array<{ key: string; url: string; protocolVersion: string | null; patterns: string[]; mirror: boolean }> = [];
+  const sources: Array<{ key: string; url: string; protocolVersion: string | null; patterns: string[]; mirror: boolean; file: string | null }> = [];
   for (const feed of feeds) {
     if (feed.kind === "unsupported") continue;
     if (feed.kind === "mapped") {
-      if (ids.length > 0 && existingMirror === undefined) sources.push({ key: feed.key, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: mirrorPatterns, mirror: true });
+      if (ids.length > 0 && existingMirror === undefined) sources.push({ key: feed.key, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: mirrorPatterns, mirror: true, file: feed.file });
       continue;
     }
     if (feed.kind === "mirror" && feed === existingMirror) {
-      sources.push({ key: feed.key, url: feed.url, protocolVersion: feed.protocolVersion, patterns: [...patternsOf(feed.key), ...mirrorPatterns], mirror: ids.length > 0 });
+      sources.push({ key: feed.key, url: feed.url, protocolVersion: feed.protocolVersion, patterns: [...patternsOf(feed.key), ...mirrorPatterns], mirror: ids.length > 0, file: feed.file });
       continue;
     }
     const url = feed.kind === "local" ? rebasedLocalSource(feed.url, feed.file) : feed.url;
     const patterns = patternsOf(feed.key).filter((pattern) => !mirroredKeys.has(pattern.toLowerCase()));
-    sources.push({ key: feed.key, url, protocolVersion: feed.protocolVersion, patterns: [...patterns, ...(hostOf(url) === NUGET_ORG_HOST ? fallback : [])], mirror: false });
+    sources.push({ key: feed.key, url, protocolVersion: feed.protocolVersion, patterns: [...patterns, ...(hostOf(url) === NUGET_ORG_HOST ? fallback : [])], mirror: false, file: feed.file });
   }
   if (ids.length > 0 && !sources.some((source) => source.mirror)) {
-    sources.push({ key: mirrorKey, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: mirrorPatterns, mirror: true });
+    sources.push({ key: mirrorKey, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: mirrorPatterns, mirror: true, file: null });
   }
   if (!sources.some((source) => hostOf(source.url) === NUGET_ORG_HOST)) {
-    const key = sources.some((source) => source.key.toLowerCase() === "nuget.org") ? "nuget.org (Factoree)" : "nuget.org";
-    sources.push({ key, url: NUGET_ORG_INDEX, protocolVersion: "3", patterns: fallback, mirror: false });
+    sources.push({ key: "nuget.org", url: NUGET_ORG_INDEX, protocolVersion: "3", patterns: fallback, mirror: false, file: null });
+  }
+  // One file holds one source per key, so two sources of one key in two configs, such as two
+  // folders named `local`, get the key and the config that names the later one.
+  const keys = new Set<string>();
+  for (const source of sources) {
+    let key = keys.has(source.key.toLowerCase()) ? `${source.key} (${source.file ?? "Factoree"})` : source.key;
+    for (let count = 2; keys.has(key.toLowerCase()); count += 1) key = `${source.key} (${source.file ?? "Factoree"} ${String(count)})`;
+    keys.add(key.toLowerCase());
+    source.key = key;
   }
   const add = (source: (typeof sources)[number]): string =>
     `    <add key="${escapeXml(source.key)}" value="${escapeXml(source.url)}"${source.protocolVersion === null ? "" : ` protocolVersion="${escapeXml(source.protocolVersion)}"`} />`;
@@ -432,7 +449,8 @@ export const renderNugetConfig = (configs: readonly NugetConfigFile[], feeds: re
 /** One package a restore could not find. */
 export interface RestoreFailure {
   id: string;
-  code: "NU1101" | "NU1102";
+  /** NU1101 and NU1102 name a package no source has. NU1100 names one no source mapping pattern routes. */
+  code: "NU1100" | "NU1101" | "NU1102";
   /** The lowest version the restore asked for, normalised by the caller, or null for NU1101. */
   version: string | null;
   /** True when the restore asked for exactly that version, `(= x)`, and not for it or higher. */
@@ -441,34 +459,38 @@ export interface RestoreFailure {
   maximum?: { version: string; inclusive: boolean };
   /** The whole request: the lower id, then each bound with its operator and normalised version. Two failures with the same request are one. */
   request: string;
-  /** The project file the line names, or null. */
-  project: string | null;
+  /** Every project file a line with this request names, in output order. */
+  projects: string[];
 }
 
-const RESTORE_FAILURE = /^\s*(?:(.+?)\s*:\s*)?error (NU1101|NU1102):\s*Unable to find package '?([A-Za-z0-9_.-]+)'?(?:\s+with version \(([^)]*)\))?/gim;
+const RESTORE_FAILURE =
+  /^\s*(?:(.+?)\s*:\s*)?error (?:(NU1101|NU1102):\s*Unable to find package '?([A-Za-z0-9_.-]+)'?(?:\s+with version \(([^)]*)\))?|(NU1100):\s*Unable to resolve '([A-Za-z0-9_.-]+)(?:\s+\(([^)]*)\))?')/gim;
 
 /**
  * DI-21.228. The packages a `dotnet restore` output names as not found, once per id and whole
- * range, so a narrower range of the same id and lower bound is looked up on its own. Factoree
- * looks each one up on the mirror itself: the restore text alone proves nothing.
+ * range, so a narrower range of the same id and lower bound is looked up on its own. Each keeps
+ * every project that reported it. Factoree looks each one up on the mirror itself: the restore
+ * text alone proves nothing.
  */
 export const restoreFailuresOf = (output: string): RestoreFailure[] => {
   const byRequest = new Map<string, RestoreFailure>();
   for (const match of output.matchAll(RESTORE_FAILURE)) {
+    const code = (match[2] ?? match[5]!).toUpperCase() as RestoreFailure["code"];
     // The sentence ends with a period right after the id.
-    const id = match[3]!.replace(/\.+$/, "");
+    const id = (match[3] ?? match[6]!).replace(/\.+$/, "");
+    const range = match[4] ?? match[7] ?? "";
     // Only `>= x` or `= x` names a lowest version. `< x`, `<= x` and `> x` name none to check.
-    const lower = /^\s*(>=|>|=)?\s*(\d[^\s,)\]&]*)/.exec(match[4] ?? "");
+    const lower = /^\s*(>=|>|=)?\s*(\d[^\s,)\]&]*)/.exec(range);
     const bound = lower?.[1] === ">" ? null : lower;
     const version = bound?.[2] ?? null;
-    const upper = /(?:^|&&)\s*(<=|<)\s*(\d[^\s,)\]&]*)/.exec(match[4] ?? "");
+    const upper = /(?:^|&&)\s*(<=|<)\s*(\d[^\s,)\]&]*)/.exec(range);
     const maximum = upper === null ? {} : { maximum: { version: upper[2]!, inclusive: upper[1] === "<=" } };
-    const project = match[1] === undefined ? null : match[1].trim().replace(/\s*\[.*$/, "");
+    const project = match[1] === undefined ? "" : match[1].trim().replace(/\s*\[.*$/, "");
     const boundText = (operator: string, text: string): string => `${operator}${normalizeNugetVersion(text) ?? text}`;
     const request = [id.toLowerCase(), ...(lower === null ? [] : [boundText(lower[1] ?? ">=", lower[2]!)]), ...(upper === null ? [] : [boundText(upper[1]!, upper[2]!)])].join(" ");
-    if (!byRequest.has(request)) {
-      byRequest.set(request, { id, code: match[2]!.toUpperCase() as RestoreFailure["code"], version, exact: bound?.[1] === "=", ...maximum, request, project: project === "" ? null : project });
-    }
+    const current = byRequest.get(request);
+    if (current === undefined) byRequest.set(request, { id, code, version, exact: bound?.[1] === "=", ...maximum, request, projects: project === "" ? [] : [project] });
+    else if (project !== "" && !current.projects.includes(project)) current.projects.push(project);
   }
   return [...byRequest.values()];
 };
@@ -482,39 +504,51 @@ export const unloadedSourcesOf = (output: string): string[] => [
 /**
  * The parents of a package that a restore could not find, from `obj/project.assets.json`: the
  * direct reference first, then each package down to the one that depends on it, as `id version`.
- * Null when the assets file names no parent.
+ * Each chain stays in one restore target, with the direct references of its framework, since
+ * another framework can resolve another version of a parent. Null when the assets file names no
+ * parent.
  */
 export const parentChainOf = (assetsText: string, id: string): string[] | null => {
-  let assets: { targets?: Record<string, Record<string, { dependencies?: Record<string, string> }>>; project?: { frameworks?: Record<string, { dependencies?: Record<string, unknown> }> } };
+  type Frameworks = Record<string, { targetAlias?: string; dependencies?: Record<string, unknown> }>;
+  let assets: { targets?: Record<string, Record<string, { dependencies?: Record<string, string> }>>; project?: { frameworks?: Frameworks } };
   try {
     assets = JSON.parse(assetsText) as typeof assets;
   } catch {
     return null;
   }
-  const direct = new Set(Object.values(assets.project?.frameworks ?? {}).flatMap((framework) => Object.keys(framework.dependencies ?? {}).map((name) => name.toLowerCase())));
-  const parentsOf = (child: string): string[] => {
-    const found: string[] = [];
-    for (const target of Object.values(assets.targets ?? {})) {
-      for (const [library, entry] of Object.entries(target)) {
-        if (Object.keys(entry.dependencies ?? {}).some((name) => name.toLowerCase() === child.toLowerCase()) && !found.includes(library)) found.push(library);
+  const frameworks = Object.entries(assets.project?.frameworks ?? {});
+  const namesOf = (entries: ReadonlyArray<[string, Frameworks[string]]>): Set<string> =>
+    new Set(entries.flatMap(([, framework]) => Object.keys(framework.dependencies ?? {}).map((name) => name.toLowerCase())));
+  // A target is `<framework>` or `<framework>/<runtime>`. An older assets file names the target
+  // framework apart from the project's, so a target no framework matches takes them all.
+  const directOf = (target: string): Set<string> => {
+    const framework = (target.split("/")[0] ?? target).toLowerCase();
+    const matching = frameworks.filter(([name, entry]) => name.toLowerCase() === framework || entry.targetAlias?.toLowerCase() === framework);
+    return namesOf(matching.length > 0 ? matching : frameworks);
+  };
+  for (const [targetName, target] of Object.entries(assets.targets ?? {})) {
+    const direct = directOf(targetName);
+    const parentsOf = (child: string): string[] =>
+      Object.entries(target)
+        .filter(([, entry]) => Object.keys(entry.dependencies ?? {}).some((name) => name.toLowerCase() === child.toLowerCase()))
+        .map(([library]) => library);
+    const visited = new Set<string>([id.toLowerCase()]);
+    const walk = (child: string, chain: string[]): string[] | null => {
+      for (const library of parentsOf(child)) {
+        const name = library.split("/")[0] ?? library;
+        if (visited.has(name.toLowerCase())) continue;
+        visited.add(name.toLowerCase());
+        const next = [library.replace("/", " "), ...chain];
+        if (direct.has(name.toLowerCase())) return next;
+        const found = walk(name, next);
+        if (found !== null) return found;
       }
-    }
-    return found;
-  };
-  const visited = new Set<string>([id.toLowerCase()]);
-  const walk = (child: string, chain: string[]): string[] | null => {
-    for (const library of parentsOf(child)) {
-      const name = library.split("/")[0] ?? library;
-      if (visited.has(name.toLowerCase())) continue;
-      visited.add(name.toLowerCase());
-      const next = [library.replace("/", " "), ...chain];
-      if (direct.has(name.toLowerCase())) return next;
-      const found = walk(name, next);
-      if (found !== null) return found;
-    }
-    return null;
-  };
-  return walk(id, []);
+      return null;
+    };
+    const chain = walk(id, []);
+    if (chain !== null) return chain;
+  }
+  return null;
 };
 
 /**

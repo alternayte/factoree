@@ -112,9 +112,10 @@ const SOLUTIONS = scanScriptOf("-iname '*.sln' -o -iname '*.slnx'", "4096k");
 
 /**
  * DI-21.228. The global packages folder and HTTP cache of the restore. The pre-check empties them
- * first: a warm sandbox holds the packages its bootstrap restored, and a package restore takes from
- * them is never read from the mirror. `--packages` sets the folder, since it wins over a project's
- * `RestorePackagesPath` and `NUGET_PACKAGES` does not.
+ * before each round: a warm sandbox holds the packages its bootstrap restored, and an earlier round
+ * may have restored a version from nuget.org that the next mapping sends to the mirror. A package
+ * restore takes from them is never read from a source. `--packages` sets the folder, since it wins
+ * over a project's `RestorePackagesPath` and `NUGET_PACKAGES` does not.
  */
 const RESTORE_CACHE = "/tmp/factoree-nuget-precheck";
 
@@ -184,26 +185,40 @@ const get = async (sandbox: Sandbox, ref: SandboxRef, url: string): Promise<Http
   return { exitCode: result.exitCode, timedOut: result.timedOut, httpCode: Number.isNaN(httpCode) ? 0 : httpCode, body: split < 0 ? "" : result.stdout.slice(0, split) };
 };
 
-const versionsOf = (body: string): string[] => {
+/** The versions of a flat container index, normalised, or null when the body is no such index. */
+const versionsOf = (body: string): string[] | null => {
+  let parsed: unknown;
   try {
-    const versions = (JSON.parse(body) as { versions?: unknown }).versions;
-    return Array.isArray(versions) ? versions.filter((entry): entry is string => typeof entry === "string").map((entry) => normalizeNugetVersion(entry) ?? entry.toLowerCase()) : [];
+    parsed = JSON.parse(body);
   } catch {
-    return [];
+    return null;
   }
+  const versions = typeof parsed === "object" && parsed !== null ? (parsed as { versions?: unknown }).versions : undefined;
+  return Array.isArray(versions) ? versions.filter((entry): entry is string => typeof entry === "string").map((entry) => normalizeNugetVersion(entry) ?? entry.toLowerCase()) : null;
 };
 
+/**
+ * Runs the work at most `limit` at a time. After the first failure no worker takes a new item, and
+ * the failure is thrown only once the running items settle, so no request outlives the caller.
+ */
 const mapLimit = async <T, R>(items: readonly T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> => {
   const results: R[] = [];
   let next = 0;
+  let failure: { error: unknown } | null = null;
   const worker = async (): Promise<void> => {
-    while (next < items.length) {
+    while (failure === null && next < items.length) {
       const index = next;
       next += 1;
-      results[index] = await work(items[index]!);
+      try {
+        results[index] = await work(items[index]!);
+      } catch (error) {
+        failure ??= { error };
+        return;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (failure !== null) throw (failure as { error: unknown }).error;
   return results;
 };
 
@@ -211,22 +226,29 @@ const mapLimit = async <T, R>(items: readonly T[], limit: number, work: (item: T
  * DI-21.225. True when nuget.org has the exact id and version and lists it: the flat container
  * names the version, and its registration leaf is not unlisted. A package that shares an id with a
  * public one, or a public version that was unlisted, stays private. An answer that is no answer
- * throws, because a guess either way sends people to the wrong fix.
+ * throws, a 200 whose body does not parse included, because a guess either way sends people to
+ * the wrong fix.
  */
 const onNugetOrg = async (sandbox: Sandbox, ref: SandboxRef, lookup: NugetPackageLookup): Promise<boolean> => {
   const id = lookup.id.toLowerCase();
   const flat = await get(sandbox, ref, `https://api.nuget.org/v3-flatcontainer/${id}/index.json`);
   const fault = (answer: HttpAnswer): boolean => answer.timedOut || answer.exitCode !== 0 || answer.httpCode === 0 || answer.httpCode >= 500;
   if (fault(flat)) throw new Error(`api.nuget.org did not answer for ${lookup.id} (curl exit ${String(flat.exitCode)}, HTTP ${String(flat.httpCode)})`);
-  if (flat.httpCode !== 200 || !versionsOf(flat.body).includes(lookup.version)) return false;
+  if (flat.httpCode !== 200) return false;
+  const versions = versionsOf(flat.body);
+  if (versions === null) throw new Error(`api.nuget.org answered for ${lookup.id} with a version list that does not parse`);
+  if (!versions.includes(lookup.version)) return false;
   const leaf = await get(sandbox, ref, `https://api.nuget.org/v3/registration5-gz-semver2/${id}/${lookup.version}.json`);
   if (fault(leaf)) throw new Error(`api.nuget.org did not answer for ${lookup.id} ${lookup.version} (curl exit ${String(leaf.exitCode)}, HTTP ${String(leaf.httpCode)})`);
   if (leaf.httpCode !== 200) return false;
+  let registration: unknown;
   try {
-    return (JSON.parse(leaf.body) as { listed?: unknown }).listed !== false;
+    registration = JSON.parse(leaf.body);
   } catch {
-    return false;
+    registration = null;
   }
+  if (typeof registration !== "object" || registration === null) throw new Error(`api.nuget.org answered for ${lookup.id} ${lookup.version} with a registration leaf that does not parse`);
+  return (registration as { listed?: unknown }).listed !== false;
 };
 
 const hostOf = (url: string): string | null => {
@@ -241,7 +263,8 @@ const hostOf = (url: string): string | null => {
  * DI-21.226. One package on the mirror: the flat container index, then a one-byte download of
  * the exact version, because the download redirects to another host and the index alone passes
  * where the file fails. A null request checks the index only. A request that is not exact checks
- * the lowest version the index lists at or above it, which is the one restore takes.
+ * the lowest version the index lists at or above it, which is the one restore takes. Only a 2xx
+ * whose body is a version list is an index: a redirect or a body that does not parse is not.
  */
 const onMirror = async (
   input: NugetPrecheckInput,
@@ -254,8 +277,9 @@ const onMirror = async (
   const indexStatus = mirrorStatusOf(index);
   const answer = (status: MirrorStatus, detail: string | null, version: string | null = requested?.version ?? null) => ({ status, detail, version });
   if (indexStatus !== "mirrored") return answer(indexStatus, indexStatus === "unreachable" ? `HTTP ${String(index.httpCode)}, curl exit ${String(index.exitCode)}` : null);
-  if (requested === null) return answer("mirrored", null);
-  const listed = versionsOf(index.body);
+  const listed = index.httpCode < 300 ? versionsOf(index.body) : null;
+  if (listed === null) return answer("unreachable", `HTTP ${String(index.httpCode)}, the package index did not read`);
+  if (requested === null) return answer(listed.length > 0 ? "mirrored" : "version_missing", null);
   const version = requested.exact ? (listed.includes(requested.version) ? requested.version : null) : lowestAccepted(listed, requested);
   if (version === null) return answer("version_missing", null);
   const file = `${base}/${version}/${id.toLowerCase()}.${version}.nupkg`;
@@ -453,10 +477,10 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
   const coverage = unrestored === 0 ? null : `Factoree restored the first ${String(targets.length)} of ${String(allTargets.length)} solutions and projects, so ${String(unrestored)} went unchecked.`;
 
   const handled = new Set<string>();
-  const emptied = await input.sandbox.exec(input.ref, { file: "rm", args: ["-rf", RESTORE_CACHE], cwd: "/" });
-  if (emptied.exitCode !== 0) return fail(`the restore cache ${RESTORE_CACHE} could not be emptied (exit ${String(emptied.exitCode)}). Run the setup again.`);
   for (let round = 1; round <= NUGET_RESTORE_ROUNDS && targets.length > 0; round += 1) {
     report.restore.rounds = round;
+    const emptied = await input.sandbox.exec(input.ref, { file: "rm", args: ["-rf", RESTORE_CACHE], cwd: "/" });
+    if (emptied.exitCode !== 0) return fail(`the restore cache ${RESTORE_CACHE} could not be emptied (exit ${String(emptied.exitCode)}). Run the setup again.`);
     const restore = await input.sandbox.exec(input.ref, { file: "sh", args: ["-c", RESTORE_SCRIPT, "sh", ...targets], cwd: input.repositoryPath, timeoutMs: RESTORE_TIMEOUT_MS });
     const output = `${restore.stdout}\n${restore.stderr}`;
     if (restore.exitCode === NO_SDK_EXIT) {
@@ -469,7 +493,10 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
       report.restore = { outcome: "failed", rounds: round, detail: failureExcerpt(output) };
       return fail(checkCredential() ?? `the restore could not load the service index ${unloaded.join(", ")} (NU1301): ${mirrorStatusText("unreachable")}.`);
     }
-    const failures = restoreFailuresOf(output);
+    // DI-21.228. NU1100 is package evidence only for an id the repository's own mapping sends to
+    // the private feed alone: the generated file routes it nowhere until the mirror has it. Any
+    // other NU1100 fails the committed config too.
+    const failures = restoreFailuresOf(output).filter((failure) => failure.code !== "NU1100" || pinnedToPrivateFeed(configs, feeds, failure.id));
     if (failures.length === 0) {
       // DI-21.228. A restore that fails for a reason other than a missing package is no feed
       // fault. The setup agent sees the same failure and repairs it from `.factoree/`.
@@ -493,26 +520,37 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
     for (const failure of fresh) {
       const version = failure.version === null ? null : normalizeNugetVersion(failure.version);
       handled.add(failure.request);
-      const assets =
-        failure.project === null
-          ? null
-          : (await input.sandbox.exec(input.ref, { file: "head", args: ["-c", String(ASSETS_READ_LIMIT), `${posix.dirname(failure.project)}/obj/project.assets.json`], cwd: input.repositoryPath })).stdout;
-      const parents = assets === null ? null : parentChainOf(assets, failure.id);
       const upper = failure.maximum === undefined ? null : normalizeNugetVersion(failure.maximum.version);
       const maximum = upper === null ? {} : { maximum: { version: upper, inclusive: failure.maximum?.inclusive === true } };
-      const requested = version === null ? (assets === null ? null : requestedVersionOf(assets, failure.id)) : { version, exact: failure.exact, ...maximum };
-      const result = await onMirror(input, NUGET_MIRROR_OWNER, failure.id, requested);
-      const project = failure.project === null ? [] : [failure.project.startsWith(`${input.repositoryPath}/`) ? failure.project.slice(input.repositoryPath.length + 1) : failure.project];
-      report.packages.push({
-        id: failure.id,
-        version: result.version ?? "(any)",
-        projects: project,
-        ...(parents === null ? {} : { parents }),
-        status: result.status,
-        detail: result.status === "mirrored" ? "found by the restore, and on the mirror" : mirrorStatusText(result.status, result.detail),
-      });
-      if (result.status === "mirrored" && ![...mirroredIds].some((id) => id.toLowerCase() === failure.id.toLowerCase())) mirroredIds.add(failure.id);
-      if (result.status !== "mirrored") failing += 1;
+      // NU1101 names no version, so each project's assets file gives its own. Projects that ask
+      // for the same version share one lookup, and the report names each of them.
+      const asks = new Map<string, { requested: RequestedVersion | null; projects: string[]; parents: string[] | null }>();
+      for (const project of failure.projects.length === 0 ? [null] : failure.projects) {
+        const assets =
+          project === null
+            ? null
+            : (await input.sandbox.exec(input.ref, { file: "head", args: ["-c", String(ASSETS_READ_LIMIT), `${posix.dirname(project)}/obj/project.assets.json`], cwd: input.repositoryPath })).stdout;
+        const parents = assets === null ? null : parentChainOf(assets, failure.id);
+        const requested = version === null ? (assets === null ? null : requestedVersionOf(assets, failure.id)) : { version, exact: failure.exact, ...maximum };
+        const key = requested === null ? "" : `${requested.version} ${String(requested.exact)} ${requested.maximum?.version ?? ""} ${String(requested.maximum?.inclusive ?? "")}`;
+        const ask = asks.get(key) ?? { requested, projects: [], parents: null };
+        if (project !== null) ask.projects.push(project.startsWith(`${input.repositoryPath}/`) ? project.slice(input.repositoryPath.length + 1) : project);
+        ask.parents ??= parents;
+        asks.set(key, ask);
+      }
+      for (const ask of asks.values()) {
+        const result = await onMirror(input, NUGET_MIRROR_OWNER, failure.id, ask.requested);
+        report.packages.push({
+          id: failure.id,
+          version: result.version ?? "(any)",
+          projects: ask.projects,
+          ...(ask.parents === null ? {} : { parents: ask.parents }),
+          status: result.status,
+          detail: result.status === "mirrored" ? "found by the restore, and on the mirror" : mirrorStatusText(result.status, result.detail),
+        });
+        if (result.status === "mirrored" && ![...mirroredIds].some((id) => id.toLowerCase() === failure.id.toLowerCase())) mirroredIds.add(failure.id);
+        if (result.status !== "mirrored") failing += 1;
+      }
     }
     if (failing > 0) {
       report.restore = { outcome: "failed", rounds: round, detail: failureExcerpt(output) };

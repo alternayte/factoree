@@ -290,8 +290,10 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
       return parent === null ? [] : [{ path: parent, element }];
     });
   // Each parent file applies where its <Import> stands: the importing file's content before the
-  // import comes first, and its content after the import overrides the parent.
-  const partsOf = (path: string, name: string, seen: readonly string[]): MsbuildPart[] => {
+  // import comes first, and its content after the import overrides the parent. MSBuild applies a
+  // file once per evaluation and skips a later import of it (MSB4011), so `applied` holds every
+  // file of the chain so far, not only the files of the current path.
+  const partsOf = (path: string, name: string, applied: Set<string>): MsbuildPart[] => {
     const document = documentOf(path);
     const root = childrenNamed(document, "Project")[0] ?? document;
     const slice = (children: XmlElement[]): MsbuildPart => ({ path, document: { ...root, children } });
@@ -299,8 +301,9 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     const parts: MsbuildPart[] = [];
     let start = 0;
     for (const parent of parentImportsOf(path, name)) {
-      if (seen.includes(parent.path)) continue;
-      const parentParts = partsOf(parent.path, name, [...seen, parent.path]);
+      if (applied.has(parent.path)) continue;
+      applied.add(parent.path);
+      const parentParts = partsOf(parent.path, name, applied);
       const at = root.children.findIndex((child) => child === parent.element || descendantsNamed(child, "Import").includes(parent.element));
       if (at < 0) outside.push(...parentParts);
       else if (at < start) parts.push(...parentParts);
@@ -313,7 +316,7 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
   };
   const above = (path: string, name: string): MsbuildPart[] => {
     const nearest = nearestIn(foldersAbove(path).reverse(), name);
-    return nearest === null ? [] : partsOf(nearest, name, [nearest]);
+    return nearest === null ? [] : partsOf(nearest, name, new Set([nearest]));
   };
 
   const found: NugetPackageReference[] = [];
@@ -346,11 +349,13 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
       }
     }
 
-    // An unconditional PackageVersion replaces the versions of its id, and a conditional one adds one.
+    // An unconditional PackageVersion replaces the versions of its id, and a conditional one adds
+    // one. An unconditional Remove drops what came before it, and a conditional one keeps it.
     const central = new Map<string, Array<{ version: string | null; condition: string | null }>>();
     for (const { document } of packageProps) {
       for (const { element, group } of itemsOf(document, "PackageVersion")) {
         const condition = conditionOf(element, group);
+        if (condition === null) for (const id of idsOf(attributeOf(element, "Remove"))) central.delete(id.toLowerCase());
         for (const id of idsOf(attributeOf(element, "Include") ?? attributeOf(element, "Update"))) {
           const entry = { version: valueOf(element, "Version"), condition };
           central.set(id.toLowerCase(), condition === null ? [entry] : [...(central.get(id.toLowerCase()) ?? []), entry]);
@@ -374,7 +379,19 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
             versionOverride: versionOverride ?? entry.versionOverride,
             condition: condition ?? entry.condition,
           }));
-          pending.set(id.toLowerCase(), condition === null ? updated : [...existing, ...updated]);
+          // A conditional Update keeps each state it may skip. Equal states are one, so a chain of
+          // conditional updates grows the list by the states it adds and never doubles it.
+          const states = condition === null ? updated : [...existing, ...updated];
+          const keys = new Set<string>();
+          pending.set(
+            id.toLowerCase(),
+            states.filter((state) => {
+              const key = JSON.stringify([state.version, state.versionOverride, state.condition]);
+              if (keys.has(key)) return false;
+              keys.add(key);
+              return true;
+            }),
+          );
         }
         for (const id of idsOf(attributeOf(element, "Include"))) {
           const entry: PendingReference = { id, version: valueOf(element, "Version"), versionOverride: valueOf(element, "VersionOverride"), condition };

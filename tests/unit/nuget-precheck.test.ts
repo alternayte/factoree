@@ -467,6 +467,113 @@ describe("runNugetPrecheck", () => {
     expect(report.packages.find((entry) => entry.id === "Frontiers.Transitive")).toMatchObject({ version: "1.5.0", status: "version_missing" });
   });
 
+  it("empties the restore cache before every round, so a version an earlier round took from nuget.org is read again", async () => {
+    const { sandbox, rounds } = await run({
+      files: files({ "Hangfire.Pro.Redis": "2.8.20" }),
+      mirror: { "hangfire.pro.redis": ["2.8.20"], "hangfire.pro": ["2.3.2"] },
+      restore: (text) =>
+        text.includes('pattern="Hangfire.Pro" />')
+          ? { exitCode: 0, output: "Restore complete." }
+          : { exitCode: 1, output: `${PATH}/src/Api/Api.csproj : error NU1101: Unable to find package Hangfire.Pro. No packages exist with this id` },
+    });
+    expect(rounds()).toBe(2);
+    const steps = sandbox.commands
+      .map((command) => (command.file === "rm" && command.args.join(" ") === "-rf /tmp/factoree-nuget-precheck" ? "empty" : command.file === "sh" && (command.args[1] ?? "").includes("dotnet restore") ? "restore" : null))
+      .filter((step) => step !== null);
+    expect(steps).toEqual(["empty", "restore", "empty", "restore"]);
+  });
+
+  it("looks up each project's version of a NU1101 package and names every project", async () => {
+    const assetsOf = (range: string) =>
+      JSON.stringify({ targets: { "net8.0": { "Frontiers.Core/3.1.0": { dependencies: { Lib: range } } } }, project: { frameworks: { "net8.0": { dependencies: { "Frontiers.Core": {} } } } } });
+    const { report } = await run({
+      files: files({ "Frontiers.Core": "3.1.0" }),
+      mirror: { "frontiers.core": ["3.1.0"], lib: ["1.0.0"] },
+      restore: () => ({
+        exitCode: 1,
+        output: [
+          `${PATH}/src/Api/Api.csproj : error NU1101: Unable to find package Lib. No packages exist with this id`,
+          `${PATH}/src/Web/Web.csproj : error NU1101: Unable to find package Lib. No packages exist with this id`,
+          `${PATH}/src/Old/Old.csproj : error NU1101: Unable to find package Lib. No packages exist with this id`,
+        ].join("\n"),
+      }),
+      assets: { [`${PATH}/src/Api`]: assetsOf("[1.0.0]"), [`${PATH}/src/Web`]: assetsOf("[2.0.0]"), [`${PATH}/src/Old`]: assetsOf("[1.0.0]") },
+    });
+    expect(report.outcome).toBe("failed");
+    expect(report.packages.filter((entry) => entry.id === "Lib")).toMatchObject([
+      { version: "1.0.0", status: "mirrored", projects: ["src/Api/Api.csproj", "src/Old/Old.csproj"], parents: ["Frontiers.Core 3.1.0"] },
+      { version: "2.0.0", status: "version_missing", projects: ["src/Web/Web.csproj"] },
+    ]);
+    expect(report.failure).toContain("Lib 2.0.0 (src/Web/Web.csproj, through Frontiers.Core 3.1.0)");
+  });
+
+  it("looks up a NU1100 package the repository maps only to the private feed, and maps it", async () => {
+    const config = `<configuration><packageSources>
+      <clear />
+      <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+      <add key="frontiers" value="https://nuget.frontiersin.net/nuget" />
+    </packageSources><packageSourceMapping>
+      <packageSource key="nuget.org"><package pattern="Public.Parent" /></packageSource>
+      <packageSource key="frontiers"><package pattern="Frontiers.*" /></packageSource>
+    </packageSourceMapping></configuration>`;
+    const unrouted = (id: string) => `${PATH}/src/Api/Api.csproj : error NU1100: Unable to resolve '${id} (>= 1.0.0)' for 'net8.0'. PackageSourceMapping is enabled, the following source(s) were not considered: nuget.org.`;
+    const pinned = await run({
+      files: files({ "Public.Parent": "1.0.0" }, config),
+      nugetOrg: { "public.parent": { versions: ["1.0.0"] } },
+      mirror: { "frontiers.child": ["1.0.0"] },
+      restore: (text) => (text.includes('pattern="Frontiers.Child" />') ? { exitCode: 0, output: "Restore complete." } : { exitCode: 1, output: unrouted("Frontiers.Child") }),
+    });
+    expect(pinned.report.outcome).toBe("passed");
+    expect(pinned.rounds()).toBe(2);
+    expect(pinned.report.mirroredIds).toEqual(["Frontiers.Child"]);
+    expect(pinned.report.packages).toMatchObject([{ id: "Frontiers.Child", version: "1.0.0", status: "mirrored" }]);
+    expect(pinned.config).toContain('<package pattern="Frontiers.*" />');
+
+    const other = await run({
+      files: files({ "Public.Parent": "1.0.0" }, config),
+      nugetOrg: { "public.parent": { versions: ["1.0.0"] } },
+      restore: () => ({ exitCode: 1, output: unrouted("Other.Lib") }),
+    });
+    expect(other.report.outcome).toBe("passed");
+    expect(other.report.restore.outcome).toBe("failed");
+    expect(other.requests.some((url) => url.includes("other.lib"))).toBe(false);
+  });
+
+  it("fails an index-only lookup whose index answers a redirect instead of a version list", async () => {
+    const { report } = await run({
+      files: files({ "Frontiers.Core": "3.1.0" }),
+      mirror: { "frontiers.core": ["3.1.0"], "frontiers.transitive": ["1.0.0"] },
+      mirrorIndexAnswers: { "frontiers.transitive": "\n302" },
+      restore: () => ({ exitCode: 1, output: `${PATH}/src/Api/Api.csproj : error NU1101: Unable to find package Frontiers.Transitive. No packages exist with this id` }),
+    });
+    expect(report.outcome).toBe("failed");
+    expect(report.packages.find((entry) => entry.id === "Frontiers.Transitive")).toMatchObject({ version: "(any)", status: "unreachable" });
+  });
+
+  it("fails, and guesses no class, when nuget.org answers 200 with a body that does not parse", async () => {
+    const truncated = await run({ files: files({ Serilog: "3.1.1" }), nugetOrgAnswers: { "/v3-flatcontainer/serilog/index.json": '{"versions":["3.1.\n200' } });
+    expect(truncated.report.outcome).toBe("failed");
+    expect(truncated.report.failure).toContain("api.nuget.org answered for Serilog with a version list that does not parse");
+    expect(truncated.requests.some((url) => url.includes("nuget.pkg.github.com"))).toBe(false);
+    const leaf = await run({ files: files({ Serilog: "3.1.1" }), nugetOrg: PUBLIC, nugetOrgAnswers: { "/v3/registration5-gz-semver2/serilog/3.1.1.json": "<html>\n200" } });
+    expect(leaf.report.outcome).toBe("failed");
+    expect(leaf.report.failure).toContain("registration leaf that does not parse");
+  });
+
+  it("starts no nuget.org lookup after the first fault, and returns only once the running ones finish", async () => {
+    const ids = ["Pkg.A", "Pkg.B", "Pkg.C", "Pkg.D", "Pkg.E", "Pkg.F", "Pkg.G", "Pkg.H"];
+    const { report, requests } = await run({
+      files: files(Object.fromEntries(ids.map((id) => [id, "1.0.0"]))),
+      nugetOrg: Object.fromEntries(ids.map((id) => [id.toLowerCase(), { versions: ["1.0.0"] }])),
+      nugetOrgAnswers: { "/v3-flatcontainer/pkg.a/index.json": "\n503" },
+    });
+    const atReturn = requests.length;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(report.failure).toContain("api.nuget.org did not answer for Pkg.A");
+    expect(requests).toHaveLength(atReturn);
+    expect(requests.some((url) => /pkg\.(g|h)\//.test(url))).toBe(false);
+  });
+
   it("changes the key part when the mirrored packages change", async () => {
     const one = await run({ files: files({ "Frontiers.Core": "3.1.0" }), mirror: { "frontiers.core": ["3.1.0"] } });
     const two = await run({ files: files({ "Frontiers.Core": "3.1.0", "Hangfire.Pro": "1.8.6" }), mirror: { "frontiers.core": ["3.1.0"], "hangfire.pro": ["1.8.6"] } });

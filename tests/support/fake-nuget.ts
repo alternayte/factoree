@@ -13,6 +13,10 @@ export interface NugetWorld {
   nugetOrg?: Record<string, { versions: string[]; unlisted?: string[] }>;
   /** True to make every nuget.org request time out. */
   nugetOrgDown?: boolean;
+  /** The raw answer, body then `\n<status>`, of a nuget.org request by URL path. */
+  nugetOrgAnswers?: Record<string, string>;
+  /** The raw answer, body then `\n<status>`, of the mirror index of a lower-case id. */
+  mirrorIndexAnswers?: Record<string, string>;
   /** The mirror by lower-case id: its versions, or the HTTP status of every request for it. */
   mirror?: Record<string, string[] | number>;
   /** The HTTP status of every mirror request, when the token or the network fails them all. */
@@ -69,6 +73,8 @@ export const installNugetWorld = (sandbox: FakeSandbox, world: NugetWorld, repos
       const format = command.args[command.args.indexOf("-w") + 1] ?? "";
       if (url.hostname === "api.nuget.org") {
         if (world.nugetOrgDown === true) return answer("", 28, true);
+        const raw = world.nugetOrgAnswers?.[url.pathname];
+        if (raw !== undefined) return answer(raw);
         const flat = /^\/v3-flatcontainer\/([^/]+)\/index\.json$/.exec(url.pathname);
         if (flat !== null) {
           const entry = world.nugetOrg?.[flat[1]!];
@@ -89,6 +95,8 @@ export const installNugetWorld = (sandbox: FakeSandbox, world: NugetWorld, repos
         const entry = world.mirror?.[id];
         const status = world.mirrorStatus ?? (typeof entry === "number" ? entry : entry === undefined ? 404 : 200);
         if (status === 0) return answer("", 28, true);
+        const rawIndex = index === null ? undefined : world.mirrorIndexAnswers?.[id];
+        if (rawIndex !== undefined) return answer(rawIndex);
         if (index !== null) return answer(status === 200 ? `${JSON.stringify({ versions: entry })}\n200` : `\n${String(status)}`);
         if (download !== null) {
           const versions = Array.isArray(entry) ? entry : [];
