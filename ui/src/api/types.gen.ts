@@ -4793,6 +4793,7 @@ export type GetRetroSettingsResponses = {
       effort: string | null;
       costCapUsd: number;
     };
+    saved: boolean;
     nextRunAt: string | null;
     scheduleError: string | null;
     running: {
@@ -4877,6 +4878,7 @@ export type PutRetroSettingsResponses = {
       effort: string | null;
       costCapUsd: number;
     };
+    saved: boolean;
     nextRunAt: string | null;
     scheduleError: string | null;
     running: {
@@ -4952,6 +4954,7 @@ export type RetryRetroScheduleResponses = {
       effort: string | null;
       costCapUsd: number;
     };
+    saved: boolean;
     nextRunAt: string | null;
     scheduleError: string | null;
     running: {
@@ -5039,6 +5042,7 @@ export type ListRetrosData = {
   path?: never;
   query: {
     linearWorkspaceId: string;
+    cursor?: string;
   };
   url: "/admin/retros";
 };
@@ -5072,6 +5076,7 @@ export type ListRetrosResponses = {
       startedAt: string;
       endedAt: string | null;
     }>;
+    nextCursor: string | null;
   };
 };
 
@@ -5119,6 +5124,7 @@ export type GetRetroResponses = {
       kind: string;
       productId: string | null;
       message: string;
+      at: string | null;
     }>;
     sessions: Array<{
       productId: string;
@@ -5153,6 +5159,7 @@ export type GetRetroResponses = {
       repositories: Array<string>;
       status: "proposed" | "created" | "dismissed" | "already_proposed";
       duplicateOfId: string | null;
+      duplicateOfRetroId: string | null;
       linearIssueIdentifier: string | null;
       linearIssueUrl: string | null;
       decidedBy: string | null;
@@ -5271,6 +5278,7 @@ export type CreateRetroFindingIssueResponses = {
     repositories: Array<string>;
     status: "proposed" | "created" | "dismissed" | "already_proposed";
     duplicateOfId: string | null;
+    duplicateOfRetroId: string | null;
     linearIssueIdentifier: string | null;
     linearIssueUrl: string | null;
     decidedBy: string | null;
@@ -5332,6 +5340,7 @@ export type DismissRetroFindingResponses = {
     repositories: Array<string>;
     status: "proposed" | "created" | "dismissed" | "already_proposed";
     duplicateOfId: string | null;
+    duplicateOfRetroId: string | null;
     linearIssueIdentifier: string | null;
     linearIssueUrl: string | null;
     decidedBy: string | null;

@@ -1775,6 +1775,44 @@ export const listRetrosOptions = (options: Options<ListRetrosData>) =>
     queryKey: listRetrosQueryKey(options),
   });
 
+export const listRetrosInfiniteQueryKey = (options: Options<ListRetrosData>): QueryKey<Options<ListRetrosData>> =>
+  createQueryKey("listRetros", options, true);
+
+export const listRetrosInfiniteOptions = (options: Options<ListRetrosData>) => {
+  const opts = infiniteQueryOptions<
+    ListRetrosResponse,
+    ListRetrosError,
+    InfiniteData<ListRetrosResponse>,
+    QueryKey<Options<ListRetrosData>>,
+    string | Pick<QueryKey<Options<ListRetrosData>>[0], "body" | "headers" | "path" | "query">
+  >(
+    // @ts-ignore
+    {
+      queryFn: async ({ pageParam, queryKey, signal }) => {
+        // @ts-ignore
+        const page: Pick<QueryKey<Options<ListRetrosData>>[0], "body" | "headers" | "path" | "query"> =
+          typeof pageParam === "object"
+            ? pageParam
+            : {
+                query: {
+                  cursor: pageParam,
+                },
+              };
+        const params = createInfiniteParams(queryKey, page);
+        const { data } = await listRetros({
+          ...options,
+          ...params,
+          signal,
+          throwOnError: true,
+        });
+        return data;
+      },
+      queryKey: listRetrosInfiniteQueryKey(options),
+    },
+  );
+  return opts as Omit<typeof opts, "initialData">;
+};
+
 export const getRetroQueryKey = (options: Options<GetRetroData>) => createQueryKey("getRetro", options);
 
 export const getRetroOptions = (options: Options<GetRetroData>) =>

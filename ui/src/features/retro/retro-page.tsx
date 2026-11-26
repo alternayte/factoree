@@ -1,14 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useId, useState } from "react";
 import {
   getRetroSettingsOptions,
   getRetroSettingsQueryKey,
   listProductsOptions,
-  listRetrosOptions,
-  listRetrosQueryKey,
 } from "@/api/@tanstack/react-query.gen";
-import { putRetroSettings, retryRetroSchedule, runRetroNow } from "@/api/sdk.gen";
+import { listRetros, putRetroSettings, retryRetroSchedule, runRetroNow } from "@/api/sdk.gen";
 import type { GetRetroSettingsResponse } from "@/api/types.gen";
 import { Button } from "@/components/button";
 import { Field, Input, SavedNote, Select, Switch } from "@/components/form";
@@ -60,12 +58,12 @@ type SettingsForm = {
 };
 
 /**
- * The stored settings as a form. A tenant that never saved has the zone UTC and the schedule off:
+ * The stored settings as a form. A workspace that never saved shows the defaults:
  * the zone then fills in from the browser, and the operator can change it.
  */
 function formOf(view: View): SettingsForm {
   const s = view.settings;
-  const firstSetup = s.schedule === "off" && s.timeZone === "UTC" && view.last === null;
+  const firstSetup = !view.saved;
   return {
     schedule: s.schedule,
     weekday: s.weekday,
@@ -90,11 +88,16 @@ export function RetroPage({ ws }: { ws?: string }) {
     refetchInterval: (q) => (q.state.data?.running ? RUNNING_POLL_MS : false),
   });
   const running = settings.data?.running ?? null;
-  const retros = useQuery({
-    ...listRetrosOptions(query),
+  const retros = useInfiniteQuery({
+    queryKey: ["retros", linearWorkspaceId],
     enabled: Boolean(workspace),
     refetchInterval: running ? RUNNING_POLL_MS : false,
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }) =>
+      (await listRetros({ query: { linearWorkspaceId, ...(pageParam ? { cursor: pageParam } : {}) }, throwOnError: true })).data,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
+  const retroItems = retros.data?.pages.flatMap((page) => page.retros) ?? [];
 
   if (!workspace) {
     return (
@@ -135,13 +138,20 @@ export function RetroPage({ ws }: { ws?: string }) {
       <Section title="Retros" className="mt-4" description="Newest first.">
         {retros.isPending ? <SkeletonRows label="Loading the retros" /> : null}
         <ErrorAlert error={retros.error} title="The retros did not load" />
-        {retros.data?.retros.length === 0 ? <Empty>No retro ran yet.</Empty> : null}
-        {retros.data && retros.data.retros.length > 0 ? (
+        {retros.data && retroItems.length === 0 ? <Empty>No retro ran yet.</Empty> : null}
+        {retroItems.length > 0 ? (
           <ul className="stagger -my-2 divide-y divide-hairline">
-            {retros.data.retros.map((retro) => (
+            {retroItems.map((retro) => (
               <RetroRow key={retro.id} retro={retro} linearWorkspaceId={linearWorkspaceId} />
             ))}
           </ul>
+        ) : null}
+        {retros.hasNextPage ? (
+          <div className="mt-4">
+            <Button variant="secondary" onClick={() => void retros.fetchNextPage()} disabled={retros.isFetchingNextPage}>
+              {retros.isFetchingNextPage ? "Loading…" : "Load older retros"}
+            </Button>
+          </div>
         ) : null}
       </Section>
     </>
@@ -407,7 +417,7 @@ function StatusSection({ view, linearWorkspaceId, canEdit }: { view: View; linea
   const settingsKey = getRetroSettingsQueryKey({ query: { linearWorkspaceId } });
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: settingsKey });
-    void qc.invalidateQueries({ queryKey: listRetrosQueryKey({ query: { linearWorkspaceId } }) });
+    void qc.invalidateQueries({ queryKey: ["retros", linearWorkspaceId] });
   };
   const run = useMutation({
     mutationFn: async () => (await runRetroNow({ body: { linearWorkspaceId }, throwOnError: true })).data,
