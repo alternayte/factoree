@@ -1,10 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { getRunOptions, getRunQueryKey, listRunEventsOptions } from "@/api/@tanstack/react-query.gen";
+import {
+  getRunOptions,
+  getRunQueryKey,
+  listRunArtifactsOptions,
+  listRunEventsOptions,
+} from "@/api/@tanstack/react-query.gen";
 import { Diagnosis, EventList } from "./run-events";
 import { publishRunDraft, stopRun } from "@/api/sdk.gen";
-import type { GetRunResponse } from "@/api/types.gen";
+import type { GetRunResponse, ListRunArtifactsResponse } from "@/api/types.gen";
 import { Button } from "@/components/button";
 import { Confirm } from "@/components/confirm";
 import {
@@ -23,6 +28,7 @@ import {
 import { useMe } from "@/lib/session";
 import { formatDate } from "@/lib/utils";
 import { pickWorkspace } from "@/lib/workspace";
+import { formatBytes } from "@/features/retro/retro-format";
 import {
   formatCost,
   formatDuration,
@@ -334,6 +340,13 @@ function RunDetail({
           <Findings run={run} />
         </Section>
       </div>
+      <Section
+        title="Artifacts"
+        description="Each stored artifact of the run: its kind, its store, its size and its SHA-256."
+        className="mt-4"
+      >
+        <RunArtifacts runId={run.id} workspaceId={workspaceId} />
+      </Section>
       {run.skills.length > 0 || run.skillProposals.length > 0 ? (
         <Section title="Skills" className="mt-4">
           <Skills run={run} />
@@ -424,6 +437,55 @@ export function RunEvents({ runId, workspaceId }: { runId: string; workspaceId: 
   if (events.isPending) return <Skeleton className="h-16" />;
   if (events.isError) return <ErrorAlert error={events.error} title="The events could not be read" />;
   return <EventList events={events.data.items} />;
+}
+
+type Artifact = ListRunArtifactsResponse["items"][number];
+
+const storeLabel: Record<Artifact["store"], string> = { s3: "object store", linear: "Linear", filesystem: "filesystem" };
+
+/**
+ * docs/specs/s3-object-store.md. The stored artifacts of the run. A retention delete keeps the row,
+ * so a deleted artifact shows when it went and has no link.
+ */
+function RunArtifacts({ runId, workspaceId }: { runId: string; workspaceId: string }) {
+  const artifacts = useQuery(listRunArtifactsOptions({ path: { id: runId }, query: { linearWorkspaceId: workspaceId } }));
+  if (artifacts.isPending) return <Skeleton className="h-16" />;
+  if (artifacts.isError) return <ErrorAlert error={artifacts.error} title="The artifacts could not be read" />;
+  if (artifacts.data.items.length === 0) return <Empty>No stored artifact.</Empty>;
+  return (
+    <ul className="flex flex-col divide-y divide-hairline">
+      {artifacts.data.items.map((artifact) => (
+        <li key={artifact.id} className="flex min-w-0 flex-col gap-1 py-2.5 text-sm first:pt-0 last:pb-0">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-medium">{artifact.kind}</span>
+            <Badge>{storeLabel[artifact.store]}</Badge>
+            {artifact.bytes !== null ? (
+              <span className="font-mono text-xs tabular-nums text-mute">{formatBytes(artifact.bytes)}</span>
+            ) : null}
+            <span className="font-mono text-xs text-mute" title={artifact.sha256}>
+              {artifact.sha256.slice(0, 12)}
+            </span>
+            <span className="text-xs text-mute">{formatDate(artifact.createdAt)}</span>
+          </div>
+          {artifact.deletedAt !== null ? (
+            <p className="text-mute">
+              {artifact.deletedAfterDays === null ? "Deleted" : `Deleted after ${artifact.deletedAfterDays} days`}
+            </p>
+          ) : (
+            <a
+              className="link block min-w-0 truncate font-mono text-xs"
+              href={artifact.link}
+              target="_blank"
+              rel="noreferrer"
+              title={artifact.link}
+            >
+              {artifact.link}
+            </a>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function StageTimeline({ run }: { run: Run }) {

@@ -53,6 +53,7 @@ import {
   LIMITS,
   PRODUCT_GOAL_MAX_BYTES,
   RETRO_RETENTION,
+  EVIDENCE_RETENTION,
   type Product,
   type ProductForm,
 } from "./product-form";
@@ -524,6 +525,26 @@ function ProductEditor({
                     disabled={disabled}
                     value={form.retroRetentionDays}
                     onChange={(e) => set("retroRetentionDays", e.target.value)}
+                  />
+                )}
+              </Field>
+              {/* docs/specs/s3-object-store.md. Empty keeps the evidence. */}
+              <Field
+                label="Evidence retention (days)"
+                hint="Optional. Deletes video and traces older than this from the object store. Screenshots, logs and proof pack documents stay. Empty keeps everything."
+                className="max-w-80"
+              >
+                {(props) => (
+                  <Input
+                    {...props}
+                    type="number"
+                    min={EVIDENCE_RETENTION.min}
+                    max={EVIDENCE_RETENTION.max}
+                    step={1}
+                    disabled={disabled}
+                    placeholder="keep"
+                    value={form.evidenceRetentionDays}
+                    onChange={(e) => set("evidenceRetentionDays", e.target.value)}
                   />
                 )}
               </Field>
