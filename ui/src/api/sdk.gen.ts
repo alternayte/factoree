@@ -104,6 +104,9 @@ import type {
   GetSignalResultData,
   GetSignalResultErrors,
   GetSignalResultResponses,
+  GetWebResultData,
+  GetWebResultErrors,
+  GetWebResultResponses,
   ListApiKeysData,
   ListApiKeysResponses,
   ListContextSourcesData,
@@ -1594,6 +1597,26 @@ export const getSignalResult = <ThrowOnError extends boolean = false>(
       },
     ],
     url: "/admin/retro/signal-results/{id}",
+    ...options,
+  });
+
+export const getWebResult = <ThrowOnError extends boolean = false>(
+  options: Options<GetWebResultData, ThrowOnError>,
+): RequestResult<GetWebResultResponses, GetWebResultErrors, ThrowOnError> =>
+  (options.client ?? client).get<GetWebResultResponses, GetWebResultErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/retro/web-results/{id}",
     ...options,
   });
 

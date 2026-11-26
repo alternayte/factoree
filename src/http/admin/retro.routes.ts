@@ -11,7 +11,7 @@ import { FIRST_RETRO_WINDOW_MS } from "~/domain/retro/retro-export.js";
 import { RETRO_SCHEDULES, retroSettingsInputSchema, retroSettingsProblems, type RetroSettings } from "~/domain/retro/retro-settings.js";
 import { fetchSignals } from "~/domain/retro/signal-fetch.js";
 import { SIGNAL_SOURCE_KINDS, signalSourceInputSchema, type SignalSourceRecord } from "~/domain/retro/signal-source.js";
-import type { PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore, RetroRecord } from "~/persistence/prisma/retro.prisma.js";
+import type { PrismaRetroGatewayStore, PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore, RetroRecord } from "~/persistence/prisma/retro.prisma.js";
 import type { RetroScheduler } from "~/temporal/retro-schedule.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import type { Logger } from "~/telemetry/logger.js";
@@ -80,6 +80,7 @@ const findingSchema = z.object({
   description: z.string(),
   runIds: z.array(z.string()),
   signalResultIds: z.array(z.string()),
+  webResultIds: z.array(z.string()),
   repositories: z.array(z.string()),
   status: z.enum(RETRO_FINDING_STATUSES),
   duplicateOfId: z.string().nullable(),
@@ -112,8 +113,45 @@ const retroDetailSchema = retroSummarySchema.extend({
   ),
   findings: z.array(findingSchema),
   signalResults: z.array(
-    z.object({ id: z.string(), productId: z.string(), sourceName: z.string(), sourceKind: z.enum(SIGNAL_SOURCE_KINDS), queryName: z.string(), bytes: z.number() }),
+    z.object({
+      id: z.string(),
+      productId: z.string(),
+      sourceName: z.string(),
+      sourceKind: z.enum(SIGNAL_SOURCE_KINDS),
+      queryName: z.string(),
+      bytes: z.number(),
+      /** docs/specs/retro-web-research.md. True for a live call of a ticked tool. */
+      live: z.boolean(),
+    }),
   ),
+  /** docs/specs/retro-web-research.md. The searches and pages of the retro, without their text. */
+  webResults: z.array(
+    z.object({
+      id: z.string(),
+      productId: z.string(),
+      kind: z.enum(["search", "page"]),
+      query: z.string().nullable(),
+      url: z.string(),
+      title: z.string().nullable(),
+      publishedDate: z.string().nullable(),
+      bytes: z.number(),
+    }),
+  ),
+});
+
+const webResultSchema = z.object({
+  id: z.string(),
+  retroId: z.string(),
+  productId: z.string(),
+  kind: z.enum(["search", "page"]),
+  query: z.string().nullable(),
+  url: z.string(),
+  title: z.string().nullable(),
+  publishedDate: z.string().nullable(),
+  content: z.string(),
+  sha256: z.string(),
+  bytes: z.number(),
+  createdAt: z.string(),
 });
 
 const signalResultSchema = z.object({
@@ -126,6 +164,9 @@ const signalResultSchema = z.object({
   content: z.string(),
   sha256: z.string(),
   bytes: z.number(),
+  live: z.boolean(),
+  /** The redacted arguments of a live call, or null for an operator query. */
+  arguments: z.record(z.string(), z.unknown()).nullable(),
   createdAt: z.string(),
 });
 
@@ -138,12 +179,16 @@ const signalSourceSchema = z.object({
   secretName: z.string().nullable(),
   enabled: z.boolean(),
   queries: z.array(z.object({ name: z.string(), tool: z.string(), arguments: z.record(z.string(), z.unknown()), maxBytes: z.number() })),
+  tickedTools: z.array(z.string()),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 
 const signalTestSchema = z.object({
   results: z.array(z.object({ queryName: z.string(), ok: z.boolean(), bytes: z.number().nullable(), preview: z.string().nullable(), reason: z.string().nullable() })),
+  /** docs/specs/retro-web-research.md. The tools the server lists, or null when the list failed. readOnly is the server's hint. */
+  tools: z.array(z.object({ name: z.string(), description: z.string().nullable(), readOnly: z.boolean() })).nullable(),
+  toolsError: z.string().nullable(),
 });
 
 const RETRO_PAGE_SIZE = 25;
@@ -178,6 +223,7 @@ const toSignalSource = (source: SignalSourceRecord) => ({
   secretName: source.secretName,
   enabled: source.enabled,
   queries: source.queries,
+  tickedTools: source.tickedTools,
   createdAt: source.createdAt.toISOString(),
   updatedAt: source.updatedAt.toISOString(),
 });
@@ -191,6 +237,7 @@ export interface RetroRouteDependencies {
   retroSettings: Pick<PrismaRetroSettingsStore, "read" | "write" | "saved">;
   retros: PrismaRetroStore;
   signalSources: PrismaSignalSourceStore;
+  webResults: Pick<PrismaRetroGatewayStore, "webResult">;
   /** Null on a server with no Temporal client: the schedule and Run now answer 503. */
   scheduler: RetroScheduler | null;
   linearIssues: (tenantId: string) => Promise<Pick<LinearIssueCreator, "createIssue">>;
@@ -406,6 +453,35 @@ export const registerRetroRoutes = (app: FastifyInstance, dependencies: RetroRou
         content: result.content,
         sha256: result.sha256,
         bytes: result.bytes,
+        live: result.live,
+        arguments: result.arguments !== null && typeof result.arguments === "object" && !Array.isArray(result.arguments) ? (result.arguments as Record<string, unknown>) : null,
+        createdAt: result.createdAt.toISOString(),
+      });
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { linearWorkspaceId: string } }>(
+    "/admin/retro/web-results/:id",
+    {
+      schema: { tags: TAGS, operationId: "getWebResult", security: SESSION_SECURITY, params: idParams, querystring: workspaceQuery, response: { 200: schemaOf(webResultSchema), 404: errorSchema } },
+    },
+    async (request, reply) => {
+      const tenant = await tenantOf(request.query.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const result = await dependencies.webResults.webResult(tenant.id, request.params.id);
+      if (!result) return reply.code(404).send({ error: "web result not found" });
+      return reply.send({
+        id: result.id,
+        retroId: result.retroId,
+        productId: result.productId,
+        kind: result.kind === "page" ? "page" : "search",
+        query: result.query,
+        url: result.url,
+        title: result.title,
+        publishedDate: result.publishedDate,
+        content: result.content,
+        sha256: result.sha256,
+        bytes: result.bytes,
         createdAt: result.createdAt.toISOString(),
       });
     },
@@ -437,6 +513,7 @@ export const registerRetroRoutes = (app: FastifyInstance, dependencies: RetroRou
       const text = findingIssueText(finding, {
         runUrl: (runId) => `${base}/runs/${runId}`,
         signalResultUrl: (id) => `${base}/retro/signal-results/${id}`,
+        webResultUrl: (id) => `${base}/retro/web-results/${id}`,
         retroUrl: `${base}/retro/${finding.retroId}`,
       });
       let issue;
@@ -610,7 +687,21 @@ export const registerRetroRoutes = (app: FastifyInstance, dependencies: RetroRou
         },
         redactor: { redactText: (text) => dependencies.redactor.redactText(local.redactText(text)) },
       });
+      // docs/specs/retro-web-research.md. The tool list, so the operator can tick tools.
+      let tools: Array<{ name: string; description: string | null; readOnly: boolean }> | null = null;
+      let toolsError: string | null = null;
+      try {
+        const token = input.secretName === null ? null : await dependencies.secrets.get(found.tenant.id, found.product.id, input.secretName);
+        if (token !== null) local.addSecret(token);
+        const listed = await dependencies.mcpTools(input.endpoint, token).listTools?.();
+        tools = listed === undefined ? null : listed.map((tool) => ({ name: tool.name, description: tool.description === null ? null : tool.description.slice(0, 500), readOnly: tool.readOnly }));
+        if (listed === undefined) toolsError = "this server lists no tools";
+      } catch (error) {
+        toolsError = dependencies.redactor.redactText(local.redactText(error instanceof Error ? error.message : String(error))).slice(0, 500);
+      }
       return reply.send({
+        tools,
+        toolsError,
         results: input.queries.map((query) => {
           const result = fetched.results.find((entry) => entry.queryName === query.name);
           if (result !== undefined) return { queryName: query.name, ok: true, bytes: result.bytes, preview: result.content.slice(0, 500), reason: null };

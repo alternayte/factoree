@@ -123,6 +123,9 @@ export const registerSettingsRoutes = (app: FastifyInstance, dependencies: Setti
       const locked = lockedBucketFields(dependencies.transcriptBucketEnv ?? {});
       const lockedChange = locked.find((field) => body.data.transcriptBucket?.[field] !== undefined);
       if (lockedChange !== undefined) return reply.code(422).send({ error: `an env var sets the transcript bucket ${lockedChange}, so it is locked` });
+      if (dependencies.transcriptBucketEnv?.FACTOREE_WEB_SEARCH_EXA_API_KEY !== undefined && body.data.webSearch?.exaApiKey !== undefined) {
+        return reply.code(422).send({ error: "FACTOREE_WEB_SEARCH_EXA_API_KEY sets the Exa key, so it is locked" });
+      }
       const updated = await dependencies.settings.update(body.data);
       if (templateOf(current.sandbox) !== templateOf(updated.sandbox)) await dependencies.buildAhead?.afterTemplateChange();
       return viewInstallSettings(updated, dependencies.publicUrl, dependencies.localSandboxAllowed, dependencies.transcriptBucketEnv);

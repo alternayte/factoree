@@ -102,6 +102,9 @@ It is a Temporal worker and a Fastify API in TypeScript on Node, with PostgreSQL
 - signal source: a product's MCP server for production errors or analytics, with the queries that the operator set, which Factoree runs before a retro. Avoid: data source, telemetry source.
 - signal result: the redacted output of one signal source query in one retro, which a finding cites by id. Avoid: signal item, signal output.
 - idea finding: a retro finding that proposes a product change from analytics, created in Linear but never delegated by Factoree. Avoid: feature suggestion, product idea.
+- retro gateway: the Factoree MCP server that a retro session calls for web_search, fetch_page and the ticked tools, with a token for that session. Avoid: research proxy, tool proxy, MCP bridge.
+- web result: one stored search result or fetched page of a retro session, with an id, that a finding cites. Avoid: web source, search item, web evidence.
+- ticked tool: a signal source tool that the operator allows the retro agent to call live through the retro gateway. Avoid: allowed tool, live query, enabled tool.
 - kept transcript: the redacted, gzipped full output and tool inputs of one agent session, stored only when the product turns it on. Avoid: session log, trace, full log.
 - review app: a GitHub App, other than Factoree, that submitted a review on a Factoree pull request. Its check on the head is its verdict, and its unresolved threads and annotations are its findings. Avoid: PR reviewer, PR bot, review bot.
 - PR follow-up run: a follow-up run that targets an existing PR branch, started by review app findings, a failed CI check, a human decision on the PR or in Linear, or a base conflict, that pushes a new verified commit or answers. Avoid: PR repair, autofix, PR fix.

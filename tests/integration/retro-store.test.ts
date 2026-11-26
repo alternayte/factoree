@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PrismaRetroStore, PrismaTranscriptStore } from "~/persistence/prisma/retro.prisma.js";
+import { PrismaRetroGatewayStore, PrismaRetroStore, PrismaTranscriptStore } from "~/persistence/prisma/retro.prisma.js";
 import { withDatabase, seedTenantProjectAndRun } from "./support/database.js";
 
 /** docs/specs/retro-agent.md. The retro store: the run window, title dedupe and retention. */
@@ -28,7 +28,7 @@ describe("retro store", () => {
       const store = new PrismaRetroStore(prisma);
       const start = (workflowId: string) =>
         store.start({ tenantId, workflowId, trigger: "manual", windowStart: null, windowEnd: new Date(), promptVersion: "retro@1", productIds: [productId] });
-      const finding = { kind: "factory" as const, title: "The seed  step times out", description: "d", runIds: [], signalResultIds: [], repositories: [] };
+      const finding = { kind: "factory" as const, title: "The seed  step times out", description: "d", runIds: [], signalResultIds: [], webResultIds: [], repositories: [] };
       const first = await start("retro-a");
       await store.storeFindings({ tenantId, retroId: first.id, productId, findings: [{ ...finding, duplicateOfId: null }] });
       const open = await store.openFindingsByTitle(tenantId, productId);
@@ -64,6 +64,35 @@ describe("retro store", () => {
     });
   });
 
+  // docs/specs/retro-web-research.md. One statement takes a call and its cost, so a limit and the
+  // cost cap hold, and an ended session takes nothing.
+  it("reserves gateway calls up to the limit and the cost cap", async () => {
+    await withDatabase(async (prisma) => {
+      const { tenantId, productId } = await seedTenantProjectAndRun(prisma);
+      const retro = await new PrismaRetroStore(prisma).start({ tenantId, workflowId: "retro-g", trigger: "manual", windowStart: null, windowEnd: new Date(), promptVersion: "retro@2", productIds: [productId] });
+      const store = new PrismaRetroGatewayStore(prisma);
+      const now = new Date();
+      const id = await store.open({ tenantId, retroId: retro.id, productId, tokenSha256: "sha-1", webResearch: true, costLeftUsd: 0.02, expiresAt: new Date(now.getTime() + 60_000) });
+      expect(await store.reserve(id, "searches", 2, 0.007, now)).toBe(true);
+      expect(await store.reserve(id, "searches", 2, 0.007, now)).toBe(true);
+      // The limit of 2 searches holds.
+      expect(await store.reserve(id, "searches", 2, 0.007, now)).toBe(false);
+      // 0.014 spent: one more 0.007 page passes the 0.02 cap.
+      expect(await store.reserve(id, "pages", 40, 0.007, now)).toBe(false);
+      expect(await store.reserve(id, "pages", 40, 0.001, now)).toBe(true);
+      const [session] = await store.storeWebResults({ id, tenantId, retroId: retro.id, productId }, [
+        { kind: "search", query: "q", url: "https://example.com/a", title: "A", publishedDate: null, content: "snippet", sha256: "x" },
+      ]);
+      expect(await store.searched(id, "https://example.com/a")).toBe(true);
+      expect(await store.searched(id, "https://example.com/b")).toBe(false);
+      const evidence = await store.evidence(id);
+      expect(evidence.webResultIds).toEqual([session!.id]);
+      expect(evidence.spentUsd).toBeCloseTo(0.015);
+      await store.end(id, now);
+      expect(await store.reserve(id, "signalCalls", 50, 0, now)).toBe(false);
+    });
+  });
+
   it("deletes kept transcripts and signal results past the product's retention", async () => {
     await withDatabase(async (prisma) => {
       const { tenantId, productId, runId } = await seedTenantProjectAndRun(prisma);
@@ -80,7 +109,7 @@ describe("retro store", () => {
       ]);
       await prisma.signalResult.updateMany({ data: { createdAt: new Date(now.getTime() - 8 * 24 * 60 * 60_000) } });
 
-      expect(await store.deleteExpired(now, null)).toEqual({ transcripts: 1, signalResults: 1 });
+      expect(await store.deleteExpired(now, null)).toEqual({ transcripts: 1, signalResults: 1, webResults: 0 });
       expect((await transcripts.forRun(tenantId, runId)).map((entry) => entry.text)).toEqual(["new output"]);
     });
   });

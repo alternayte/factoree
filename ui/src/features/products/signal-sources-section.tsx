@@ -7,7 +7,7 @@ import {
   listSignalSourcesQueryKey,
 } from "@/api/@tanstack/react-query.gen";
 import { createSignalSource, deleteSignalSource, testSignalSource, updateSignalSource } from "@/api/sdk.gen";
-import type { CreateSignalSourceData, ListSignalSourcesResponse } from "@/api/types.gen";
+import type { CreateSignalSourceData, ListSignalSourcesResponse, TestSignalSourceResponse } from "@/api/types.gen";
 import { Button } from "@/components/button";
 import { Confirm } from "@/components/confirm";
 import { Field, Input, Select, Switch, Textarea } from "@/components/form";
@@ -17,6 +17,7 @@ import { ApiError } from "@/lib/api";
 type Source = ListSignalSourcesResponse["sources"][number];
 type Kind = Source["kind"];
 type Body = Omit<CreateSignalSourceData["body"], "linearWorkspaceId">;
+type Tool = NonNullable<TestSignalSourceResponse["tools"]>[number];
 
 /** docs/specs/retro-agent.md, the same limits as src/domain/retro/signal-source.ts. */
 const MAX_QUERIES = 10;
@@ -122,7 +123,7 @@ export function SignalSourcesSection({
   return (
     <Section
       title="Signal sources"
-      description="MCP servers for production errors or product analytics. Before each retro, Factoree runs the queries and gives the results to the retro agent as files."
+      description="MCP servers for production errors or product analytics. Before each retro, Factoree runs the queries and gives the results to the retro agent as files. The agent may also call the ticked tools live."
       actions={
         canEdit && editing === null ? (
           <Button size="sm" onClick={() => setEditing("new")}>
@@ -179,6 +180,18 @@ export function SignalSourcesSection({
                 <dd className="t-value min-w-0 break-all text-body">
                   {source.queries.map((query) => `${query.name} (${query.tool})`).join(", ")}
                 </dd>
+                <dt className="t-label text-mute">Live tools</dt>
+                <dd className="flex min-w-0 flex-wrap gap-1.5">
+                  {source.tickedTools.length === 0 ? (
+                    <span className="text-xs text-mute">none</span>
+                  ) : (
+                    source.tickedTools.map((tool) => (
+                      <span key={tool} className="badge max-w-full whitespace-normal break-all">
+                        {tool}
+                      </span>
+                    ))
+                  )}
+                </dd>
               </dl>
             </li>
           ))}
@@ -216,20 +229,36 @@ function SignalSourceForm({
   const secretNames = secrets.data?.map((secret) => secret.name) ?? [];
   const [form, setForm] = useState<SourceForm>(() => formOf(source));
   const [problems, setProblems] = useState<string[]>([]);
+  // docs/specs/retro-web-research.md. The tools the agent may call live. They live outside the
+  // form, so a tick does not make the test result stale.
+  const savedTicks = source?.tickedTools ?? [];
+  const [ticks, setTicks] = useState<string[]>(savedTicks);
+  // Read-only tools are ticked by default only while the source has no saved ticks and no hand tick.
+  const [handTicked, setHandTicked] = useState(savedTicks.length > 0);
+  // The server's tool list from the last test. It stays while other fields change.
+  const [tools, setTools] = useState<Tool[] | null>(null);
+  const [toolsError, setToolsError] = useState<string | null>(null);
 
   const test = useMutation({
     mutationFn: async (body: Body) =>
       (await testSignalSource({ path: { id: productId }, body: { ...body, linearWorkspaceId }, throwOnError: true })).data,
+    onSuccess: (data) => {
+      setTools(data.tools);
+      setToolsError(data.toolsError);
+      if (data.tools && !handTicked) setTicks(data.tools.filter((tool) => tool.readOnly).map((tool) => tool.name));
+    },
   });
   const save = useMutation({
-    mutationFn: async (body: Body) =>
-      source === null
+    mutationFn: async (input: Body) => {
+      const body = { ...input, tickedTools: ticks };
+      return source === null
         ? createSignalSource({ path: { id: productId }, body: { ...body, linearWorkspaceId }, throwOnError: true })
         : updateSignalSource({
             path: { id: productId, sourceId: source.id },
             body: { ...body, linearWorkspaceId },
             throwOnError: true,
-          }),
+          });
+    },
     onSuccess: onDone,
   });
   const fieldErrors = save.error instanceof ApiError ? save.error.fieldErrors : {};
@@ -238,6 +267,15 @@ function SignalSourceForm({
   const update = (patch: Partial<SourceForm>) => {
     setForm((f) => ({ ...f, ...patch }));
     if (test.data || test.error) test.reset();
+    // Another server or credential may list other tools.
+    if (patch.endpoint !== undefined || patch.secretName !== undefined) {
+      setTools(null);
+      setToolsError(null);
+    }
+  };
+  const toggleTool = (name: string, on: boolean) => {
+    setHandTicked(true);
+    setTicks((current) => (on ? [...current.filter((tick) => tick !== name), name] : current.filter((tick) => tick !== name)));
   };
   const updateQuery = (index: number, patch: Partial<QueryForm>) =>
     update({ queries: form.queries.map((query, i) => (i === index ? { ...query, ...patch } : query)) });
@@ -433,6 +471,8 @@ function SignalSourceForm({
         </Button>
       </div>
 
+      <LiveTools tools={tools} toolsError={toolsError} ticks={ticks} onToggle={toggleTool} />
+
       {test.data ? (
         <Alert
           tone={test.data.results.every((result) => result.ok) ? "success" : "danger"}
@@ -491,6 +531,74 @@ function TestResult({
         <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-control border border-hairline bg-canvas p-2 font-mono text-xs text-body">
           {result.preview.slice(0, 500)}
         </pre>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * docs/specs/retro-web-research.md. The server's tools from the connection test, with a tick per
+ * tool the retro agent may call live through the retro gateway. A saved tick the server no longer
+ * lists stays, so it can be unticked.
+ */
+function LiveTools({
+  tools,
+  toolsError,
+  ticks,
+  onToggle,
+}: {
+  tools: Tool[] | null;
+  toolsError: string | null;
+  ticks: string[];
+  onToggle: (name: string, on: boolean) => void;
+}) {
+  const listed = new Set((tools ?? []).map((tool) => tool.name));
+  const rows: { name: string; description: string | null; readOnly: boolean | null }[] = [
+    ...(tools ?? []).map((tool) => ({ name: tool.name, description: tool.description, readOnly: tool.readOnly })),
+    ...ticks.filter((tick) => !listed.has(tick)).map((name) => ({ name, description: null, readOnly: null })),
+  ];
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <p className="t-label">Agent may call live</p>
+        <p className="t-hint mt-1">
+          The retro agent may call a ticked tool during the session. The worker calls it with the credential. Test lists the
+          server's tools, and ticks the read-only ones on a source with no ticks.
+        </p>
+      </div>
+      {toolsError ? (
+        <Alert tone="danger" title="The tool list did not load">
+          {toolsError}
+        </Alert>
+      ) : null}
+      {tools !== null && tools.length === 0 ? <Empty>The server lists no tool.</Empty> : null}
+      {tools === null && rows.length === 0 && !toolsError ? <Empty>Test the source to list its tools.</Empty> : null}
+      {rows.length > 0 ? (
+        <ul className="-my-1 divide-y divide-hairline">
+          {rows.map((row) => {
+            const ticked = ticks.includes(row.name);
+            return (
+              <li key={row.name} className="flex min-w-0 items-start gap-2.5 py-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 shrink-0"
+                  aria-label={`The agent may call ${row.name} live`}
+                  checked={ticked}
+                  onChange={(e) => onToggle(row.name, e.target.checked)}
+                />
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="t-value min-w-0 break-all text-ink">{row.name}</span>
+                    {row.readOnly === true ? <Badge>read-only</Badge> : null}
+                    {ticked && row.readOnly === false ? <Badge tone="warning">may write</Badge> : null}
+                    {row.readOnly === null && tools !== null ? <Badge tone="warning">not listed</Badge> : null}
+                  </div>
+                  {row.description ? <p className="line-clamp-2 text-xs break-words text-mute">{row.description}</p> : null}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       ) : null}
     </div>
   );

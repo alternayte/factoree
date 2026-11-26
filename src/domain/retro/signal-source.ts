@@ -32,6 +32,8 @@ export const signalSourceInputSchema = z
       .array(signalQuerySchema)
       .max(MAX_QUERIES)
       .refine((queries) => new Set(queries.map((query) => query.name)).size === queries.length, "each query needs its own name"),
+    // docs/specs/retro-web-research.md. The ticked tools: the exact tool names the retro agent may call live.
+    tickedTools: z.array(z.string().min(1).max(200)).max(100).default([]),
   })
   .strict();
 export type SignalSourceInput = z.infer<typeof signalSourceInputSchema>;

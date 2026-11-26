@@ -6,6 +6,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import {
+  getInstallSettingsOptions,
   getProductAutoMergeAttentionOptions,
   getProductGitHubAccessOptions,
   getProductOptions,
@@ -149,6 +150,9 @@ function ProductEditor({
     [secrets.data],
   );
   const hasRegistryKey = secrets.data?.some((secret) => secret.name === SKILL_REGISTRY_KEY);
+  // docs/specs/retro-web-research.md. Web research needs the install's Exa key. Any member reads the settings.
+  const install = useQuery(getInstallSettingsOptions());
+  const exaKeyMissing = install.data !== undefined && !install.data.webSearch.exaKeySet;
 
   const save = useMutation({
     mutationFn: async () => {
@@ -476,7 +480,7 @@ function ProductEditor({
 
           <Section
             title="Retro data"
-            description="A kept transcript is the redacted, gzipped output and tool inputs of one agent session. The retro agent reads it. Factoree deletes kept transcripts and signal results after the retention."
+            description="A kept transcript is the redacted, gzipped output and tool inputs of one agent session. The retro agent reads it. Factoree deletes kept transcripts, signal results and web results after the retention."
           >
             <div className="flex flex-col gap-4">
               <Switch
@@ -485,6 +489,25 @@ function ProductEditor({
                 label="Keep transcripts"
                 onCheckedChange={(on) => set("keepTranscripts", on)}
               />
+              <div className="flex flex-col gap-1">
+                <Switch
+                  checked={form.webResearch}
+                  disabled={disabled || (!form.webResearch && (install.isPending || exaKeyMissing))}
+                  label="Web research"
+                  onCheckedChange={(on) => set("webResearch", on)}
+                />
+                <p className="t-hint">
+                  The retro agent may search the web and read the pages it found, through Factoree. The query text goes to Exa.
+                </p>
+                {exaKeyMissing ? (
+                  <p className="t-hint">
+                    <Link to="/settings/install" className="link">
+                      Add an Exa key in Install settings
+                    </Link>{" "}
+                    to turn this on.
+                  </p>
+                ) : null}
+              </div>
               <Field
                 label="Retro data retention (days)"
                 hint={`${RETRO_RETENTION.min} to ${RETRO_RETENTION.max}. A weekly retro needs at least a week.`}

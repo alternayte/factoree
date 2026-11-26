@@ -47,6 +47,8 @@ const schema = z
     FACTOREE_TRANSCRIPT_S3_REGION: z.string().min(1).optional(),
     FACTOREE_TRANSCRIPT_S3_ACCESS_KEY: z.string().min(1).optional(),
     FACTOREE_TRANSCRIPT_S3_SECRET_KEY: z.string().min(1).optional(),
+    // docs/specs/retro-web-research.md. The Exa key of the retro gateway. It wins over the install setting.
+    FACTOREE_WEB_SEARCH_EXA_API_KEY: z.string().min(1).optional(),
   });
 
 export type Env = z.infer<typeof schema>;

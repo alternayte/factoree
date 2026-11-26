@@ -48,6 +48,7 @@ describe("the redactor of the API and the worker", () => {
       transcriptS3Region: "eu-west-1",
       transcriptS3AccessKey: "AKIAEXAMPLE",
       transcriptS3SecretKeyCipher: encryptSecret("transcript-secret-value", KEY),
+      exaApiKeyCipher: encryptSecret("exa-key-value", KEY),
       setupTokenHash: null,
       operatorTenantId: null,
       setupCompletedAt: null,
@@ -66,6 +67,7 @@ describe("the redactor of the API and the worker", () => {
         "linear-webhook-value",
         "registry-token-value",
         "transcript-secret-value",
+        "exa-key-value",
       ].sort(),
     );
     expect(settings.sandbox.registryToken).toBe("registry-token-value");

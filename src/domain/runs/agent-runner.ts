@@ -38,6 +38,17 @@ export interface AgentRunInput {
   environment: Record<string, string>;
   actionPolicy: ActionPolicy;
   timeoutMs: number;
+  /**
+   * docs/specs/retro-web-research.md. The one MCP server of the session, reached over HTTP with a
+   * bearer token, and the CLI's own web tools turned off. Only a retro session has one.
+   */
+  mcpServer?: SessionMcpServer;
+}
+
+export interface SessionMcpServer {
+  name: string;
+  url: string;
+  bearerToken: string;
 }
 
 export interface AgentResumeInput {

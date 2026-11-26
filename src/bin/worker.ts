@@ -110,7 +110,8 @@ import type { WorkItemContentPort } from "~/domain/context/work-item-content.js"
 import { createLinearWorkItemReader } from "~/adapters/linear/linear-work-item-content.js";
 import { GitHubWorkItemLinks } from "~/adapters/github/github-work-item-links.js";
 import { createModelsDevSource } from "~/adapters/models-dev/models-dev-source.js";
-import { PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore, PrismaTranscriptStore } from "~/persistence/prisma/retro.prisma.js";
+import { PrismaRetroGatewayStore, PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore, PrismaTranscriptStore } from "~/persistence/prisma/retro.prisma.js";
+import { effectiveExaKey } from "~/domain/settings/install-settings.js";
 import { parseRetroSessionRunId, resolveRetroRole } from "~/domain/retro/retro-settings.js";
 import { completeBucket, effectiveBucket } from "~/domain/retro/transcript.js";
 import { S3ObjectStore, type ObjectStore } from "~/adapters/s3/s3-object-store.js";
@@ -617,6 +618,12 @@ const worker = await Worker.create({
       mcpTools: (endpoint, token) => new McpJsonRpcClient({ endpoint, token, fetch }),
       redactor,
       logger,
+      // docs/specs/retro-web-research.md. The API serves the gateway at the public URL.
+      gateway: {
+        store: new PrismaRetroGatewayStore(prisma),
+        publicUrl: env.FACTOREE_PUBLIC_URL,
+        webSearchReady: async () => effectiveExaKey((await settings.read()).webSearch, env.FACTOREE_WEB_SEARCH_EXA_API_KEY) !== null,
+      },
     },
     runners,
     executions: new PrismaAgentExecutionRepository(prisma),

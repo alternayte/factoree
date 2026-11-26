@@ -39,6 +39,7 @@ class MemorySettings implements InstallSettingsStore {
       },
       gitAuthor: { name: "Factoree", email: "factoree@users.noreply.github.com" },
       transcriptBucket: { endpoint: null, bucket: null, region: null, accessKey: null, secretKey: null },
+      webSearch: { exaApiKey: null },
       operatorTenantId: null,
       setupCompletedAt: this.completedAt,
     });

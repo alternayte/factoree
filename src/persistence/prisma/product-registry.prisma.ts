@@ -90,6 +90,7 @@ type ProductRow = {
   productGoal: string | null;
   keepTranscripts: boolean;
   retroRetentionDays: number;
+  webResearch: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -460,6 +461,7 @@ export class PrismaProductRegistry implements ProductRegistry {
         productGoal: settings.productGoal,
         keepTranscripts: settings.keepTranscripts,
         retroRetentionDays: settings.retroRetentionDays,
+        webResearch: settings.webResearch,
       }).filter(([, value]) => value !== undefined),
     );
     const updated = await this.prisma.product.updateMany({ where: { tenantId, id }, data });

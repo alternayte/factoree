@@ -124,12 +124,24 @@ export interface TranscriptBucketSettings {
   secretKey: string | null;
 }
 
+/**
+ * docs/specs/retro-web-research.md. The search service of the retro gateway. With no key, the
+ * gateway offers no web tool. FACTOREE_WEB_SEARCH_EXA_API_KEY wins over the stored key.
+ */
+export interface WebSearchSettings {
+  exaApiKey: string | null;
+}
+
+/** The effective Exa key: the env var wins over the stored key. */
+export const effectiveExaKey = (stored: WebSearchSettings, envKey: string | undefined): string | null => envKey ?? stored.exaApiKey;
+
 export interface InstallSettings {
   github: GitHubAppSettings;
   linear: LinearAppSettings;
   sandbox: SandboxSettings;
   gitAuthor: GitAuthorSettings;
   transcriptBucket: TranscriptBucketSettings;
+  webSearch: WebSearchSettings;
   /** The tenant whose Linear workspace admins administer these settings. Null before setup. */
   operatorTenantId: string | null;
   setupCompletedAt: Date | null;
@@ -145,6 +157,7 @@ export interface InstallSettingsPatch {
   sandbox?: SettingsPatch<SandboxSettings> | undefined;
   gitAuthor?: SettingsPatch<GitAuthorSettings> | undefined;
   transcriptBucket?: SettingsPatch<TranscriptBucketSettings> | undefined;
+  webSearch?: SettingsPatch<WebSearchSettings> | undefined;
   operatorTenantId?: string | null | undefined;
 }
 

@@ -8,6 +8,8 @@ import type {
 import { CliAgentRunner, TOOL_CALL_COMMAND_MAX_MS, type AgentSessionSettings } from "../cli-agent-runner.js";
 import { latestClaudeToolKind, openClaudeToolCall, parseClaudeOutput } from "./output-parser.js";
 import type { ToolKind } from "~/domain/runs/session-pulse.js";
+import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
+import { randomUUID } from "node:crypto";
 
 export interface ClaudeCodeRunnerOptions extends CliAgentRunnerOptions {
   /** The executable inside the sandbox. Bootstrap installs it. */
@@ -113,6 +115,28 @@ export class ClaudeCodeRunner extends CliAgentRunner {
   /** Without `settingsFor`, the constructor options. A test uses them. */
   protected defaultSettings(): Omit<AgentSessionSettings, "silenceLimitMs"> {
     return { model: this.options.model ?? null, effort: this.options.effort ?? null, executable: null };
+  }
+
+  /**
+   * docs/specs/retro-web-research.md. The session's MCP server goes into a fresh file, so the
+   * bearer token never appears on a command line. `--strict-mcp-config` keeps it the only server,
+   * and the CLI's own web search and fetch are denied: the session reaches the web only through it.
+   */
+  protected override async withSessionFiles(
+    sandbox: Sandbox,
+    ref: SandboxRef,
+    settings: AgentSessionSettings,
+    command: CliAgentCommand,
+  ): Promise<CliAgentCommand> {
+    const server = settings.mcpServer ?? null;
+    if (server === null) return command;
+    const path = `${ref.workspacePath}/.factoree/mcp/${randomUUID()}.json`;
+    await sandbox.writeFile(
+      ref,
+      path,
+      JSON.stringify({ mcpServers: { [server.name]: { type: "http", url: server.url, headers: { Authorization: `Bearer ${server.bearerToken}` } } } }),
+    );
+    return { ...command, args: [...command.args, "--mcp-config", path, "--disallowedTools", "WebSearch,WebFetch"] };
   }
 
   protected parseOutput(text: string): CliAgentParse {

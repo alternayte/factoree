@@ -748,6 +748,7 @@ export type CreateSetupProductResponses = {
     productGoal: string | null;
     keepTranscripts: boolean;
     retroRetentionDays: number;
+    webResearch: boolean;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -919,6 +920,7 @@ export type ListProductsResponses = {
     productGoal: string | null;
     keepTranscripts: boolean;
     retroRetentionDays: number;
+    webResearch: boolean;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1025,6 +1027,7 @@ export type CreateProductResponses = {
     productGoal: string | null;
     keepTranscripts: boolean;
     retroRetentionDays: number;
+    webResearch: boolean;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1131,6 +1134,7 @@ export type CopyProductResponses = {
     productGoal: string | null;
     keepTranscripts: boolean;
     retroRetentionDays: number;
+    webResearch: boolean;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1270,6 +1274,7 @@ export type GetProductResponses = {
     productGoal: string | null;
     keepTranscripts: boolean;
     retroRetentionDays: number;
+    webResearch: boolean;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1328,6 +1333,7 @@ export type UpdateProductData = {
     productGoal?: string | null;
     keepTranscripts?: boolean;
     retroRetentionDays?: number;
+    webResearch?: boolean;
   };
   path: {
     id: string;
@@ -1427,6 +1433,7 @@ export type UpdateProductResponses = {
     productGoal: string | null;
     keepTranscripts: boolean;
     retroRetentionDays: number;
+    webResearch: boolean;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1531,6 +1538,7 @@ export type ActivateProductResponses = {
     productGoal: string | null;
     keepTranscripts: boolean;
     retroRetentionDays: number;
+    webResearch: boolean;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -4457,6 +4465,10 @@ export type GetInstallSettingsResponses = {
       locked: Array<"endpoint" | "bucket" | "region" | "accessKey" | "secretKey">;
       active: boolean;
     };
+    webSearch: {
+      exaKeySet: boolean;
+      locked: boolean;
+    };
   };
 };
 
@@ -4488,6 +4500,9 @@ export type UpdateInstallSettingsData = {
       region?: string | null;
       accessKey?: string | null;
       secretKey?: string | null;
+    };
+    webSearch?: {
+      exaApiKey?: string | null;
     };
   };
   path?: never;
@@ -4560,6 +4575,10 @@ export type UpdateInstallSettingsResponses = {
       secretKeySet: boolean;
       locked: Array<"endpoint" | "bucket" | "region" | "accessKey" | "secretKey">;
       active: boolean;
+    };
+    webSearch: {
+      exaKeySet: boolean;
+      locked: boolean;
     };
   };
 };
@@ -5156,6 +5175,7 @@ export type GetRetroResponses = {
       description: string;
       runIds: Array<string>;
       signalResultIds: Array<string>;
+      webResultIds: Array<string>;
       repositories: Array<string>;
       status: "proposed" | "created" | "dismissed" | "already_proposed";
       duplicateOfId: string | null;
@@ -5172,6 +5192,17 @@ export type GetRetroResponses = {
       sourceName: string;
       sourceKind: "errors" | "analytics";
       queryName: string;
+      bytes: number;
+      live: boolean;
+    }>;
+    webResults: Array<{
+      id: string;
+      productId: string;
+      kind: "search" | "page";
+      query: string | null;
+      url: string;
+      title: string | null;
+      publishedDate: string | null;
       bytes: number;
     }>;
   };
@@ -5215,11 +5246,59 @@ export type GetSignalResultResponses = {
     content: string;
     sha256: string;
     bytes: number;
+    live: boolean;
+    arguments: {
+      [key: string]: unknown;
+    } | null;
     createdAt: string;
   };
 };
 
 export type GetSignalResultResponse = GetSignalResultResponses[keyof GetSignalResultResponses];
+
+export type GetWebResultData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/retro/web-results/{id}";
+};
+
+export type GetWebResultErrors = {
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type GetWebResultError = GetWebResultErrors[keyof GetWebResultErrors];
+
+export type GetWebResultResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    id: string;
+    retroId: string;
+    productId: string;
+    kind: "search" | "page";
+    query: string | null;
+    url: string;
+    title: string | null;
+    publishedDate: string | null;
+    content: string;
+    sha256: string;
+    bytes: number;
+    createdAt: string;
+  };
+};
+
+export type GetWebResultResponse = GetWebResultResponses[keyof GetWebResultResponses];
 
 export type CreateRetroFindingIssueData = {
   body: {
@@ -5275,6 +5354,7 @@ export type CreateRetroFindingIssueResponses = {
     description: string;
     runIds: Array<string>;
     signalResultIds: Array<string>;
+    webResultIds: Array<string>;
     repositories: Array<string>;
     status: "proposed" | "created" | "dismissed" | "already_proposed";
     duplicateOfId: string | null;
@@ -5337,6 +5417,7 @@ export type DismissRetroFindingResponses = {
     description: string;
     runIds: Array<string>;
     signalResultIds: Array<string>;
+    webResultIds: Array<string>;
     repositories: Array<string>;
     status: "proposed" | "created" | "dismissed" | "already_proposed";
     duplicateOfId: string | null;
@@ -5394,6 +5475,7 @@ export type ListSignalSourcesResponses = {
         };
         maxBytes: number;
       }>;
+      tickedTools: Array<string>;
       createdAt: string;
       updatedAt: string;
     }>;
@@ -5417,6 +5499,7 @@ export type CreateSignalSourceData = {
       };
       maxBytes?: number;
     }>;
+    tickedTools?: Array<string>;
     linearWorkspaceId: string;
   };
   path: {
@@ -5469,6 +5552,7 @@ export type CreateSignalSourceResponses = {
       };
       maxBytes: number;
     }>;
+    tickedTools: Array<string>;
     createdAt: string;
     updatedAt: string;
   };
@@ -5523,6 +5607,7 @@ export type UpdateSignalSourceData = {
       };
       maxBytes?: number;
     }>;
+    tickedTools?: Array<string>;
     linearWorkspaceId: string;
   };
   path: {
@@ -5576,6 +5661,7 @@ export type UpdateSignalSourceResponses = {
       };
       maxBytes: number;
     }>;
+    tickedTools: Array<string>;
     createdAt: string;
     updatedAt: string;
   };
@@ -5598,6 +5684,7 @@ export type TestSignalSourceData = {
       };
       maxBytes?: number;
     }>;
+    tickedTools?: Array<string>;
     linearWorkspaceId: string;
   };
   path: {
@@ -5636,6 +5723,12 @@ export type TestSignalSourceResponses = {
       preview: string | null;
       reason: string | null;
     }>;
+    tools: Array<{
+      name: string;
+      description: string | null;
+      readOnly: boolean;
+    }> | null;
+    toolsError: string | null;
   };
 };
 
