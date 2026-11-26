@@ -369,6 +369,79 @@ describe("renderNugetConfig", () => {
     const text = renderNugetConfig(configs, feeds, ["Frontiers.Core"]);
     expect(mappingOf(text)).toEqual({ frontiers: ["Frontiers.Core"], "nuget.org": ["*"] });
   });
+
+  it("moves the patterns of every key that names the private feed to one mirror, so no pinned id falls to nuget.org's `*`", () => {
+    const configs = [
+      parseNugetConfig(
+        "NuGet.config",
+        `<configuration><packageSources>
+          <clear />
+          <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+          <add key="team-a" value="https://nuget.frontiersin.net/nuget" />
+          <add key="team-b" value="https://nuget.frontiersin.net/v3/index.json" />
+        </packageSources><packageSourceMapping>
+          <packageSource key="nuget.org"><package pattern="*" /></packageSource>
+          <packageSource key="team-a"><package pattern="TeamA.*" /></packageSource>
+          <packageSource key="team-b"><package pattern="TeamB.*" /></packageSource>
+        </packageSourceMapping></configuration>`,
+      ),
+    ];
+    const text = renderNugetConfig(configs, classifyNugetFeeds(configs, NO_COVERAGE), ["TeamA.Core"]);
+    expect(sourcesOf(text)).toEqual([
+      ["nuget.org", "https://api.nuget.org/v3/index.json"],
+      ["team-a", "https://nuget.pkg.github.com/frontiersin/index.json"],
+    ]);
+    expect(mappingOf(text)).toEqual({ "nuget.org": ["*"], "team-a": ["TeamA.Core", "TeamA.*", "TeamB.*"] });
+  });
+
+  it("carries the strictest signature validation mode and the trusted signers, and no credential", () => {
+    const root = parseNugetConfig(
+      "NuGet.config",
+      PRIVATE_FEED_CONFIG.replace(
+        "</configuration>",
+        `<config><add key="signatureValidationMode" value="require" /></config>
+        <packageSourceCredentials><frontiers><add key="ClearTextPassword" value="hunter2" /></frontiers></packageSourceCredentials>
+        <trustedSigners>
+          <author name="microsoft"><certificate fingerprint="3F9001EA83C5" hashAlgorithm="SHA256" allowUntrustedRoot="false" /></author>
+          <repository name="nuget.org" serviceIndex="https://api.nuget.org/v3/index.json"><certificate fingerprint="0E5F38F5" hashAlgorithm="SHA256" allowUntrustedRoot="false" /><owners>microsoft;aspnet</owners></repository>
+        </trustedSigners></configuration>`,
+      ),
+    );
+    const nested = parseNugetConfig("src/NuGet.config", '<configuration><config><add key="signatureValidationMode" value="accept" /></config></configuration>');
+    const configs = [root, nested];
+    const text = renderNugetConfig(configs, classifyNugetFeeds(configs, NO_COVERAGE), ["Frontiers.Core"]);
+    const document = parseXml(text);
+    expect(descendantsNamed(descendantsNamed(document, "config")[0]!, "add").map((entry) => [attributeOf(entry, "key"), attributeOf(entry, "value")])).toEqual([["signatureValidationMode", "require"]]);
+    expect(text).toContain('<author name="microsoft">');
+    expect(text).toContain('<certificate fingerprint="3F9001EA83C5" hashAlgorithm="SHA256" allowUntrustedRoot="false" />');
+    expect(text).toContain('<repository name="nuget.org" serviceIndex="https://api.nuget.org/v3/index.json">');
+    expect(text).toContain("<owners>microsoft;aspnet</owners>");
+    expect(text).not.toContain("hunter2");
+    expect(text).not.toContain("packageSourceCredentials");
+  });
+
+  it("writes no signature policy when the repository sets none", () => {
+    const configs = [parseNugetConfig("NuGet.config", PRIVATE_FEED_CONFIG)];
+    const text = renderNugetConfig(configs, classifyNugetFeeds(configs, NO_COVERAGE), ["Frontiers.Core"]);
+    expect(text).not.toContain("<config>");
+    expect(text).not.toContain("trustedSigners");
+  });
+});
+
+describe("classifyNugetFeeds", () => {
+  it("keeps two sources of one key whose paths differ only in case, and folds the case of the scheme and host", () => {
+    const source = (url: string) => `<configuration><packageSources><add key="team" value="${url}" /></packageSources></configuration>`;
+    const configs = [
+      parseNugetConfig("NuGet.config", source("https://Feeds.Example/TeamA/v3/index.json")),
+      parseNugetConfig("src/NuGet.config", source("https://feeds.example/teama/v3/index.json")),
+      parseNugetConfig("lib/NuGet.config", source("HTTPS://FEEDS.EXAMPLE/TeamA/v3/index.json")),
+    ];
+    const feeds = classifyNugetFeeds(configs, { credentialHosts: [], allowedDomains: ["feeds.example"] });
+    expect(feeds.map((feed) => [feed.url, feed.file])).toEqual([
+      ["https://Feeds.Example/TeamA/v3/index.json", "NuGet.config"],
+      ["https://feeds.example/teama/v3/index.json", "src/NuGet.config"],
+    ]);
+  });
 });
 
 describe("restore output", () => {

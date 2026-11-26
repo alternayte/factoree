@@ -247,6 +247,48 @@ describe("runNugetPrecheck", () => {
     expect(report.failure).not.toContain("sig=secret");
   });
 
+  it("checks every redirect of a download against the egress, and reads the byte only through allowed hosts", async () => {
+    const world = { files: files({ "Frontiers.Core": "3.1.0" }), mirror: { "frontiers.core": ["3.1.0"] }, secondRedirectHost: "objects.githubusercontent.com" };
+    const allowed = await run(world, [mirrorCredential()], [...EGRESS, "objects.githubusercontent.com"]);
+    expect(allowed.report.packages[0]).toMatchObject({ status: "mirrored" });
+    expect(allowed.requests.some((url) => url.startsWith("https://objects.githubusercontent.com/"))).toBe(true);
+    const blocked = await run(world);
+    expect(blocked.report.packages[0]).toMatchObject({ status: "redirect_blocked" });
+    expect(blocked.report.failure).toContain("objects.githubusercontent.com");
+    expect(blocked.report.failure).not.toContain("sig=secret");
+    expect(blocked.requests.some((url) => url.startsWith("https://objects.githubusercontent.com/"))).toBe(false);
+  });
+
+  it("records a mirror request the sandbox rejects as an unreachable package in the failed report", async () => {
+    const { report } = await run({ files: files({ "Frontiers.Core": "3.1.0" }), mirror: { "frontiers.core": ["3.1.0"] }, mirrorExecRejects: true });
+    expect(report.outcome).toBe("failed");
+    expect(report.packages[0]).toMatchObject({ id: "Frontiers.Core", status: "unreachable" });
+    expect(report.failure).toContain("the package index request did not run in the sandbox");
+  });
+
+  it("reads the assets file where MSBuild puts it, and says when the lookup checked the index only because none read", async () => {
+    const assets = JSON.stringify({
+      targets: { "net8.0": { "Frontiers.Core/3.1.0": { dependencies: { "Frontiers.Transitive": "1.0.0" } } } },
+      project: { frameworks: { "net8.0": { dependencies: { "Frontiers.Core": {} } } } },
+    });
+    const world = {
+      files: files({ "Frontiers.Core": "3.1.0" }),
+      mirror: { "frontiers.core": ["3.1.0"], "frontiers.transitive": ["1.0.0"] },
+      restore: (text: string) =>
+        text.includes('pattern="Frontiers.Transitive"')
+          ? { exitCode: 0, output: "Restore complete." }
+          : { exitCode: 1, output: `${PATH}/src/Api/Api.csproj : error NU1101: Unable to find package Frontiers.Transitive. No packages exist with this id` },
+      assetsFiles: { [`${PATH}/src/Api/Api.csproj`]: `${PATH}/artifacts/obj/Api/project.assets.json` },
+    };
+    const moved = await run({ ...world, assets: { [`${PATH}/artifacts/obj/Api/project.assets.json`]: assets } });
+    expect(moved.report.packages.find((entry) => entry.id === "Frontiers.Transitive")).toMatchObject({ version: "1.0.0", parents: ["Frontiers.Core 3.1.0"], detail: "found by the restore, and on the mirror" });
+    const unread = await run(world);
+    expect(unread.report.packages.find((entry) => entry.id === "Frontiers.Transitive")).toMatchObject({
+      version: "(any)",
+      detail: "found by the restore, and on the mirror (the mirror index only, because artifacts/obj/Api/project.assets.json did not read)",
+    });
+  });
+
   it("leaves a floating or unresolved version to the restore without failing", async () => {
     const { report, requests } = await run({ files: files({ "Frontiers.Core": "3.1.0", "Frontiers.Float": "1.*", "Frontiers.Prop": "$(Missing)" }), mirror: { "frontiers.core": ["3.1.0"] } });
     expect(report.outcome).toBe("passed");

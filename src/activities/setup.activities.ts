@@ -13,7 +13,7 @@ import { CLAUDE_CREDENTIAL_NAMES, claudeApiHostOf, hasClaudeCredential, resolveR
 import type { SecretStore } from "~/domain/products/secret-store.js";
 import type { GitHubTokenProvider } from "~/domain/products/github-token-provider.js";
 import { buildActionPolicy } from "~/domain/policy/action-policy.js";
-import { capturePatch } from "~/domain/publishing/patch.js";
+import { capturePatch, trustedGit } from "~/domain/publishing/patch.js";
 import type { PullRequestPort } from "~/domain/publishing/pull-request.js";
 import { publishToBranch } from "~/domain/publishing/trusted-checkout.js";
 import type { AgentRunnerRegistry } from "~/domain/runs/agent-runner.js";
@@ -343,6 +343,18 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
     return { ref: await createSandbox(sandbox, setup.id, egress, allowedDomains), warm: false, egress };
   };
 
+  /**
+   * docs/specs/nuget-private-feed-mapping.md, DI-21.244. Stages `.factoree/nuget.config` before a
+   * patch capture even when the repository's `.gitignore` matches it, since `git add -A` skips an
+   * ignored file and the setup patch must hold the file Factoree wrote. No other ignored path joins.
+   */
+  const stageNugetConfig = async (ref: SandboxRef, path: string): Promise<void> => {
+    const staged = await trustedGit(dependencies.sandbox, ref, ["-C", path, "add", "--force", "--", FACTOREE_NUGET_CONFIG]);
+    if (staged.exitCode !== 0) {
+      throw new Error(`git add ${FACTOREE_NUGET_CONFIG} failed with exit code ${String(staged.exitCode)}: ${dependencies.redactor.redactText(staged.stderr.trim())}`);
+    }
+  };
+
   /** The proof of one setup. proveAndPublishSetup times it. */
   const prove = async (input: { setupId: string; session: Extract<SetupSessionOutput, { kind: "proposed" }> }): Promise<SetupProofOutput> => {
       const { setup, product, url } = await load(input.setupId);
@@ -641,6 +653,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
         const proven = provenConfigOf(session.proposal, withPreviewDependents(parts));
         if (proven !== null) {
           await dependencies.sandbox.writeFile(ref, `${primary.path}/${CONFIG}`, proven);
+          if (session.nuget?.configPath === FACTOREE_NUGET_CONFIG) await stageNugetConfig(ref, primary.path);
           const patch = await capturePatch({ sandbox: dependencies.sandbox, redactor: dependencies.redactor }, { ref, primaryPath: primary.path, baseSha: session.baseSha });
           const outside = patch.changedFiles.filter((path) => !path.startsWith(".factoree/"));
           if (outside.length > 0) throw new Error(`the setup patch changes files outside .factoree/: ${outside.join(", ")}`);
@@ -1114,6 +1127,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           .filter((line) => line !== "");
         const sources = Object.fromEntries(parseSetupSources(dependencies.redactor.redactText((await readText(dependencies.sandbox, ref, sourcesPath)) ?? "")));
         const leftOut = parseLeftOutStacks(dependencies.redactor.redactText(withoutUrlCredentials((await readText(dependencies.sandbox, ref, leftOutPath)) ?? "")));
+        if (nugetConfig !== undefined) await stageNugetConfig(ref, primary.path);
         const patch = await capturePatch({ sandbox: dependencies.sandbox, redactor: dependencies.redactor }, { ref, primaryPath: primary.path, baseSha: primary.baseSha });
         return {
           kind: "proposed",

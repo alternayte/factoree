@@ -106,14 +106,31 @@ export const readVersionText = (raw: string): VersionReading => {
 export type MsbuildProperties = Map<string, string[]>;
 
 /**
+ * Every group of the name under the element, in document order, with its condition: its own, or
+ * that of the nearest `<When>` or `<Otherwise>` of a `<Choose>` around it, since a branch is
+ * conditional even when its groups name no condition.
+ */
+const groupsOf = (element: XmlElement, name: string): Array<{ group: XmlElement; condition: string | null }> => {
+  const found: Array<{ group: XmlElement; condition: string | null }> = [];
+  const visit = (current: XmlElement, branch: string | null): void => {
+    for (const child of current.children) {
+      const lower = child.name.toLowerCase();
+      if (lower === name.toLowerCase()) found.push({ group: child, condition: attributeOf(child, "Condition") ?? branch });
+      visit(child, lower === "when" ? (attributeOf(child, "Condition") ?? "When") : lower === "otherwise" ? "Otherwise" : branch);
+    }
+  };
+  visit(element, null);
+  return found;
+};
+
+/**
  * Adds the properties of one MSBuild file. MSBuild expands a property where it is assigned, so a
  * later definition of a property it names does not change it. An unconditional definition
  * replaces the values, and a conditional one adds its values, because Factoree evaluates no
  * condition.
  */
 export const addMsbuildProperties = (properties: MsbuildProperties, document: XmlElement): void => {
-  for (const group of descendantsNamed(document, "PropertyGroup")) {
-    const groupCondition = attributeOf(group, "Condition");
+  for (const { group, condition: groupCondition } of groupsOf(document, "PropertyGroup")) {
     for (const property of group.children) {
       const name = property.name.toLowerCase();
       const value = property.text.trim();
@@ -156,6 +173,22 @@ const foldersAbove = (path: string): string[] => {
   return ["", ...parts.map((_, index) => parts.slice(0, index + 1).join("/"))];
 };
 
+/** `$([MSBuild]::GetPathOfFileAbove('<file>'))`, with its start folder as group 3 when it names one. */
+const PATH_OF_FILE_ABOVE = /^\$\(\[MSBuild\]::GetPathOfFileAbove\(\s*(['"])[^'"]*\1\s*(?:,\s*(['"])(.*?)\2\s*)?\)\)$/i;
+
+/**
+ * The path an import names, from the checkout root, without a trailing slash: a relative path and
+ * `$(MSBuildThisFileDirectory)` both start at the folder of the importing file. Null for another
+ * property, an absolute path or a path outside the checkout.
+ */
+const importPathOf = (importer: string, text: string): string | null => {
+  const rest = text.trim().replace(/\\/g, "/").replace(/^\$\(MSBuildThisFileDirectory\)/i, "");
+  if (rest.includes("$(") || rest.startsWith("/")) return null;
+  const resolved = posix.normalize(posix.join(folderOf(importer), rest)).replace(/\/+$/, "");
+  if (resolved === ".." || resolved.startsWith("../")) return null;
+  return resolved === "." ? "" : resolved;
+};
+
 const PROJECT = /\.(cs|fs|vb)proj$/i;
 
 /** True when the file is one the package read takes. */
@@ -178,23 +211,17 @@ const valueOf = (element: XmlElement, name: string): string | null => {
   return child === undefined ? null : child.text.trim();
 };
 
-const conditionOf = (element: XmlElement, group: XmlElement | null): string | null =>
-  attributeOf(element, "Condition") ?? (group === null ? null : attributeOf(group, "Condition"));
-
 const idsOf = (text: string | null): string[] =>
   (text ?? "")
     .split(";")
     .map((id) => id.trim())
     .filter((id) => id !== "" && !id.includes("$(") && !id.includes("@("));
 
-/** The items of one kind in document order, each with its item group. */
-const itemsOf = (document: XmlElement, kind: string): Array<{ element: XmlElement; group: XmlElement | null }> => {
-  const found: Array<{ element: XmlElement; group: XmlElement | null }> = [];
-  for (const group of descendantsNamed(document, "ItemGroup")) {
-    for (const element of childrenNamed(group, kind)) found.push({ element, group });
-  }
-  return found;
-};
+/** The items of one kind in document order, each with its own condition, its item group's or its `Choose` branch's. */
+const itemsOf = (document: XmlElement, kind: string): Array<{ element: XmlElement; condition: string | null }> =>
+  groupsOf(document, "ItemGroup").flatMap(({ group, condition }) =>
+    childrenNamed(group, kind).map((element) => ({ element, condition: attributeOf(element, "Condition") ?? condition })),
+  );
 
 /** One file, or the part of it before or after the import of a parent file. */
 interface MsbuildPart {
@@ -278,15 +305,25 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     return null;
   };
   // MSBuild imports only the nearest file of a name. A parent one counts when that file imports it:
-  // `GetPathOfFileAbove('Directory.Build.props', ...)` finds the nearest one above, and a plain
-  // path such as `../../Directory.Build.props` names one file.
+  // `GetPathOfFileAbove('Directory.Build.props', '<start>')` finds the nearest one at or above its
+  // start folder, and a plain path such as `../../Directory.Build.props` names one file. An import
+  // that names a property other than `$(MSBuildThisFileDirectory)` resolves to no file, since the
+  // reader cannot tell which one it names.
   const parentImportsOf = (path: string, name: string): Array<{ path: string; element: XmlElement }> =>
     descendantsNamed(documentOf(path), "Import").flatMap((element) => {
       const project = (attributeOf(element, "Project") ?? "").trim();
       if (!project.toLowerCase().includes(name.toLowerCase())) return [];
-      const parent = project.includes("$(")
-        ? nearestIn(foldersAbove(path).reverse().slice(1), name)
-        : fileAt(posix.normalize(posix.join(folderOf(path), project.replace(/\\/g, "/"))));
+      const above = PATH_OF_FILE_ABOVE.exec(project);
+      let parent: string | null;
+      if (above !== null) {
+        const start = importPathOf(path, above[3] ?? "$(MSBuildThisFileDirectory)");
+        // A search that finds the importing file itself imports nothing, as MSBuild skips a self import.
+        const found = start === null ? null : nearestIn(foldersAbove(start === "" ? name : `${start}/${name}`).reverse(), name);
+        parent = found === path ? null : found;
+      } else {
+        const target = importPathOf(path, project);
+        parent = target === null ? null : fileAt(target);
+      }
       return parent === null ? [] : [{ path: parent, element }];
     });
   // Each parent file applies where its <Import> stands: the importing file's content before the
@@ -337,9 +374,9 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     for (const { document } of [...buildProps, ...packageProps, own, ...buildTargets]) addMsbuildProperties(properties, document);
 
     for (const { path, document } of packageProps) {
-      for (const { element, group } of itemsOf(document, "GlobalPackageReference")) {
+      for (const { element, condition } of itemsOf(document, "GlobalPackageReference")) {
         for (const id of idsOf(attributeOf(element, "Include"))) {
-          for (const entry of reference(id, valueOf(element, "Version"), path, conditionOf(element, group), properties)) {
+          for (const entry of reference(id, valueOf(element, "Version"), path, condition, properties)) {
             const key = `${path} ${entry.id.toLowerCase()} ${entry.versionText}`;
             if (globals.has(key)) continue;
             globals.add(key);
@@ -353,8 +390,7 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
     // one. An unconditional Remove drops what came before it, and a conditional one keeps it.
     const central = new Map<string, Array<{ version: string | null; condition: string | null }>>();
     for (const { document } of packageProps) {
-      for (const { element, group } of itemsOf(document, "PackageVersion")) {
-        const condition = conditionOf(element, group);
+      for (const { element, condition } of itemsOf(document, "PackageVersion")) {
         if (condition === null) for (const id of idsOf(attributeOf(element, "Remove"))) central.delete(id.toLowerCase());
         for (const id of idsOf(attributeOf(element, "Include") ?? attributeOf(element, "Update"))) {
           const entry = { version: valueOf(element, "Version"), condition };
@@ -365,8 +401,7 @@ export const readNugetPackageReferences = (files: readonly RepositoryTextFile[])
 
     const pending = new Map<string, PendingReference[]>();
     for (const { document } of [...buildProps, own, ...buildTargets]) {
-      for (const { element, group } of itemsOf(document, "PackageReference")) {
-        const condition = conditionOf(element, group);
+      for (const { element, condition } of itemsOf(document, "PackageReference")) {
         if (condition === null) for (const id of idsOf(attributeOf(element, "Remove"))) pending.delete(id.toLowerCase());
         for (const id of idsOf(attributeOf(element, "Update"))) {
           const existing = pending.get(id.toLowerCase());

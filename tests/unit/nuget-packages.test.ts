@@ -30,6 +30,15 @@ describe("parseXml", () => {
     expect(descendantsNamed(document, "b")).toEqual([]);
   });
 
+  it("reads comments and CDATA in document order, so a comment that holds `<![CDATA[` hides no later element", () => {
+    const document = parseXml(`<Project><!-- was: <![CDATA[ --><ItemGroup>
+      <PackageReference Include="Lib"><Version><![CDATA[1.2.3]]></Version></PackageReference>
+      <Description><![CDATA[a <!-- b]]></Description>
+    </ItemGroup></Project>`);
+    expect(childrenNamed(descendantsNamed(document, "PackageReference")[0]!, "Version")[0]?.text).toBe("1.2.3");
+    expect(descendantsNamed(document, "Description")[0]?.text).toBe("a <!-- b");
+  });
+
   it("decodes entities in attributes", () => {
     const document = parseXml(`<a value="https://x/?a=1&amp;b=2" />`);
     expect(attributeOf(descendantsNamed(document, "a")[0]!, "value")).toBe("https://x/?a=1&b=2");
@@ -224,6 +233,38 @@ describe("readNugetPackageReferences", () => {
     expect(idsOf([root, nested("<Project />"), project])).toEqual(["Own"]);
     expect(idsOf([root, nested(`<Project><Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" /></Project>`), project])).toEqual(["Root.Only", "Own"]);
     expect(idsOf([root, project])).toEqual(["Root.Only", "Own"]);
+  });
+
+  it("starts GetPathOfFileAbove at the folder it names, and resolves no import that names another property", () => {
+    const root = { path: "Directory.Build.props", text: "<Project><PropertyGroup><V>1</V></PropertyGroup></Project>" };
+    const middle = { path: "src/Directory.Build.props", text: "<Project><PropertyGroup><V>2</V></PropertyGroup></Project>" };
+    const nearest = (project: string) => ({ path: "src/A/Directory.Build.props", text: `<Project><Import Project="${project}" /></Project>` });
+    const project = { path: "src/A/A.csproj", text: '<Project><ItemGroup><PackageReference Include="Lib" Version="$(V).0.0" /></ItemGroup></Project>' };
+    const versions = (files: Array<{ path: string; text: string }>) => readNugetPackageReferences(files).map((entry) => entry.version ?? entry.versionText);
+    const above = (start: string) => nearest(`$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '${start}'))`);
+    expect(versions([root, middle, above("$(MSBuildThisFileDirectory)../../"), project])).toEqual(["1.0.0"]);
+    expect(versions([root, middle, above("$(MSBuildThisFileDirectory)../"), project])).toEqual(["2.0.0"]);
+    expect(versions([root, middle, nearest("$(MSBuildThisFileDirectory)..\\..\\Directory.Build.props"), project])).toEqual(["1.0.0"]);
+    expect(versions([root, middle, nearest("$(RepoRoot)Directory.Build.props"), project])).toEqual(["$(V).0.0"]);
+  });
+
+  it("keeps what a Remove or a property in a Choose branch may skip, though its groups name no condition", () => {
+    const references = readNugetPackageReferences([
+      {
+        path: "A.csproj",
+        text: `<Project>
+          <ItemGroup><PackageReference Include="Kept" Version="1.0.0" /></ItemGroup>
+          <Choose>
+            <When Condition="'$(TargetFramework)' == 'net8.0'">
+              <PropertyGroup><LibVersion>2.0.0</LibVersion></PropertyGroup>
+              <ItemGroup><PackageReference Remove="Kept" /></ItemGroup>
+            </When>
+            <Otherwise><PropertyGroup><LibVersion>3.0.0</LibVersion></PropertyGroup></Otherwise>
+          </Choose>
+          <ItemGroup><PackageReference Include="Lib" Version="$(LibVersion)" /></ItemGroup></Project>`,
+      },
+    ]);
+    expect(references.map((entry) => `${entry.id} ${entry.version ?? "-"}`)).toEqual(["Kept 1.0.0", "Lib 2.0.0", "Lib 3.0.0"]);
   });
 
   it("resolves an explicit import path from the importing file, skipping the props in between", () => {

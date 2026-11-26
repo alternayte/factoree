@@ -5,6 +5,7 @@ import { createLogger } from "~/telemetry/logger.js";
 import { Redactor } from "~/telemetry/redaction.js";
 import type { NewRunEvent } from "~/domain/diagnostics/run-event.js";
 import type { HostCredential } from "~/domain/products/host-credentials.js";
+import type { NugetPrecheckReport } from "~/domain/setup/nuget-precheck.js";
 import { FakeSandbox } from "../support/fake-sandbox.js";
 import { installNugetWorld, mirrorCredential, PRIVATE_FEED_CONFIG, project, type NugetWorld } from "../support/fake-nuget.js";
 
@@ -465,6 +466,55 @@ describe("precheckNugetFeeds (docs/specs/nuget-private-feed-mapping.md)", () => 
     const skipped = build("", { ...passing, latest: { ...setupRow, id: "setup-0", status: "unchanged", endedAt: new Date(0), inputKey: passedKey, report } });
     expect((await skipped.ready()).kind).toBe("skipped");
     expect(skipped.runs).toEqual([]);
+  });
+
+  /** Each trusted git command from `-C <path>` on, in order. */
+  const trustedGitCommands = (sandbox: FakeSandbox): string[] =>
+    sandbox.commands.filter((command) => command.file === "/usr/bin/git").map((command) => command.args.slice(command.args.indexOf("-C") + 2).join(" "));
+
+  it("stages the file it wrote even when the repository ignores it, and no other ignored path, before the session's patch capture", async () => {
+    const { session, sandbox } = build("?? .factoree/config.yaml\0", nugetWorld({ "Frontiers.Core": "3.1.0" }));
+    expect((await session()).kind).toBe("proposed");
+    const commands = trustedGitCommands(sandbox);
+    const forced = commands.indexOf("add --force -- .factoree/nuget.config");
+    expect(forced).toBeGreaterThanOrEqual(0);
+    expect(forced).toBeLessThan(commands.indexOf("add -A"));
+    expect(commands.filter((command) => command.includes("--force"))).toHaveLength(1);
+  });
+
+  it("stages the file again before the proof's patch capture", async () => {
+    const { activities, sandbox } = build("");
+    const nuget: NugetPrecheckReport = {
+      outcome: "passed",
+      feeds: [],
+      credential: "present",
+      publicPackages: 0,
+      packages: [],
+      configPath: ".factoree/nuget.config",
+      mirroredIds: ["Frontiers.Core"],
+      restore: { outcome: "passed", rounds: 1, detail: null },
+      failure: null,
+    };
+    await activities.proveAndPublishSetup({
+      setupId: "setup-1",
+      session: {
+        kind: "proposed",
+        defaultBranch: "main",
+        baseSha: "a".repeat(40),
+        patchBase64: "",
+        proposal: "version: 1\nidentity:\n  product: anthology\n  linear:\n    teamKey: FAC\nverify:\n  commands:\n    - name: build\n      run: dotnet build\n",
+        observedHosts: [],
+        deniedHosts: [],
+        egressRecorded: true,
+        appChanges: [],
+        warm: false,
+        nuget,
+      },
+    });
+    const commands = trustedGitCommands(sandbox);
+    const forced = commands.indexOf("add --force -- .factoree/nuget.config");
+    expect(forced).toBeGreaterThanOrEqual(0);
+    expect(forced).toBeLessThan(commands.indexOf("add -A"));
   });
 
   it("changes the key when the mirror answer changes", async () => {

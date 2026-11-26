@@ -45,12 +45,12 @@ const attributesOf = (text: string): Record<string, string> => {
 export const parseXml = (text: string): XmlElement => {
   const root: XmlElement = { name: "#document", attributes: {}, children: [], text: "" };
   const stack: XmlElement[] = [root];
-  // CDATA is literal text: escaped here, it reads back as written and never as a tag or an entity.
-  const source = text
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_, content: string) => escapeText(content))
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<\?[\s\S]*?\?>/g, "")
-    .replace(/<!DOCTYPE[^>]*>/gi, "");
+  // One pass in document order, so a comment that holds `<![CDATA[` and CDATA that holds `<!--`
+  // each read as what they are. CDATA is literal text: escaped here, it reads back as written and
+  // never as a tag or an entity.
+  const source = text.replace(/<!--[\s\S]*?-->|<!\[CDATA\[([\s\S]*?)\]\]>|<\?[\s\S]*?\?>|<!DOCTYPE[^>]*>/gi, (_, content: string | undefined) =>
+    content === undefined ? "" : escapeText(content),
+  );
   let last = 0;
   for (const match of source.matchAll(TAG)) {
     stack.at(-1)!.text += decode(source.slice(last, match.index));

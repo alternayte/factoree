@@ -134,6 +134,20 @@ status=0
 for target in "$@"; do dotnet restore "$target" --packages ${RESTORE_CACHE}/packages --configfile ${FACTOREE_NUGET_CONFIG} || status=1; done
 exit $status`;
 
+/**
+ * DI-21.246. Prints the `ProjectAssetsFile` MSBuild evaluates for a project, which follows
+ * `BaseIntermediateOutputPath` and `MSBuildProjectExtensionsPath`. The restore script may have
+ * installed the SDK under `$HOME/.dotnet`.
+ */
+const ASSETS_PATH_SCRIPT = 'export PATH="$HOME/.dotnet:$PATH"; exec dotnet msbuild "$1" -nologo -getProperty:ProjectAssetsFile';
+
+/** The `project.assets.json` of a project: the one MSBuild names, or `obj/` beside the project when the SDK names none. */
+const assetsPathOf = async (input: NugetPrecheckInput, project: string): Promise<string> => {
+  const evaluated = await input.sandbox.exec(input.ref, { file: "sh", args: ["-c", ASSETS_PATH_SCRIPT, "sh", project], cwd: input.repositoryPath, timeoutMs: 120_000 });
+  const path = evaluated.stdout.trim().split("\n").at(-1)?.trim() ?? "";
+  return !evaluated.timedOut && evaluated.exitCode === 0 && path.endsWith("project.assets.json") ? path : `${posix.dirname(project)}/obj/project.assets.json`;
+};
+
 const relative = (path: string): string => path.replace(/^\.\//, "");
 const depthOf = (path: string): number => path.split("/").length;
 
@@ -259,19 +273,40 @@ const hostOf = (url: string): string | null => {
   }
 };
 
+/** DI-21.240. The most redirects a mirror download follows, each to a host the egress holds. */
+const MAX_DOWNLOAD_REDIRECTS = 5;
+
+type MirrorAnswer = { status: MirrorStatus; detail: string | null; version: string | null };
+
+/**
+ * DI-21.240. One package on the mirror, as probeMirror finds it. A request the sandbox rejects is
+ * an unreachable mirror, so it fails the pre-check with its report like any other answer.
+ */
+const onMirror = async (input: NugetPrecheckInput, owner: string, id: string, requested: RequestedVersion | null): Promise<MirrorAnswer> => {
+  const step = { name: "the package index request" };
+  try {
+    return await probeMirror(input, owner, id, requested, step);
+  } catch {
+    return { status: "unreachable", detail: `${step.name} did not run in the sandbox`, version: requested?.version ?? null };
+  }
+};
+
 /**
  * DI-21.240. One package on the mirror: the flat container index, then a one-byte download of
  * the exact version, because the download redirects to another host and the index alone passes
- * where the file fails. A null request checks the index only. A request that is not exact checks
- * the lowest version the index lists at or above it, which is the one restore takes. Only a 2xx
- * whose body is a version list is an index: a redirect or a body that does not parse is not.
+ * where the file fails. Each redirect is followed by hand, so every host of the chain is checked
+ * against the egress before the download reads from it. A null request checks the index only. A
+ * request that is not exact checks the lowest version the index lists at or above it, which is
+ * the one restore takes. Only a 2xx whose body is a version list is an index: a redirect or a body
+ * that does not parse is not.
  */
-const onMirror = async (
+const probeMirror = async (
   input: NugetPrecheckInput,
   owner: string,
   id: string,
   requested: RequestedVersion | null,
-): Promise<{ status: MirrorStatus; detail: string | null; version: string | null }> => {
+  step: { name: string },
+): Promise<MirrorAnswer> => {
   const base = `https://${NUGET_MIRROR_HOST}/${owner}/download/${id.toLowerCase()}`;
   const index = await get(input.sandbox, input.ref, `${base}/index.json`);
   const indexStatus = mirrorStatusOf(index);
@@ -282,21 +317,26 @@ const onMirror = async (
   if (requested === null) return answer(listed.length > 0 ? "mirrored" : "version_missing", null);
   const version = requested.exact ? (listed.includes(requested.version) ? requested.version : null) : lowestAccepted(listed, requested);
   if (version === null) return answer("version_missing", null);
-  const file = `${base}/${version}/${id.toLowerCase()}.${version}.nupkg`;
-  const first = await input.sandbox.exec(input.ref, { file: "curl", args: [...CURL, "-o", "/dev/null", "-w", "%{http_code} %{redirect_url}", file], cwd: "/", timeoutMs: 45_000 });
-  const [code = "0", redirect = ""] = first.stdout.trim().split(" ");
-  const firstCode = Number.parseInt(code, 10) || 0;
-  const firstStatus = mirrorStatusOf({ exitCode: first.exitCode, timedOut: first.timedOut, httpCode: firstCode });
-  if (firstStatus !== "mirrored") return answer(firstStatus, firstStatus === "unreachable" ? `HTTP ${String(firstCode)}, curl exit ${String(first.exitCode)}` : null, version);
-  if (firstCode < 300 || firstCode >= 400) return answer("mirrored", null, version);
-  // The redirect URL holds a signed query, so only its host leaves this function.
-  const redirectHost = hostOf(redirect);
-  if (redirectHost === null || !allowListCovers(input.egressHosts, redirectHost)) return answer("redirect_blocked", redirectHost ?? "an unnamed host", version);
-  const follow = await input.sandbox.exec(input.ref, { file: "curl", args: [...CURL, "-L", "-r", "0-0", "-o", "/dev/null", "-w", "%{http_code}", file], cwd: "/", timeoutMs: 45_000 });
-  const followCode = Number.parseInt(follow.stdout.trim(), 10) || 0;
-  // Only a 2xx read the byte. A redirect at the end of the chain downloaded nothing.
-  const followStatus = followCode >= 300 && followCode < 400 ? "unreachable" : mirrorStatusOf({ exitCode: follow.exitCode, timedOut: follow.timedOut, httpCode: followCode });
-  return answer(followStatus, followStatus === "unreachable" ? `the download from ${redirectHost}: HTTP ${String(followCode)}, curl exit ${String(follow.exitCode)}` : null, version);
+  step.name = "the download request";
+  // A redirect URL holds a signed query, so only its host leaves this function.
+  let url = `${base}/${version}/${id.toLowerCase()}.${version}.nupkg`;
+  let from: string | null = null;
+  for (let hop = 0; hop <= MAX_DOWNLOAD_REDIRECTS; hop += 1) {
+    const response = await input.sandbox.exec(input.ref, { file: "curl", args: [...CURL, "-r", "0-0", "-o", "/dev/null", "-w", "%{http_code} %{redirect_url}", url], cwd: "/", timeoutMs: 45_000 });
+    const [code = "0", redirect = ""] = response.stdout.trim().split(" ");
+    const httpCode = Number.parseInt(code, 10) || 0;
+    const status = mirrorStatusOf({ exitCode: response.exitCode, timedOut: response.timedOut, httpCode });
+    const where = from === null ? "" : `the download from ${from}: `;
+    if (status !== "mirrored") return answer(status, status === "unreachable" ? `${where}HTTP ${String(httpCode)}, curl exit ${String(response.exitCode)}` : null, version);
+    // Only a 2xx read the byte.
+    if (httpCode < 300) return answer("mirrored", null, version);
+    if (redirect === "") return answer("unreachable", `${where}HTTP ${String(httpCode)} with no redirect target`, version);
+    const next = hostOf(redirect);
+    if (next === null || !allowListCovers(input.egressHosts, next)) return answer("redirect_blocked", next ?? "an unnamed host", version);
+    url = redirect;
+    from = next;
+  }
+  return answer("unreachable", `the download from ${from ?? NUGET_MIRROR_HOST} redirects more than ${String(MAX_DOWNLOAD_REDIRECTS)} times`, version);
 };
 
 /**
@@ -524,29 +564,32 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
       const maximum = upper === null ? {} : { maximum: { version: upper, inclusive: failure.maximum?.inclusive === true } };
       // NU1101 names no version, so each project's assets file gives its own. Projects that ask
       // for the same version share one lookup, and the report names each of them.
-      const asks = new Map<string, { requested: RequestedVersion | null; projects: string[]; parents: string[] | null }>();
+      const inCheckout = (path: string): string => (path.startsWith(`${input.repositoryPath}/`) ? path.slice(input.repositoryPath.length + 1) : path);
+      const asks = new Map<string, { requested: RequestedVersion | null; projects: string[]; parents: string[] | null; unread: string[] }>();
       for (const project of failure.projects.length === 0 ? [null] : failure.projects) {
-        const assets =
-          project === null
-            ? null
-            : (await input.sandbox.exec(input.ref, { file: "head", args: ["-c", String(ASSETS_READ_LIMIT), `${posix.dirname(project)}/obj/project.assets.json`], cwd: input.repositoryPath })).stdout;
+        const assetsPath = project === null ? null : await assetsPathOf(input, project);
+        const read = assetsPath === null ? null : await input.sandbox.exec(input.ref, { file: "head", args: ["-c", String(ASSETS_READ_LIMIT), assetsPath], cwd: input.repositoryPath });
+        const assets = read === null || read.exitCode !== 0 ? null : read.stdout;
         const parents = assets === null ? null : parentChainOf(assets, failure.id);
         const requested = version === null ? (assets === null ? null : requestedVersionOf(assets, failure.id)) : { version, exact: failure.exact, ...maximum };
         const key = requested === null ? "" : `${requested.version} ${String(requested.exact)} ${requested.maximum?.version ?? ""} ${String(requested.maximum?.inclusive ?? "")}`;
-        const ask = asks.get(key) ?? { requested, projects: [], parents: null };
-        if (project !== null) ask.projects.push(project.startsWith(`${input.repositoryPath}/`) ? project.slice(input.repositoryPath.length + 1) : project);
+        const ask = asks.get(key) ?? { requested, projects: [], parents: null, unread: [] };
+        if (project !== null) ask.projects.push(inCheckout(project));
+        if (assetsPath !== null && assets === null) ask.unread.push(inCheckout(assetsPath));
         ask.parents ??= parents;
         asks.set(key, ask);
       }
       for (const ask of asks.values()) {
         const result = await onMirror(input, NUGET_MIRROR_OWNER, failure.id, ask.requested);
+        // DI-21.246. An index-only lookup says when it is one because the assets file did not read.
+        const unread = ask.requested !== null || ask.unread.length === 0 ? "" : ` (the mirror index only, because ${ask.unread.join(", ")} did not read)`;
         report.packages.push({
           id: failure.id,
           version: result.version ?? "(any)",
           projects: ask.projects,
           ...(ask.parents === null ? {} : { parents: ask.parents }),
           status: result.status,
-          detail: result.status === "mirrored" ? "found by the restore, and on the mirror" : mirrorStatusText(result.status, result.detail),
+          detail: `${result.status === "mirrored" ? "found by the restore, and on the mirror" : mirrorStatusText(result.status, result.detail)}${unread}`,
         });
         if (result.status === "mirrored" && ![...mirroredIds].some((id) => id.toLowerCase() === failure.id.toLowerCase())) mirroredIds.add(failure.id);
         if (result.status !== "mirrored") failing += 1;

@@ -23,8 +23,12 @@ export interface NugetWorld {
   mirrorStatus?: number;
   /** The host a mirror download redirects to. */
   redirectHost?: string;
+  /** The host the redirect host sends the download on to, when the chain has a second redirect. */
+  secondRedirectHost?: string;
   /** The HTTP status at the end of a followed download. Defaults to 206. */
   downloadStatus?: number;
+  /** True to make the sandbox reject every mirror request, as a failed exec transport does. */
+  mirrorExecRejects?: boolean;
   /** The solutions the find of `*.sln` prints, by path, with their text. */
   solutions?: Record<string, string>;
   /** The exit code of the find of the repository files, to model a scan that did not finish. */
@@ -34,8 +38,10 @@ export interface NugetWorld {
    * Return 90 to model a sandbox with no .NET SDK.
    */
   restore?: (config: string, round: number) => { exitCode: number; output: string };
-  /** `obj/project.assets.json` by project folder. */
+  /** `obj/project.assets.json` by project folder, or an assets file by its whole path. */
   assets?: Record<string, string>;
+  /** The `ProjectAssetsFile` MSBuild evaluates, by project path as the restore names it. Unset, MSBuild names none. */
+  assetsFiles?: Record<string, string>;
 }
 
 const answer = (stdout: string, exitCode = 0, timedOut = false): { exitCode: number; stdout: string; stderr: string; timedOut: boolean } => ({ exitCode, stdout, stderr: "", timedOut });
@@ -62,15 +68,23 @@ export const installNugetWorld = (sandbox: FakeSandbox, world: NugetWorld, repos
       const result = world.restore?.(config, rounds) ?? { exitCode: 0, output: "Restore complete." };
       return answer(result.output, result.exitCode);
     }
+    if (script.includes("-getProperty:ProjectAssetsFile")) {
+      const evaluated = world.assetsFiles?.[command.args[3] ?? ""];
+      return evaluated === undefined ? answer("", 1) : answer(`${evaluated}\n`);
+    }
     if (command.file === "head") {
       const path = command.args[2] ?? "";
-      const folder = path.replace(/\/obj\/project\.assets\.json$/, "");
-      return answer(world.assets?.[folder] ?? "", world.assets?.[folder] === undefined ? 1 : 0);
+      const text = world.assets?.[path] ?? world.assets?.[path.replace(/\/obj\/project\.assets\.json$/, "")];
+      return answer(text ?? "", text === undefined ? 1 : 0);
     }
     if (command.file === "curl") {
       const url = new URL(command.args[command.args.length - 1]!);
       requests.push(url.toString());
       const format = command.args[command.args.indexOf("-w") + 1] ?? "";
+      if (world.mirrorExecRejects === true && url.hostname === "nuget.pkg.github.com") throw new Error("the sandbox exec transport closed");
+      const redirectHost = world.redirectHost ?? "nugetregistryv2prod.blob.core.windows.net";
+      if (url.hostname === redirectHost && world.secondRedirectHost !== undefined) return answer(`302 https://${world.secondRedirectHost}/blobs/abc?sig=secret`);
+      if (url.hostname === (world.secondRedirectHost ?? redirectHost)) return answer(`${String(world.downloadStatus ?? 206)} `);
       if (url.hostname === "api.nuget.org") {
         if (world.nugetOrgDown === true) return answer("", 28, true);
         const raw = world.nugetOrgAnswers?.[url.pathname];
@@ -101,10 +115,8 @@ export const installNugetWorld = (sandbox: FakeSandbox, world: NugetWorld, repos
         if (download !== null) {
           const versions = Array.isArray(entry) ? entry : [];
           const code = status !== 200 ? status : versions.includes(download.version) ? 302 : 404;
-          if (format.includes("redirect_url")) {
-            return answer(code === 302 ? `302 https://${world.redirectHost ?? "nugetregistryv2prod.blob.core.windows.net"}/ghcr1/blobs/sha256:abc?sig=secret` : `${String(code)} `);
-          }
-          return answer(code === 302 ? String(world.downloadStatus ?? 206) : String(code));
+          if (format.includes("redirect_url")) return answer(code === 302 ? `302 https://${redirectHost}/ghcr1/blobs/sha256:abc?sig=secret` : `${String(code)} `);
+          return answer(String(code));
         }
         return answer("\n404");
       }

@@ -4,7 +4,7 @@ import { allowListCovers } from "~/domain/runs/sandbox.js";
 import type { DerivedHostFileSource } from "./derived-hosts.js";
 import { ECOSYSTEM_HOSTS } from "./ecosystem-hosts.js";
 import { compareNugetVersions, normalizeNugetVersion } from "./nuget-packages.js";
-import { attributeOf, childrenNamed, descendantsNamed, parseXml } from "./xml-elements.js";
+import { attributeOf, childrenNamed, descendantsNamed, parseXml, type XmlElement } from "./xml-elements.js";
 
 /**
  * docs/specs/nuget-private-feed-mapping.md. The one private NuGet feed Factoree maps, and the
@@ -51,6 +51,12 @@ export interface NugetConfigFile {
   disabled: string[];
   /** The package patterns `<packageSourceMapping>` gives each source key, in file order. */
   mappings: Array<{ key: string; patterns: string[] }>;
+  /** The `signatureValidationMode` of `<config>`, lower case, or null. */
+  signatureValidationMode: string | null;
+  /** True when `<trustedSigners>` starts with `<clear />`, which drops the signers of the configs above. */
+  clearSigners: boolean;
+  /** The `<author>` and `<repository>` entries of `<trustedSigners>`, in file order. */
+  trustedSigners: XmlElement[];
 }
 
 const hostOf = (url: string): string | null => {
@@ -59,6 +65,15 @@ const hostOf = (url: string): string | null => {
     return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.hostname.toLowerCase() : null;
   } catch {
     return null;
+  }
+};
+
+/** An http(s) source as one location: the scheme and the host in lower case, the path and the query as written, since a server may tell their case apart. */
+const remoteLocationOf = (url: string): string => {
+  try {
+    return new URL(url.trim()).href;
+  } catch {
+    return url.trim();
   }
 };
 
@@ -100,7 +115,25 @@ export const parseNugetConfig = (path: string, text: string): NugetConfigFile =>
       return key === null || patterns.length === 0 ? [] : [{ key, patterns }];
     }),
   );
-  return { path, clear, sources, disabled, mappings };
+  const signatureValidationMode =
+    descendantsNamed(document, "config")
+      .flatMap((block) => childrenNamed(block, "add"))
+      .filter((entry) => (attributeOf(entry, "key") ?? "").trim().toLowerCase() === "signaturevalidationmode")
+      .map((entry) => (attributeOf(entry, "value") ?? "").trim().toLowerCase())
+      .at(-1) ?? null;
+  let clearSigners = false;
+  const trustedSigners: XmlElement[] = [];
+  for (const block of descendantsNamed(document, "trustedSigners")) {
+    for (const child of block.children) {
+      const name = child.name.toLowerCase();
+      if (name === "clear") {
+        clearSigners = true;
+        trustedSigners.length = 0;
+      }
+      if (name === "author" || name === "repository") trustedSigners.push(child);
+    }
+  }
+  return { path, clear, sources, disabled, mappings, signatureValidationMode, clearSigners, trustedSigners };
 };
 
 /** The patterns every config maps to each source key, by lower-case key. */
@@ -214,7 +247,7 @@ export const classifyNugetFeeds = (configs: readonly NugetConfigFile[], coverage
     const disabled = new Set(config.disabled.map((key) => key.toLowerCase()));
     for (const source of config.sources) {
       if (disabled.has(source.key.toLowerCase())) continue;
-      const location = source.host === null ? (localSourcePathOf(source.url, config.path) ?? source.url.trim()) : source.url.toLowerCase();
+      const location = source.host === null ? (localSourcePathOf(source.url, config.path) ?? source.url.trim()) : remoteLocationOf(source.url);
       const identity = `${source.key.toLowerCase()} ${location}`;
       if (seen.has(identity)) continue;
       seen.add(identity);
@@ -340,6 +373,45 @@ const escapeXml = (text: string): string =>
 /** XML forbids `--` in a comment, and .NET refuses a config that has it. */
 const xmlCommentText = (text: string): string => text.replace(/-(?=-)/g, "- ");
 
+/** The elements and attributes of `<trustedSigners>` as NuGet names them, by lower-case name: NuGet reads them in this case only. */
+const SIGNER_ELEMENTS: Record<string, string> = { author: "author", repository: "repository", certificate: "certificate", owners: "owners" };
+const SIGNER_ATTRIBUTES: Record<string, string> = {
+  name: "name",
+  serviceindex: "serviceIndex",
+  fingerprint: "fingerprint",
+  hashalgorithm: "hashAlgorithm",
+  allowuntrustedroot: "allowUntrustedRoot",
+};
+
+/** One trusted signer entry as XML lines, with only the elements and attributes NuGet reads. */
+const signerLines = (element: XmlElement, indent: string): string[] => {
+  const name = SIGNER_ELEMENTS[element.name.toLowerCase()];
+  if (name === undefined) return [];
+  const attributes = Object.entries(element.attributes)
+    .flatMap(([key, value]) => (SIGNER_ATTRIBUTES[key] === undefined ? [] : [` ${SIGNER_ATTRIBUTES[key]}="${escapeXml(value)}"`]))
+    .join("");
+  const children = element.children.flatMap((child) => signerLines(child, `${indent}  `));
+  const text = element.text.trim();
+  if (children.length > 0) return [`${indent}<${name}${attributes}>`, ...children, `${indent}</${name}>`];
+  return [text === "" ? `${indent}<${name}${attributes} />` : `${indent}<${name}${attributes}>${escapeXml(text)}</${name}>`];
+};
+
+/**
+ * DI-21.241. The package signature policy of the repository's configs, which `--configfile`
+ * would otherwise drop: the strictest `signatureValidationMode`, and the trusted signers merged
+ * from the shallowest config down, where a `<clear />` drops those above it.
+ */
+const signaturePolicyOf = (configs: readonly NugetConfigFile[]): { mode: string | null; signers: XmlElement[] } => {
+  const modes = configs.map((config) => config.signatureValidationMode).filter((mode): mode is string => mode !== null && mode !== "");
+  const mode = modes.includes("require") ? "require" : (modes.at(-1) ?? null);
+  const signers: XmlElement[] = [];
+  for (const config of configs) {
+    if (config.clearSigners) signers.length = 0;
+    signers.push(...config.trustedSigners);
+  }
+  return { mode, signers };
+};
+
 /**
  * The folder of a relative local source from the checkout root, since NuGet resolves it from the
  * config that names it. Null for an absolute path, a drive, a share, an environment variable or a
@@ -372,24 +444,31 @@ const rebasedLocalSource = (url: string, configPath: string): string => {
  * `*`: a `*` made the mapped feed the fallback for every id, as a proxy of nuget.org does, and the
  * mirror serves only mirrored packages, so the fallback moves to nuget.org. An added nuget.org
  * then gets `*` only when it takes that fallback, so it widens no restriction of the repository.
+ * For the same reason the file carries the repository's package signature policy: the strictest
+ * `signatureValidationMode` and the trusted signers. It copies no credential section.
  */
 export const renderNugetConfig = (configs: readonly NugetConfigFile[], feeds: readonly NugetFeed[], mirroredIds: readonly string[]): string => {
   const ids = [...new Set(mirroredIds.map((id) => id.trim()).filter((id) => id !== ""))].sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()));
   const mirroredKeys = new Set(ids.map((id) => id.toLowerCase()));
   const clear = configs[0]?.clear ?? false;
   const existingMirror = feeds.find((feed) => feed.kind === "mirror" && githubPackagesOwnerOf(feed.url)?.toLowerCase() === NUGET_MIRROR_OWNER.toLowerCase());
-  const mapped = feeds.find((feed) => feed.kind === "mapped");
+  // Two keys can name the mapped feed. The mirror takes the first key and the patterns of every one,
+  // so no id a later key pinned to the private feed falls through to another source.
+  const mappedFeeds = feeds.filter((feed) => feed.kind === "mapped");
+  const mapped = mappedFeeds[0];
   const mirrorKey = existingMirror?.key ?? mapped?.key ?? "github-packages";
   const repositoryMappings = mappingsOf(configs);
   const patternsOf = (key: string): string[] => repositoryMappings.get(key.toLowerCase()) ?? [];
-  const mappedPatterns = mapped === undefined ? [] : patternsOf(mapped.key);
+  const mappedPatterns = mappedFeeds
+    .flatMap((feed) => patternsOf(feed.key))
+    .filter((pattern, index, all) => all.findIndex((entry) => entry.toLowerCase() === pattern.toLowerCase()) === index);
   const mirrorPatterns = mappedPatterns.filter((pattern) => pattern !== "*");
   const fallback = repositoryMappings.size === 0 || mappedPatterns.includes("*") ? ["*"] : [];
   const sources: Array<{ key: string; url: string; protocolVersion: string | null; patterns: string[]; mirror: boolean; file: string | null }> = [];
   for (const feed of feeds) {
     if (feed.kind === "unsupported") continue;
     if (feed.kind === "mapped") {
-      if (ids.length > 0 && existingMirror === undefined) sources.push({ key: feed.key, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: mirrorPatterns, mirror: true, file: feed.file });
+      if (feed === mapped && ids.length > 0 && existingMirror === undefined) sources.push({ key: feed.key, url: githubPackagesIndexOf(NUGET_MIRROR_OWNER), protocolVersion: "3", patterns: mirrorPatterns, mirror: true, file: feed.file });
       continue;
     }
     if (feed.kind === "mirror" && feed === existingMirror) {
@@ -417,15 +496,18 @@ export const renderNugetConfig = (configs: readonly NugetConfigFile[], feeds: re
   }
   const add = (source: (typeof sources)[number]): string =>
     `    <add key="${escapeXml(source.key)}" value="${escapeXml(source.url)}"${source.protocolVersion === null ? "" : ` protocolVersion="${escapeXml(source.protocolVersion)}"`} />`;
+  const signatures = signaturePolicyOf(configs);
   const lines = [
     '<?xml version="1.0" encoding="utf-8"?>',
     `<!-- Written by Factoree from ${xmlCommentText(configs.map((config) => config.path).join(", ") || "no NuGet.config")}. docs/specs/nuget-private-feed-mapping.md -->`,
     `<!-- ${NUGET_FEED_MAPPING.from} maps to ${NUGET_FEED_MAPPING.to}. Every restore passes this file as its configfile. -->`,
     "<configuration>",
+    ...(signatures.mode === null ? [] : ["  <config>", `    <add key="signatureValidationMode" value="${escapeXml(signatures.mode)}" />`, "  </config>"]),
     "  <packageSources>",
     ...(clear ? ["    <clear />"] : []),
     ...sources.map(add),
     "  </packageSources>",
+    ...(signatures.signers.length === 0 ? [] : ["  <trustedSigners>", ...signatures.signers.flatMap((signer) => signerLines(signer, "    ")), "  </trustedSigners>"]),
   ];
   const mapping = sources
     .map((source) => {
