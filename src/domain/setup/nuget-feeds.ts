@@ -135,7 +135,7 @@ const mappedKeysOf = (mappings: ReadonlyMap<string, readonly string[]>, id: stri
 };
 
 /**
- * DI-21.227. True when the repository's package source mapping sends the id only to the mapped
+ * DI-21.235. True when the repository's package source mapping sends the id only to the mapped
  * feed or the mirror by a pattern more specific than `*`. Such an id is private whatever nuget.org
  * has, because the repository never lets nuget.org serve it. A `*` on the mapped feed makes it the
  * fallback for every id, such as a proxy of nuget.org, and pins nothing.
@@ -179,7 +179,7 @@ export const readNugetConfigFiles = async (
 };
 
 /**
- * DI-21.223. What one enabled source is to the pre-check:
+ * DI-21.231. What one enabled source is to the pre-check:
  * - `public`: on the ecosystem host list or the product allow list, so a sandbox reaches it.
  * - `credential`: a product host credential covers it.
  * - `mapped`: the private feed of NUGET_FEED_MAPPING, which the mirror replaces.
@@ -298,7 +298,7 @@ export const mirrorCredentialFailure = (credentials: readonly HostCredential[], 
 };
 
 /**
- * DI-21.226. The result of one package on the mirror. `not_found` is a 404, which GitHub Packages
+ * DI-21.234. The result of one package on the mirror. `not_found` is a 404, which GitHub Packages
  * also answers for a package the token cannot read.
  */
 export type MirrorStatus = "mirrored" | "not_found" | "version_missing" | "unauthorized" | "unreachable" | "redirect_blocked";
@@ -358,7 +358,7 @@ const rebasedLocalSource = (url: string, configPath: string): string => {
 };
 
 /**
- * DI-21.227. The `.factoree/nuget.config` Factoree writes. It copies the sources of the
+ * DI-21.235. The `.factoree/nuget.config` Factoree writes. It copies the sources of the
  * repository's configs in order, leaves out a disabled source, and replaces only the mapped
  * private feed: with the mirror when a package needs it, and with nothing when none does,
  * because a source no sandbox reaches fails every restore. It keeps `<clear />` only when the
@@ -467,7 +467,7 @@ const RESTORE_FAILURE =
   /^\s*(?:(.+?)\s*:\s*)?error (?:(NU1101|NU1102):\s*Unable to find package '?([A-Za-z0-9_.-]+)'?(?:\s+with version \(([^)]*)\))?|(NU1100):\s*Unable to resolve '([A-Za-z0-9_.-]+)(?:\s+\(([^)]*)\))?')/gim;
 
 /**
- * DI-21.228. The packages a `dotnet restore` output names as not found, once per id and whole
+ * DI-21.236. The packages a `dotnet restore` output names as not found, once per id and whole
  * range, so a narrower range of the same id and lower bound is looked up on its own. Each keeps
  * every project that reported it. Factoree looks each one up on the mirror itself: the restore
  * text alone proves nothing.
@@ -584,7 +584,7 @@ const lowerBoundOf = (range: string): RequestedVersion | null => {
 };
 
 /**
- * DI-21.232. The lowest version the parents of a package ask for in `obj/project.assets.json`,
+ * DI-21.240. The lowest version the parents of a package ask for in `obj/project.assets.json`,
  * normalised, or null. NU1101 names no version. A range with no inclusive lower bound names none.
  */
 export const requestedVersionOf = (assetsText: string, id: string): RequestedVersion | null => {

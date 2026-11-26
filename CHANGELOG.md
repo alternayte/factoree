@@ -8,12 +8,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- A .NET repository whose `NuGet.config` names the private feed `nuget.frontiersin.net` now sets up with no change to the repository. Before the setup agent starts, a NuGet pre-check runs in a sandbox. It drops the packages that nuget.org lists at the exact version, checks the `nuget.pkg.github.com` host credential, and looks each private package up on the GitHub Packages mirror `nuget.pkg.github.com/frontiersin`, the index and then the download. It then writes `.factoree/nuget.config` with `packageSourceMapping`, and restores with it for at most 5 rounds to find each transitive private package (docs/specs/nuget-private-feed-mapping.md, DI-21.221 to DI-21.232).
-- A missing package, a missing or wrong credential, or another private feed fails the setup before any agent session, with no app-change issue. The setup report and the `setup_precheck:nuget` run event name each package, the file that references it, its parent chain and the fix: mirror it to https://github.com/orgs/frontiersin/packages, or fix the credential (DI-21.229).
+- A .NET repository whose `NuGet.config` names the private feed `nuget.frontiersin.net` now sets up with no change to the repository. Before the setup agent starts, a NuGet pre-check runs in a sandbox. It drops the packages that nuget.org lists at the exact version, checks the `nuget.pkg.github.com` host credential, and looks each private package up on the GitHub Packages mirror `nuget.pkg.github.com/frontiersin`, the index and then the download. It then writes `.factoree/nuget.config` with `packageSourceMapping`, and restores with it for at most 5 rounds to find each transitive private package (docs/specs/nuget-private-feed-mapping.md, DI-21.229 to DI-21.240).
+- A missing package, a missing or wrong credential, or another private feed fails the setup before any agent session, with no app-change issue. The setup report and the `setup_precheck:nuget` run event name each package, the file that references it, its parent chain and the fix: mirror it to https://github.com/orgs/frontiersin/packages, or fix the credential (DI-21.237).
 
 ### Changed
 
-- The setup prompt is `setup@18`: it gives the agent `.factoree/nuget.config`, restores with `--configfile` in the bootstrap, and passes `--no-restore` to later dotnet commands. The implementer prompt is `implementer/14`, with the same rule. A setup whose previous setup failed in the NuGet pre-check always runs, and the pre-check outcome is part of the setup input key (DI-21.222, DI-21.230).
+- The setup prompt is `setup@18`: it gives the agent `.factoree/nuget.config`, restores with `--configfile` in the bootstrap, and passes `--no-restore` to later dotnet commands. The implementer prompt is `implementer/14`, with the same rule. A setup whose previous setup failed in the NuGet pre-check always runs, and the pre-check outcome is part of the setup input key (DI-21.230, DI-21.238).
+
+## [0.23.1] - 2026-11-26
+
+### Fixed
+
+- The retro settings response has a `saved` flag. The Retro page fills in the browser time zone only for a workspace that never saved its settings.
+- An already proposed finding has `duplicateOfRetroId`. The Retro page links to the retro of the finding it repeats.
+- Each retro event has an `at` time, and the Retro page shows it. An event recorded before 0.23.1 has no time.
+- The retro list has pages of 25 with a `cursor`. The Retro page has "Load older retros".
+
+## [0.23.0] - 2026-11-25
+
+### Added
+
+- The retro agent. A retro runs on a schedule or on Run now, outside any run, with one agent session per product. It reads the runs that ended since the last retro and the product's signal results, and proposes findings. Factoree keeps a finding only when it cites runs and signal results the session read (docs/specs/retro-agent.md, DI-21.221 to DI-21.226).
+- Three finding kinds: a factory finding cites runs, an error finding cites production errors, and an idea finding cites analytics. Create issue makes a Linear issue in the product's team. Factory and error issues are delegated to Factoree. An idea issue is not delegated, and a human decides it.
+- Signal sources: a product's MCP servers for errors or analytics, with the queries Factoree runs before each retro session. The token stays in the worker, and each result is redacted and stored with its SHA-256.
+- The product goal, in markdown, tells the retro agent what the product must achieve and what to improve first.
+- Keep transcripts stores the redacted, gzipped transcript of every agent session of a product, in Postgres or in an S3-compatible bucket from the install settings or `FACTOREE_TRANSCRIPT_S3_*`. Retro data retention deletes transcripts and signal results after 30 days by default (DI-21.227).
+- The Retro page shows the retro settings, the next retro, each retro with its cost, events, findings and the first-pass rate, repairs per run, hung sessions and cost per run of each product. A running retro walks the factory floor (DI-21.228).
 
 ## [0.22.1] - 2026-11-25
 

@@ -3,7 +3,7 @@
  * each new agentRun workflow as `factoreeRelease`. The release commit sets it with package.json;
  * `tests/unit/upgrade-check.test.ts` fails when the two differ.
  */
-export const FACTOREE_RELEASE = "0.22.1";
+export const FACTOREE_RELEASE = "0.23.1";
 
 /**
  * The oldest release whose open agentRun workflows this code replays. 0.16.0 removed the old

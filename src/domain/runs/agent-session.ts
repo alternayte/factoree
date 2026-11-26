@@ -8,7 +8,7 @@
 
 /** The roles of SDD section 33 and docs/specs/refiner-agent.md. */
 /** docs/specs/repository-setup-and-services.md adds `setup`, the agent of a setup run. */
-export type AgentSessionRole = "implementer" | "validator" | "reviewer" | "refiner" | "setup";
+export type AgentSessionRole = "implementer" | "validator" | "reviewer" | "refiner" | "setup" | "retro";
 
 /**
  * How one session ended. `hung` means it wrote no output for the silence limit, and Factoree

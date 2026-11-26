@@ -180,8 +180,7 @@ export function AgentsSection({
       {editing !== null ? (
         <PickerDialog
           key={editing}
-          target={editing}
-          form={form}
+          target={pickerTarget(form, editing, catalogs)}
           catalogs={catalogs}
           loading={opencode.isPending || claude.isPending}
           secretNames={secretNames}
@@ -211,9 +210,136 @@ export function AgentsSection({
 
 type Choice = { runner: Runner; model: string; effort: string; inherit: boolean };
 
+/** What the dialog edits: its title, its first values, the default it may keep, and its effort. */
+type PickerTarget = {
+  title: string;
+  initial: Choice;
+  /**
+   * The default the row may keep, or null for a row that is the default. A known runner and model
+   * let the dialog offer the efforts of the default; `effort` false hides the effort while it keeps it.
+   */
+  inherit: { label: string; runner?: Runner; model?: string; effort: boolean } | null;
+  /** The effort choice, or null for a row with no effort. */
+  effort: { hint: string; defaultLabel: string } | null;
+};
+
+/** pickerTarget reads the dialog values of one row of the product form. */
+function pickerTarget(
+  form: ProductForm,
+  target: Role | "default",
+  catalogs: Record<Runner, Catalog | undefined>,
+): PickerTarget {
+  if (target === "default") {
+    return {
+      title: "Default runner and model",
+      initial: { runner: form.defaultRunner, model: form.model.trim(), effort: "", inherit: false },
+      inherit: null,
+      effort: null,
+    };
+  }
+  const runner = form.runners[target] || form.defaultRunner;
+  const defaultName =
+    lookup(catalogs[form.defaultRunner], form.defaultRunner, form.model.trim())?.model.name ??
+    (form.model.trim() || DEFAULT_MODEL[form.defaultRunner]);
+  return {
+    title: `${ROLE_LABEL[target]} agent`,
+    initial: {
+      runner,
+      model: form.models[target].trim() || (runner === form.defaultRunner ? form.model.trim() : ""),
+      effort: form.effort[target].trim(),
+      inherit: !form.runners[target] && !form.models[target].trim(),
+    },
+    inherit: {
+      label: `Use the default: ${RUNNER_LABEL[form.defaultRunner]} · ${defaultName}`,
+      runner: form.defaultRunner,
+      model: form.model.trim(),
+      effort: true,
+    },
+    effort:
+      target === "setup"
+        ? { hint: "Empty takes the implementer effort.", defaultLabel: "implementer" }
+        : { hint: "Empty takes the model default.", defaultLabel: "default" },
+  };
+}
+
+/** The runner, the model and the effort of the retro. A null runner takes each product's default. */
+export type RetroAgent = { runner: Runner | null; model: string | null; effort: string | null };
+
+/**
+ * docs/specs/retro-agent.md and docs/specs/model-picker.md. The retro row on the Retro settings: the
+ * same dialog as a product role. Each retro session runs with its product's credential, so the row
+ * names no key.
+ */
+export function RetroAgentRow({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: RetroAgent;
+  onChange: (next: RetroAgent) => void;
+  disabled: boolean;
+}) {
+  const opencode = useCatalog("opencode");
+  const claude = useCatalog("claude");
+  const catalogs: Record<Runner, Catalog | undefined> = { opencode: opencode.data, claude: claude.data };
+  const [editing, setEditing] = useState(false);
+  const name =
+    value.runner === null
+      ? null
+      : (lookup(catalogs[value.runner], value.runner, value.model ?? "")?.model.name ??
+        (value.model || DEFAULT_MODEL[value.runner]));
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <div className="min-w-0 flex-1">
+        <span className="text-sm font-medium text-ink">Retro agent</span>
+        <p className="text-sm text-body">
+          {value.runner === null ? (
+            "Each product's default runner and model"
+          ) : (
+            <>
+              {RUNNER_LABEL[value.runner]} · <span className="font-mono text-ink">{name}</span> · effort{" "}
+              <span className="font-mono text-ink">{value.effort || DEFAULT_EFFORT}</span>
+            </>
+          )}
+        </p>
+      </div>
+      <Button size="sm" disabled={disabled} onClick={() => setEditing(true)}>
+        Change
+      </Button>
+      {editing ? (
+        <PickerDialog
+          target={{
+            title: "Retro agent",
+            initial: {
+              runner: value.runner ?? "claude",
+              model: value.model ?? "",
+              effort: value.effort ?? "",
+              inherit: value.runner === null,
+            },
+            inherit: { label: "Use each product's default runner and model", effort: false },
+            effort: { hint: "Empty takes the model default.", defaultLabel: "default" },
+          }}
+          catalogs={catalogs}
+          loading={opencode.isPending || claude.isPending}
+          secretNames={null}
+          onAddKey={() => undefined}
+          onClose={() => setEditing(false)}
+          onApply={(choice) => {
+            onChange(
+              choice.inherit
+                ? { runner: null, model: null, effort: null }
+                : { runner: choice.runner, model: choice.model || null, effort: choice.effort || null },
+            );
+            setEditing(false);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function PickerDialog({
   target,
-  form,
   catalogs,
   loading,
   secretNames,
@@ -221,8 +347,7 @@ function PickerDialog({
   onApply,
   onClose,
 }: {
-  target: Role | "default";
-  form: ProductForm;
+  target: PickerTarget;
   catalogs: Record<Runner, Catalog | undefined>;
   loading: boolean;
   secretNames: Set<string> | null;
@@ -233,17 +358,10 @@ function PickerDialog({
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const listId = useId();
-  const isDefault = target === "default";
-  const [inherit, setInherit] = useState(!isDefault && !form.runners[target] && !form.models[target].trim());
-  const [runner, setRunner] = useState<Runner>(
-    isDefault ? form.defaultRunner : form.runners[target] || form.defaultRunner,
-  );
-  const [model, setModel] = useState(
-    isDefault
-      ? form.model.trim()
-      : form.models[target].trim() || (runner === form.defaultRunner ? form.model.trim() : ""),
-  );
-  const [effort, setEffort] = useState(isDefault ? "" : form.effort[target].trim());
+  const [inherit, setInherit] = useState(target.inherit !== null && target.initial.inherit);
+  const [runner, setRunner] = useState<Runner>(target.initial.runner);
+  const [model, setModel] = useState(target.initial.model);
+  const [effort, setEffort] = useState(target.initial.effort);
   const [query, setQuery] = useState("");
   const catalog = catalogs[runner];
   const listed = lookup(catalog, runner, model);
@@ -255,15 +373,16 @@ function PickerDialog({
     if (dialog && !dialog.open) dialog.showModal();
   }, []);
 
-  // What the role runs while it keeps the default: the default runner and model.
-  const effectiveRunner = inherit ? form.defaultRunner : runner;
-  const effectiveModel = inherit ? form.model.trim() : model;
-  const effective = lookup(catalogs[effectiveRunner], effectiveRunner, effectiveModel);
+  // What the role runs while it keeps the default: the default runner and model, when known.
+  const effectiveRunner = inherit ? target.inherit?.runner : runner;
+  const effectiveModel = inherit ? (target.inherit?.model ?? "") : model;
+  const effective = effectiveRunner === undefined ? null : lookup(catalogs[effectiveRunner], effectiveRunner, effectiveModel);
   const efforts: string[] | null = effective
     ? effective.model.efforts
     : effectiveRunner === "claude"
       ? [...CLAUDE_EFFORTS]
       : null;
+  const showEffort = target.effort !== null && (!inherit || target.inherit?.effort === true);
 
   const matches = useMemo(() => {
     if (!catalog?.available) return [] as { provider: Provider; model: Model }[];
@@ -305,7 +424,7 @@ function PickerDialog({
     document.getElementById(`${listId}-${active}`)?.scrollIntoView({ block: "nearest" });
   }, [active, listId]);
 
-  const title = isDefault ? "Default runner and model" : `${ROLE_LABEL[target]} agent`;
+  const title = target.title;
   let lastProvider = "";
 
   return (
@@ -324,12 +443,8 @@ function PickerDialog({
         </h2>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-        {!isDefault ? (
-          <Switch
-            checked={inherit}
-            onCheckedChange={setInherit}
-            label={`Use the default: ${RUNNER_LABEL[form.defaultRunner]} · ${lookup(catalogs[form.defaultRunner], form.defaultRunner, form.model.trim())?.model.name ?? (form.model.trim() || DEFAULT_MODEL[form.defaultRunner])}`}
-          />
+        {target.inherit !== null ? (
+          <Switch checked={inherit} onCheckedChange={setInherit} label={target.inherit.label} />
         ) : null}
 
         {!inherit ? (
@@ -504,12 +619,9 @@ function PickerDialog({
           </>
         ) : null}
 
-        {!isDefault ? (
+        {showEffort && target.effort !== null ? (
           efforts === null ? (
-            <Field
-              label="Effort"
-              hint={target === "setup" ? "Empty takes the implementer effort." : "Empty takes the model default."}
-            >
+            <Field label="Effort" hint={target.effort.hint}>
               {(props) => (
                 <Input
                   {...props}
@@ -534,14 +646,14 @@ function PickerDialog({
                     className={cn("segment", effort === value && "segment-on")}
                     onClick={() => setEffort(value)}
                   >
-                    {value || (target === "setup" ? "implementer" : "default")}
+                    {value || target.effort?.defaultLabel}
                   </button>
                 ))}
               </div>
             </div>
           )
         ) : null}
-        {!isDefault && efforts !== null && effort && !efforts.includes(effort) ? (
+        {showEffort && efforts !== null && effort && !efforts.includes(effort) ? (
           <p className="text-sm text-warning">The effort {effort} does not fit this model. Pick one above.</p>
         ) : null}
       </div>

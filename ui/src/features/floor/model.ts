@@ -7,6 +7,7 @@ import type { GetFloorResponse } from "@/api/types.gen";
 export type FloorJson = GetFloorResponse;
 export type FloorRunJson = FloorJson["runs"][number];
 export type FloorSetupJson = FloorJson["setups"][number];
+export type FloorRetroJson = FloorJson["retros"][number];
 export type ToolKind = FloorJson["pulses"][number]["toolKind"];
 
 /** The stations of one line, in order. The index is the position along the line. */
@@ -98,11 +99,21 @@ export interface SetupState {
   status: string;
 }
 
+/** docs/specs/retro-agent.md. A retro that runs at the moment, and the product its session reads. */
+export interface RetroState {
+  retro: FloorRetroJson;
+  /** The product of the newest session pulse of the retro, or null before its first pulse. */
+  productId: string | null;
+  toolKind: ToolKind | null;
+  lastOutputAt: number | null;
+}
+
 export interface FloorMoment {
   at: number;
   crates: CrateState[];
   operators: OperatorState[];
   setups: SetupState[];
+  retros: RetroState[];
   /** The machines whose check failed within ALERT_MS, by product id and station. */
   alerts: Array<{ productId: string; station: StationKey }>;
   human: CrateState[];
@@ -272,9 +283,15 @@ export const floorAt = (floor: FloorJson, at: number, live: boolean): FloorMomen
   const productOfRun = new Map(floor.runs.map((run) => [run.id, run.productId]));
   const productOfSetup = new Map(floor.setups.map((setup) => [setup.id, setup.productId]));
   const newest = new Map<string, FloorJson["pulses"][number]>();
+  const retroPulses = new Map<string, FloorJson["pulses"][number]>();
   for (const pulse of floor.pulses) {
     const when = ms(pulse.at);
     if (!live && (when > at || at - when > REPLAY_PULSE_MS)) continue;
+    if (pulse.retroId !== null) {
+      const known = retroPulses.get(pulse.retroId);
+      if (known === undefined || ms(known.at) < when) retroPulses.set(pulse.retroId, pulse);
+      continue;
+    }
     const key = `${pulse.runId ?? `setup:${pulse.setupId ?? ""}`}:${pulse.role}`;
     const known = newest.get(key);
     if (known === undefined || ms(known.at) < when) newest.set(key, pulse);
@@ -300,9 +317,23 @@ export const floorAt = (floor: FloorJson, at: number, live: boolean): FloorMomen
     const status = current.change.status;
     return status === "queued" || status === "running" ? [{ setup, status }] : [];
   });
+  // A retro is on the floor from its start until it ends. Live, a retro with no end runs while its status says so.
+  const retros = floor.retros.flatMap((retro): RetroState[] => {
+    if (ms(retro.startedAt) > at) return [];
+    if (retro.endedAt === null ? retro.status !== "running" : ms(retro.endedAt) <= at) return [];
+    const pulse = retroPulses.get(retro.id);
+    return [
+      {
+        retro,
+        productId: pulse?.productId ?? null,
+        toolKind: pulse?.toolKind ?? null,
+        lastOutputAt: pulse === undefined ? null : ms(pulse.lastOutputAt),
+      },
+    ];
+  });
   const human = crates.filter((crate) => crate.human);
   const running = crates.filter((crate) => !crate.human && !isEnded(crate) && crate.place !== "intake").length;
-  return { at, crates, operators, setups, alerts: alertsAt(floor.runs, at), human, running };
+  return { at, crates, operators, setups, retros, alerts: alertsAt(floor.runs, at), human, running };
 };
 
 /** True for a crate whose run ended: in the yard, at the gate, in the bin, gone or at the dock after its end. */

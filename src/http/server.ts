@@ -39,6 +39,8 @@ import { PrismaAgentSessionStore } from "~/persistence/prisma/agent-session.pris
 import { registerInstallationRoutes } from "./admin/installations.routes.js";
 import { registerContextSourceRoutes } from "./admin/context-sources.routes.js";
 import { registerSettingsRoutes } from "./admin/settings.routes.js";
+import { registerRetroRoutes, type RetroRouteDependencies } from "./admin/retro.routes.js";
+import { PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore } from "~/persistence/prisma/retro.prisma.js";
 import { registerSandboxProviderRoutes } from "./admin/sandbox-providers.routes.js";
 import { registerDrainRoutes, type DrainRouteDependencies } from "./admin/drain.routes.js";
 import { PrismaSandboxProviderStore } from "~/persistence/prisma/sandbox-provider.prisma.js";
@@ -62,7 +64,17 @@ declare module "fastify" {
 }
 
 export interface ServerDependencies {
-  env: Pick<Env, "FACTOREE_PUBLIC_URL" | "FACTOREE_MASTER_KEY" | "FACTOREE_UNSAFE_LOCAL_SANDBOX">;
+  env: Pick<Env, "FACTOREE_PUBLIC_URL" | "FACTOREE_MASTER_KEY" | "FACTOREE_UNSAFE_LOCAL_SANDBOX"> &
+    Partial<
+      Pick<
+        Env,
+        | "FACTOREE_TRANSCRIPT_S3_ENDPOINT"
+        | "FACTOREE_TRANSCRIPT_S3_BUCKET"
+        | "FACTOREE_TRANSCRIPT_S3_REGION"
+        | "FACTOREE_TRANSCRIPT_S3_ACCESS_KEY"
+        | "FACTOREE_TRANSCRIPT_S3_SECRET_KEY"
+      >
+    >;
   /** The release version, for the OpenAPI document. */
   version: string;
   logger: Logger;
@@ -119,6 +131,11 @@ export interface ServerDependencies {
   drain?: DrainRouteDependencies;
   /** The built UI. Absent, or a directory without index.html, serves no UI. */
   uiRoot?: string;
+  /**
+   * docs/specs/retro-agent.md. The retro schedule, the Linear issues of findings and the MCP client
+   * of a signal source test. Absent in a server that starts no workflow, such as the OpenAPI build.
+   */
+  retro?: Pick<RetroRouteDependencies, "scheduler" | "linearIssues" | "mcpTools" | "redactor">;
 }
 
 /** A server with no workflow client documents the drain routes and turns nothing on. */
@@ -334,6 +351,34 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         temporalNamespace: dependencies.temporalNamespace ?? "default",
         listLinearTeams: dependencies.setup.linear.listTeams,
         ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
+        transcriptBucketEnv: {
+          FACTOREE_TRANSCRIPT_S3_ENDPOINT: dependencies.env.FACTOREE_TRANSCRIPT_S3_ENDPOINT,
+          FACTOREE_TRANSCRIPT_S3_BUCKET: dependencies.env.FACTOREE_TRANSCRIPT_S3_BUCKET,
+          FACTOREE_TRANSCRIPT_S3_REGION: dependencies.env.FACTOREE_TRANSCRIPT_S3_REGION,
+          FACTOREE_TRANSCRIPT_S3_ACCESS_KEY: dependencies.env.FACTOREE_TRANSCRIPT_S3_ACCESS_KEY,
+          FACTOREE_TRANSCRIPT_S3_SECRET_KEY: dependencies.env.FACTOREE_TRANSCRIPT_S3_SECRET_KEY,
+        },
+      });
+      // docs/specs/retro-agent.md.
+      registerRetroRoutes(admin, {
+        tenants: dependencies.tenants,
+        products: dependencies.products,
+        secrets: dependencies.secrets,
+        retroSettings: new PrismaRetroSettingsStore(dependencies.prisma),
+        retros: new PrismaRetroStore(dependencies.prisma),
+        signalSources: new PrismaSignalSourceStore(dependencies.prisma),
+        scheduler: dependencies.retro?.scheduler ?? null,
+        linearIssues: dependencies.retro?.linearIssues ?? (() => Promise.reject(new Error("this server creates no Linear issue"))),
+        mcpTools:
+          dependencies.retro?.mcpTools ??
+          (() => ({ callTool: () => Promise.reject(new Error("this server calls no MCP server")) })),
+        redactor: dependencies.retro?.redactor ?? { redactText: (text) => text },
+        publicUrl,
+        userName: async (userId) => {
+          const user = await dependencies.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
+          return user === null ? null : user.name.trim() || user.email;
+        },
+        logger: dependencies.logger,
       });
       registerDrainRoutes(admin, dependencies.drain ?? NO_DRAIN);
       registerMetricsRoute(admin);

@@ -39,7 +39,17 @@ export type ProductForm = {
   defaultAutonomy: AutonomyLevel;
   riskCaps: { label: string; level: AutonomyLevel }[];
   allowedDomains: string;
+  /** docs/specs/retro-agent.md. The product goal in markdown. Empty clears it. */
+  productGoal: string;
+  keepTranscripts: boolean;
+  retroRetentionDays: string;
 };
+
+/** docs/specs/retro-agent.md. The limits of the product goal and of the retro data retention. */
+export const PRODUCT_GOAL_MAX_BYTES = 16 * 1024;
+export const RETRO_RETENTION = { min: 7, max: 365 } as const;
+
+export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 
 const asLevel = (value: string): AutonomyLevel =>
   (AUTONOMY_LEVELS as readonly string[]).includes(value) ? (value as AutonomyLevel) : "L2";
@@ -84,6 +94,9 @@ export function formOf(p: Product): ProductForm {
     defaultAutonomy: asLevel(p.defaultAutonomy),
     riskCaps: Object.entries(p.riskCaps ?? {}).map(([label, level]) => ({ label, level: asLevel(level) })),
     allowedDomains: p.allowedDomains.join("\n"),
+    productGoal: p.productGoal ?? "",
+    keepTranscripts: p.keepTranscripts,
+    retroRetentionDays: String(p.retroRetentionDays),
   };
 }
 
@@ -147,6 +160,11 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
       problems.push(`The review app “${slug}” is no GitHub App slug: use letters, digits and hyphens.`);
   }
   if (!form.name.trim()) problems.push("The product needs a name.");
+  if (byteLength(form.productGoal) > PRODUCT_GOAL_MAX_BYTES)
+    problems.push(`The product goal must be at most ${PRODUCT_GOAL_MAX_BYTES / 1024} KiB.`);
+  const retention = Number(form.retroRetentionDays.trim());
+  if (!form.retroRetentionDays.trim() || !Number.isInteger(retention) || retention < RETRO_RETENTION.min || retention > RETRO_RETENTION.max)
+    problems.push(`Retro data retention must be a whole number of days from ${RETRO_RETENTION.min} to ${RETRO_RETENTION.max}.`);
   if (problems.length > 0) return { problems };
   const effort = (role: Role) => form.effort[role].trim() || null;
   return {
@@ -177,6 +195,10 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
         .split(/[\s,]+/)
         .map((d) => d.trim())
         .filter(Boolean),
+      // An empty goal clears it.
+      productGoal: form.productGoal.trim() ? form.productGoal : "",
+      keepTranscripts: form.keepTranscripts,
+      retroRetentionDays: retention,
     },
   };
 }

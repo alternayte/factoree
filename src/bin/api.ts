@@ -58,6 +58,9 @@ import {
   readLinearOrganization,
 } from "~/adapters/linear/linear-app-flows.js";
 import { ModelCatalogService } from "~/domain/products/model-catalog-service.js";
+import { createRetroScheduler } from "~/temporal/retro-schedule.js";
+import { createLinearIssues } from "~/adapters/linear/linear-issues.js";
+import { McpJsonRpcClient } from "~/adapters/mcp/mcp-json-rpc-client.js";
 import { PrismaModelCatalogStore } from "~/persistence/prisma/model-catalog.prisma.js";
 import { createModelsDevSource } from "~/adapters/models-dev/models-dev-source.js";
 import {
@@ -300,6 +303,14 @@ const app = buildServer({
       readOrganization: (accessToken) => readLinearOrganization(accessToken),
       listTeams: async (linearWorkspaceId) => listLinearTeams(await linearTokens.tokenFor(linearWorkspaceId)),
     },
+  },
+  // docs/specs/retro-agent.md. The schedule follows each save of the retro settings. A finding's
+  // issue acts as the Factoree app of the workspace, as an app-change issue does.
+  retro: {
+    scheduler: createRetroScheduler(client, env.FACTOREE_TEMPORAL_TASK_QUEUE),
+    linearIssues: async (tenantId) => createLinearIssues(await linearTokenOfTenant(tenantId)),
+    mcpTools: (endpoint, token) => new McpJsonRpcClient({ endpoint, token, fetch }),
+    redactor,
   },
   // dist/bin/api.js sits two levels below the repository root, beside ui/dist.
   uiRoot: fileURLToPath(new URL("../../ui/dist", import.meta.url)),

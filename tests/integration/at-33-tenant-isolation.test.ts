@@ -147,6 +147,15 @@ describe("AT-33 tenant isolation", () => {
         "run_status_change",
         "setup_status_change",
         "session_pulse",
+        // docs/specs/retro-agent.md. The retro settings, retros, sessions, findings, signal
+        // sources and results, and kept transcripts of one tenant.
+        "retro_settings",
+        "retro",
+        "retro_session",
+        "retro_finding",
+        "signal_source",
+        "signal_result",
+        "agent_transcript",
       ].sort(),
     );
   });

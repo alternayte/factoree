@@ -247,7 +247,7 @@ const fromToolManifest = (file: RepositoryTextFile): NugetPackageReference[] => 
 };
 
 /**
- * docs/specs/nuget-private-feed-mapping.md, DI-21.224. The package references of a repository:
+ * docs/specs/nuget-private-feed-mapping.md, DI-21.232. The package references of a repository:
  * each project file with the nearest `Directory.Build.props`, `Directory.Packages.props` and
  * `Directory.Build.targets` above it, and each parent one that file imports, each
  * `packages.config` and each `dotnet-tools.json`. A parent file applies where its `<Import>`

@@ -77,6 +77,8 @@ export interface CreateRunInput {
   workItemUrl?: string | null;
   /** docs/specs/run-recovery.md. The failed run this run follows up, or absent. */
   followUpOfRunId?: string | null;
+  /** docs/specs/retro-agent.md. The human reply that started the follow-up run, redacted by the activity. */
+  followUpReply?: string | null;
 }
 
 export interface RunStatusPatch {

@@ -43,6 +43,11 @@ describe("the redactor of the API and the worker", () => {
       sandboxRegistryTokenCipher: encryptSecret("registry-token-value", KEY),
       gitAuthorName: "Factoree",
       gitAuthorEmail: "factoree@users.noreply.github.com",
+      transcriptS3Endpoint: "https://s3.example.com",
+      transcriptS3Bucket: "transcripts",
+      transcriptS3Region: "eu-west-1",
+      transcriptS3AccessKey: "AKIAEXAMPLE",
+      transcriptS3SecretKeyCipher: encryptSecret("transcript-secret-value", KEY),
       setupTokenHash: null,
       operatorTenantId: null,
       setupCompletedAt: null,
@@ -60,6 +65,7 @@ describe("the redactor of the API and the worker", () => {
         "linear-secret-value",
         "linear-webhook-value",
         "registry-token-value",
+        "transcript-secret-value",
       ].sort(),
     );
     expect(settings.sandbox.registryToken).toBe("registry-token-value");

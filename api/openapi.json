@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Factoree",
-    "version": "0.22.1"
+    "version": "0.23.1"
   },
   "components": {
     "securitySchemes": {
@@ -2552,6 +2552,18 @@
                     "automaticFollowUpLimit": {
                       "type": "number"
                     },
+                    "productGoal": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "keepTranscripts": {
+                      "type": "boolean"
+                    },
+                    "retroRetentionDays": {
+                      "type": "number"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -2590,6 +2602,9 @@
                     "appChangeIssues",
                     "reviewAppDenyList",
                     "automaticFollowUpLimit",
+                    "productGoal",
+                    "keepTranscripts",
+                    "retroRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3318,6 +3333,18 @@
                     "automaticFollowUpLimit": {
                       "type": "number"
                     },
+                    "productGoal": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "keepTranscripts": {
+                      "type": "boolean"
+                    },
+                    "retroRetentionDays": {
+                      "type": "number"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -3356,6 +3383,9 @@
                     "appChangeIssues",
                     "reviewAppDenyList",
                     "automaticFollowUpLimit",
+                    "productGoal",
+                    "keepTranscripts",
+                    "retroRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3760,6 +3790,18 @@
                       "automaticFollowUpLimit": {
                         "type": "number"
                       },
+                      "productGoal": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "keepTranscripts": {
+                        "type": "boolean"
+                      },
+                      "retroRetentionDays": {
+                        "type": "number"
+                      },
                       "createdAt": {
                         "type": "string"
                       },
@@ -3798,6 +3840,9 @@
                       "appChangeIssues",
                       "reviewAppDenyList",
                       "automaticFollowUpLimit",
+                      "productGoal",
+                      "keepTranscripts",
+                      "retroRetentionDays",
                       "createdAt",
                       "updatedAt"
                     ]
@@ -4225,6 +4270,18 @@
                     "automaticFollowUpLimit": {
                       "type": "number"
                     },
+                    "productGoal": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "keepTranscripts": {
+                      "type": "boolean"
+                    },
+                    "retroRetentionDays": {
+                      "type": "number"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -4263,6 +4320,9 @@
                     "appChangeIssues",
                     "reviewAppDenyList",
                     "automaticFollowUpLimit",
+                    "productGoal",
+                    "keepTranscripts",
+                    "retroRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -4675,6 +4735,18 @@
                     "automaticFollowUpLimit": {
                       "type": "number"
                     },
+                    "productGoal": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "keepTranscripts": {
+                      "type": "boolean"
+                    },
+                    "retroRetentionDays": {
+                      "type": "number"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -4713,6 +4785,9 @@
                     "appChangeIssues",
                     "reviewAppDenyList",
                     "automaticFollowUpLimit",
+                    "productGoal",
+                    "keepTranscripts",
+                    "retroRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -5138,6 +5213,20 @@
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 20
+                  },
+                  "productGoal": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "keepTranscripts": {
+                    "type": "boolean"
+                  },
+                  "retroRetentionDays": {
+                    "type": "integer",
+                    "minimum": 7,
+                    "maximum": 365
                   }
                 },
                 "additionalProperties": false
@@ -5493,6 +5582,18 @@
                     "automaticFollowUpLimit": {
                       "type": "number"
                     },
+                    "productGoal": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "keepTranscripts": {
+                      "type": "boolean"
+                    },
+                    "retroRetentionDays": {
+                      "type": "number"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -5531,6 +5632,9 @@
                     "appChangeIssues",
                     "reviewAppDenyList",
                     "automaticFollowUpLimit",
+                    "productGoal",
+                    "keepTranscripts",
+                    "retroRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -6055,6 +6159,18 @@
                     "automaticFollowUpLimit": {
                       "type": "number"
                     },
+                    "productGoal": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "keepTranscripts": {
+                      "type": "boolean"
+                    },
+                    "retroRetentionDays": {
+                      "type": "number"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -6093,6 +6209,9 @@
                     "appChangeIssues",
                     "reviewAppDenyList",
                     "automaticFollowUpLimit",
+                    "productGoal",
+                    "keepTranscripts",
+                    "retroRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -7576,6 +7695,47 @@
                         ]
                       }
                     },
+                    "retros": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "running",
+                              "succeeded",
+                              "failed"
+                            ]
+                          },
+                          "productIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "endedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "status",
+                          "productIds",
+                          "startedAt",
+                          "endedAt"
+                        ]
+                      }
+                    },
                     "pulses": {
                       "type": "array",
                       "items": {
@@ -7588,6 +7748,18 @@
                             ]
                           },
                           "setupId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "retroId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "productId": {
                             "type": [
                               "string",
                               "null"
@@ -7616,6 +7788,8 @@
                         "required": [
                           "runId",
                           "setupId",
+                          "retroId",
+                          "productId",
                           "role",
                           "toolKind",
                           "lastOutputAt",
@@ -7653,6 +7827,7 @@
                     "lines",
                     "runs",
                     "setups",
+                    "retros",
                     "pulses",
                     "throughput"
                   ]
@@ -7989,6 +8164,47 @@
                         ]
                       }
                     },
+                    "retros": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "running",
+                              "succeeded",
+                              "failed"
+                            ]
+                          },
+                          "productIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "endedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "status",
+                          "productIds",
+                          "startedAt",
+                          "endedAt"
+                        ]
+                      }
+                    },
                     "pulses": {
                       "type": "array",
                       "items": {
@@ -8001,6 +8217,18 @@
                             ]
                           },
                           "setupId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "retroId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "productId": {
                             "type": [
                               "string",
                               "null"
@@ -8029,6 +8257,8 @@
                         "required": [
                           "runId",
                           "setupId",
+                          "retroId",
+                          "productId",
                           "role",
                           "toolKind",
                           "lastOutputAt",
@@ -8066,6 +8296,7 @@
                     "lines",
                     "runs",
                     "setups",
+                    "retros",
                     "pulses",
                     "throughput"
                   ]
@@ -17311,6 +17542,63 @@
                         "name",
                         "email"
                       ]
+                    },
+                    "transcriptBucket": {
+                      "type": "object",
+                      "properties": {
+                        "endpoint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "bucket": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "region": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "accessKey": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "secretKeySet": {
+                          "type": "boolean"
+                        },
+                        "locked": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "endpoint",
+                              "bucket",
+                              "region",
+                              "accessKey",
+                              "secretKey"
+                            ]
+                          }
+                        },
+                        "active": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "endpoint",
+                        "bucket",
+                        "region",
+                        "accessKey",
+                        "secretKeySet",
+                        "locked",
+                        "active"
+                      ]
                     }
                   },
                   "required": [
@@ -17318,7 +17606,8 @@
                     "github",
                     "linear",
                     "sandbox",
-                    "gitAuthor"
+                    "gitAuthor",
+                    "transcriptBucket"
                   ]
                 }
               }
@@ -17420,6 +17709,67 @@
                         "type": "string",
                         "format": "email",
                         "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "transcriptBucket": {
+                    "type": "object",
+                    "properties": {
+                      "endpoint": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "bucket": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "region": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "accessKey": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "secretKey": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "additionalProperties": false
@@ -17604,6 +17954,63 @@
                         "name",
                         "email"
                       ]
+                    },
+                    "transcriptBucket": {
+                      "type": "object",
+                      "properties": {
+                        "endpoint": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "bucket": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "region": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "accessKey": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "secretKeySet": {
+                          "type": "boolean"
+                        },
+                        "locked": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "endpoint",
+                              "bucket",
+                              "region",
+                              "accessKey",
+                              "secretKey"
+                            ]
+                          }
+                        },
+                        "active": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "endpoint",
+                        "bucket",
+                        "region",
+                        "accessKey",
+                        "secretKeySet",
+                        "locked",
+                        "active"
+                      ]
                     }
                   },
                   "required": [
@@ -17611,7 +18018,8 @@
                     "github",
                     "linear",
                     "sandbox",
-                    "gitAuthor"
+                    "gitAuthor",
+                    "transcriptBucket"
                   ]
                 }
               }
@@ -18102,6 +18510,3241 @@
         "responses": {
           "204": {
             "description": "Default Response"
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/retro/settings": {
+      "get": {
+        "operationId": "getRetroSettings",
+        "tags": [
+          "retro"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "settings": {
+                      "type": "object",
+                      "properties": {
+                        "schedule": {
+                          "type": "string",
+                          "enum": [
+                            "off",
+                            "daily",
+                            "weekly"
+                          ]
+                        },
+                        "weekday": {
+                          "type": "number"
+                        },
+                        "hour": {
+                          "type": "number"
+                        },
+                        "timeZone": {
+                          "type": "string"
+                        },
+                        "productIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "runner": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "model": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "effort": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "costCapUsd": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "schedule",
+                        "weekday",
+                        "hour",
+                        "timeZone",
+                        "productIds",
+                        "runner",
+                        "model",
+                        "effort",
+                        "costCapUsd"
+                      ]
+                    },
+                    "saved": {
+                      "type": "boolean"
+                    },
+                    "nextRunAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "scheduleError": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "running": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "trigger": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "running",
+                                "succeeded",
+                                "failed"
+                              ]
+                            },
+                            "windowStart": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "windowEnd": {
+                              "type": "string"
+                            },
+                            "promptVersion": {
+                              "type": "string"
+                            },
+                            "costUsd": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "findingCount": {
+                              "type": "number"
+                            },
+                            "failureMessage": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "startedAt": {
+                              "type": "string"
+                            },
+                            "endedAt": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "trigger",
+                            "status",
+                            "windowStart",
+                            "windowEnd",
+                            "promptVersion",
+                            "costUsd",
+                            "findingCount",
+                            "failureMessage",
+                            "startedAt",
+                            "endedAt"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "last": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "trigger": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "running",
+                                "succeeded",
+                                "failed"
+                              ]
+                            },
+                            "windowStart": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "windowEnd": {
+                              "type": "string"
+                            },
+                            "promptVersion": {
+                              "type": "string"
+                            },
+                            "costUsd": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "findingCount": {
+                              "type": "number"
+                            },
+                            "failureMessage": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "startedAt": {
+                              "type": "string"
+                            },
+                            "endedAt": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "trigger",
+                            "status",
+                            "windowStart",
+                            "windowEnd",
+                            "promptVersion",
+                            "costUsd",
+                            "findingCount",
+                            "failureMessage",
+                            "startedAt",
+                            "endedAt"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "settings",
+                    "saved",
+                    "nextRunAt",
+                    "scheduleError",
+                    "running",
+                    "last"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "putRetroSettings",
+        "tags": [
+          "retro"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "schedule": {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "daily",
+                      "weekly"
+                    ]
+                  },
+                  "weekday": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 7
+                  },
+                  "hour": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 23
+                  },
+                  "timeZone": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "productIds": {
+                    "maxItems": 200,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "runner": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "opencode",
+                          "claude"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "model": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "effort": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "costCapUsd": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1000
+                  },
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "schedule",
+                  "weekday",
+                  "hour",
+                  "timeZone",
+                  "productIds",
+                  "runner",
+                  "model",
+                  "effort",
+                  "costCapUsd",
+                  "linearWorkspaceId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "settings": {
+                      "type": "object",
+                      "properties": {
+                        "schedule": {
+                          "type": "string",
+                          "enum": [
+                            "off",
+                            "daily",
+                            "weekly"
+                          ]
+                        },
+                        "weekday": {
+                          "type": "number"
+                        },
+                        "hour": {
+                          "type": "number"
+                        },
+                        "timeZone": {
+                          "type": "string"
+                        },
+                        "productIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "runner": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "model": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "effort": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "costCapUsd": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "schedule",
+                        "weekday",
+                        "hour",
+                        "timeZone",
+                        "productIds",
+                        "runner",
+                        "model",
+                        "effort",
+                        "costCapUsd"
+                      ]
+                    },
+                    "saved": {
+                      "type": "boolean"
+                    },
+                    "nextRunAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "scheduleError": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "running": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "trigger": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "running",
+                                "succeeded",
+                                "failed"
+                              ]
+                            },
+                            "windowStart": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "windowEnd": {
+                              "type": "string"
+                            },
+                            "promptVersion": {
+                              "type": "string"
+                            },
+                            "costUsd": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "findingCount": {
+                              "type": "number"
+                            },
+                            "failureMessage": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "startedAt": {
+                              "type": "string"
+                            },
+                            "endedAt": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "trigger",
+                            "status",
+                            "windowStart",
+                            "windowEnd",
+                            "promptVersion",
+                            "costUsd",
+                            "findingCount",
+                            "failureMessage",
+                            "startedAt",
+                            "endedAt"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "last": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "trigger": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "running",
+                                "succeeded",
+                                "failed"
+                              ]
+                            },
+                            "windowStart": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "windowEnd": {
+                              "type": "string"
+                            },
+                            "promptVersion": {
+                              "type": "string"
+                            },
+                            "costUsd": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "findingCount": {
+                              "type": "number"
+                            },
+                            "failureMessage": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "startedAt": {
+                              "type": "string"
+                            },
+                            "endedAt": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "trigger",
+                            "status",
+                            "windowStart",
+                            "windowEnd",
+                            "promptVersion",
+                            "costUsd",
+                            "findingCount",
+                            "failureMessage",
+                            "startedAt",
+                            "endedAt"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "settings",
+                    "saved",
+                    "nextRunAt",
+                    "scheduleError",
+                    "running",
+                    "last"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/retro/settings/schedule": {
+      "post": {
+        "operationId": "retryRetroSchedule",
+        "summary": "Saves the Temporal Schedule from the stored retro settings again",
+        "tags": [
+          "retro"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "linearWorkspaceId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "settings": {
+                      "type": "object",
+                      "properties": {
+                        "schedule": {
+                          "type": "string",
+                          "enum": [
+                            "off",
+                            "daily",
+                            "weekly"
+                          ]
+                        },
+                        "weekday": {
+                          "type": "number"
+                        },
+                        "hour": {
+                          "type": "number"
+                        },
+                        "timeZone": {
+                          "type": "string"
+                        },
+                        "productIds": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "runner": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "opencode",
+                                "claude"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "model": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "effort": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "costCapUsd": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "schedule",
+                        "weekday",
+                        "hour",
+                        "timeZone",
+                        "productIds",
+                        "runner",
+                        "model",
+                        "effort",
+                        "costCapUsd"
+                      ]
+                    },
+                    "saved": {
+                      "type": "boolean"
+                    },
+                    "nextRunAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "scheduleError": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "running": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "trigger": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "running",
+                                "succeeded",
+                                "failed"
+                              ]
+                            },
+                            "windowStart": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "windowEnd": {
+                              "type": "string"
+                            },
+                            "promptVersion": {
+                              "type": "string"
+                            },
+                            "costUsd": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "findingCount": {
+                              "type": "number"
+                            },
+                            "failureMessage": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "startedAt": {
+                              "type": "string"
+                            },
+                            "endedAt": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "trigger",
+                            "status",
+                            "windowStart",
+                            "windowEnd",
+                            "promptVersion",
+                            "costUsd",
+                            "findingCount",
+                            "failureMessage",
+                            "startedAt",
+                            "endedAt"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "last": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "trigger": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "running",
+                                "succeeded",
+                                "failed"
+                              ]
+                            },
+                            "windowStart": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "windowEnd": {
+                              "type": "string"
+                            },
+                            "promptVersion": {
+                              "type": "string"
+                            },
+                            "costUsd": {
+                              "type": [
+                                "number",
+                                "null"
+                              ]
+                            },
+                            "findingCount": {
+                              "type": "number"
+                            },
+                            "failureMessage": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "startedAt": {
+                              "type": "string"
+                            },
+                            "endedAt": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "trigger",
+                            "status",
+                            "windowStart",
+                            "windowEnd",
+                            "promptVersion",
+                            "costUsd",
+                            "findingCount",
+                            "failureMessage",
+                            "startedAt",
+                            "endedAt"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "settings",
+                    "saved",
+                    "nextRunAt",
+                    "scheduleError",
+                    "running",
+                    "last"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/retro/run": {
+      "post": {
+        "operationId": "runRetroNow",
+        "tags": [
+          "retro"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "linearWorkspaceId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "workflowId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "workflowId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/retros": {
+      "get": {
+        "operationId": "listRetros",
+        "tags": [
+          "retro"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "retros": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "trigger": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "running",
+                              "succeeded",
+                              "failed"
+                            ]
+                          },
+                          "windowStart": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "windowEnd": {
+                            "type": "string"
+                          },
+                          "promptVersion": {
+                            "type": "string"
+                          },
+                          "costUsd": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "findingCount": {
+                            "type": "number"
+                          },
+                          "failureMessage": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "endedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "trigger",
+                          "status",
+                          "windowStart",
+                          "windowEnd",
+                          "promptVersion",
+                          "costUsd",
+                          "findingCount",
+                          "failureMessage",
+                          "startedAt",
+                          "endedAt"
+                        ]
+                      }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "retros",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/retros/{id}": {
+      "get": {
+        "operationId": "getRetro",
+        "tags": [
+          "retro"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "trigger": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "running",
+                        "succeeded",
+                        "failed"
+                      ]
+                    },
+                    "windowStart": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "windowEnd": {
+                      "type": "string"
+                    },
+                    "promptVersion": {
+                      "type": "string"
+                    },
+                    "costUsd": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "findingCount": {
+                      "type": "number"
+                    },
+                    "failureMessage": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "startedAt": {
+                      "type": "string"
+                    },
+                    "endedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "productId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "productId",
+                          "message",
+                          "at"
+                        ]
+                      }
+                    },
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "productId": {
+                            "type": "string"
+                          },
+                          "productName": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "runCount": {
+                            "type": "number"
+                          },
+                          "runner": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "model": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "effort": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "outcome": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "costUsd": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "durationMs": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "metrics": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "runs": {
+                                    "type": "number"
+                                  },
+                                  "firstPassRate": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "repairsPerRun": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  },
+                                  "hungSessions": {
+                                    "type": "number"
+                                  },
+                                  "costPerRun": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "runs",
+                                  "firstPassRate",
+                                  "repairsPerRun",
+                                  "hungSessions",
+                                  "costPerRun"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "failureMessage": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "productId",
+                          "productName",
+                          "status",
+                          "runCount",
+                          "runner",
+                          "model",
+                          "effort",
+                          "outcome",
+                          "costUsd",
+                          "durationMs",
+                          "metrics",
+                          "failureMessage"
+                        ]
+                      }
+                    },
+                    "findings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "retroId": {
+                            "type": "string"
+                          },
+                          "productId": {
+                            "type": "string"
+                          },
+                          "productName": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "factory",
+                              "error",
+                              "idea"
+                            ]
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "runIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "signalResultIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "repositories": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "proposed",
+                              "created",
+                              "dismissed",
+                              "already_proposed"
+                            ]
+                          },
+                          "duplicateOfId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "duplicateOfRetroId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "linearIssueIdentifier": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "linearIssueUrl": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "decidedBy": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "decidedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "retroId",
+                          "productId",
+                          "productName",
+                          "kind",
+                          "title",
+                          "description",
+                          "runIds",
+                          "signalResultIds",
+                          "repositories",
+                          "status",
+                          "duplicateOfId",
+                          "duplicateOfRetroId",
+                          "linearIssueIdentifier",
+                          "linearIssueUrl",
+                          "decidedBy",
+                          "decidedAt",
+                          "createdAt"
+                        ]
+                      }
+                    },
+                    "signalResults": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "productId": {
+                            "type": "string"
+                          },
+                          "sourceName": {
+                            "type": "string"
+                          },
+                          "sourceKind": {
+                            "type": "string",
+                            "enum": [
+                              "errors",
+                              "analytics"
+                            ]
+                          },
+                          "queryName": {
+                            "type": "string"
+                          },
+                          "bytes": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "productId",
+                          "sourceName",
+                          "sourceKind",
+                          "queryName",
+                          "bytes"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "trigger",
+                    "status",
+                    "windowStart",
+                    "windowEnd",
+                    "promptVersion",
+                    "costUsd",
+                    "findingCount",
+                    "failureMessage",
+                    "startedAt",
+                    "endedAt",
+                    "events",
+                    "sessions",
+                    "findings",
+                    "signalResults"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/retro/signal-results/{id}": {
+      "get": {
+        "operationId": "getSignalResult",
+        "tags": [
+          "retro"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "retroId": {
+                      "type": "string"
+                    },
+                    "productId": {
+                      "type": "string"
+                    },
+                    "sourceName": {
+                      "type": "string"
+                    },
+                    "sourceKind": {
+                      "type": "string",
+                      "enum": [
+                        "errors",
+                        "analytics"
+                      ]
+                    },
+                    "queryName": {
+                      "type": "string"
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "bytes": {
+                      "type": "number"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "retroId",
+                    "productId",
+                    "sourceName",
+                    "sourceKind",
+                    "queryName",
+                    "content",
+                    "sha256",
+                    "bytes",
+                    "createdAt"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/retro/findings/{id}/issue": {
+      "post": {
+        "operationId": "createRetroFindingIssue",
+        "summary": "Creates the Linear issue of a finding. A factory or error finding is delegated to Factoree, an idea finding is not.",
+        "tags": [
+          "retro"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "linearWorkspaceId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "retroId": {
+                      "type": "string"
+                    },
+                    "productId": {
+                      "type": "string"
+                    },
+                    "productName": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "factory",
+                        "error",
+                        "idea"
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "runIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "signalResultIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "repositories": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "proposed",
+                        "created",
+                        "dismissed",
+                        "already_proposed"
+                      ]
+                    },
+                    "duplicateOfId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "duplicateOfRetroId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "linearIssueIdentifier": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "linearIssueUrl": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "decidedBy": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "decidedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "retroId",
+                    "productId",
+                    "productName",
+                    "kind",
+                    "title",
+                    "description",
+                    "runIds",
+                    "signalResultIds",
+                    "repositories",
+                    "status",
+                    "duplicateOfId",
+                    "duplicateOfRetroId",
+                    "linearIssueIdentifier",
+                    "linearIssueUrl",
+                    "decidedBy",
+                    "decidedAt",
+                    "createdAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/retro/findings/{id}/dismiss": {
+      "post": {
+        "operationId": "dismissRetroFinding",
+        "tags": [
+          "retro"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "linearWorkspaceId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "retroId": {
+                      "type": "string"
+                    },
+                    "productId": {
+                      "type": "string"
+                    },
+                    "productName": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "factory",
+                        "error",
+                        "idea"
+                      ]
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "runIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "signalResultIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "repositories": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "proposed",
+                        "created",
+                        "dismissed",
+                        "already_proposed"
+                      ]
+                    },
+                    "duplicateOfId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "duplicateOfRetroId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "linearIssueIdentifier": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "linearIssueUrl": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "decidedBy": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "decidedAt": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "retroId",
+                    "productId",
+                    "productName",
+                    "kind",
+                    "title",
+                    "description",
+                    "runIds",
+                    "signalResultIds",
+                    "repositories",
+                    "status",
+                    "duplicateOfId",
+                    "duplicateOfRetroId",
+                    "linearIssueIdentifier",
+                    "linearIssueUrl",
+                    "decidedBy",
+                    "decidedAt",
+                    "createdAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/signal-sources": {
+      "get": {
+        "operationId": "listSignalSources",
+        "tags": [
+          "retro"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "productId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "errors",
+                              "analytics"
+                            ]
+                          },
+                          "endpoint": {
+                            "type": "string"
+                          },
+                          "secretName": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "queries": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "tool": {
+                                  "type": "string"
+                                },
+                                "arguments": {
+                                  "type": "object",
+                                  "propertyNames": {
+                                    "type": "string"
+                                  },
+                                  "additionalProperties": {}
+                                },
+                                "maxBytes": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "tool",
+                                "arguments",
+                                "maxBytes"
+                              ]
+                            }
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "productId",
+                          "name",
+                          "kind",
+                          "endpoint",
+                          "secretName",
+                          "enabled",
+                          "queries",
+                          "createdAt",
+                          "updatedAt"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "sources"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSignalSource",
+        "tags": [
+          "retro"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "errors",
+                      "analytics"
+                    ]
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "secretName": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "queries": {
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                        },
+                        "tool": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "arguments": {
+                          "default": {},
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "maxBytes": {
+                          "default": 262144,
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1048576
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "tool"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "name",
+                  "kind",
+                  "endpoint",
+                  "secretName",
+                  "queries",
+                  "linearWorkspaceId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "productId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "errors",
+                        "analytics"
+                      ]
+                    },
+                    "endpoint": {
+                      "type": "string"
+                    },
+                    "secretName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "queries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          },
+                          "arguments": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          },
+                          "maxBytes": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "tool",
+                          "arguments",
+                          "maxBytes"
+                        ]
+                      }
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "productId",
+                    "name",
+                    "kind",
+                    "endpoint",
+                    "secretName",
+                    "enabled",
+                    "queries",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/signal-sources/{sourceId}": {
+      "put": {
+        "operationId": "updateSignalSource",
+        "tags": [
+          "retro"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "errors",
+                      "analytics"
+                    ]
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "secretName": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "queries": {
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                        },
+                        "tool": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "arguments": {
+                          "default": {},
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "maxBytes": {
+                          "default": 262144,
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1048576
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "tool"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "name",
+                  "kind",
+                  "endpoint",
+                  "secretName",
+                  "queries",
+                  "linearWorkspaceId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sourceId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "productId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "errors",
+                        "analytics"
+                      ]
+                    },
+                    "endpoint": {
+                      "type": "string"
+                    },
+                    "secretName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "queries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          },
+                          "arguments": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          },
+                          "maxBytes": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "tool",
+                          "arguments",
+                          "maxBytes"
+                        ]
+                      }
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "productId",
+                    "name",
+                    "kind",
+                    "endpoint",
+                    "secretName",
+                    "enabled",
+                    "queries",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSignalSource",
+        "tags": [
+          "retro"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "sourceId",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Default Response"
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/products/{id}/signal-sources/test": {
+      "post": {
+        "operationId": "testSignalSource",
+        "summary": "Runs each query of an unsaved signal source and shows its size and its first 500 characters",
+        "tags": [
+          "retro"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "errors",
+                      "analytics"
+                    ]
+                  },
+                  "endpoint": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "secretName": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "enabled": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "queries": {
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+                        },
+                        "tool": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "arguments": {
+                          "default": {},
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "maxBytes": {
+                          "default": 262144,
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1048576
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "tool"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "linearWorkspaceId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "name",
+                  "kind",
+                  "endpoint",
+                  "secretName",
+                  "queries",
+                  "linearWorkspaceId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "queryName": {
+                            "type": "string"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "bytes": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "preview": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "queryName",
+                          "ok",
+                          "bytes",
+                          "preview",
+                          "reason"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "results"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
           },
           "404": {
             "description": "Default Response",

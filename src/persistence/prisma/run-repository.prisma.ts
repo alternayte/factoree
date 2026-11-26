@@ -78,6 +78,7 @@ export class PrismaRunRepository implements RunRepository {
           workItemTitle: input.workItemTitle ?? null,
           workItemUrl: input.workItemUrl ?? null,
           followUpOfRunId: input.followUpOfRunId ?? null,
+          followUpReply: input.followUpReply ?? null,
           status: "RECEIVED",
         },
       });

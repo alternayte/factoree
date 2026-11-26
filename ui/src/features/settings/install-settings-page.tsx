@@ -25,7 +25,7 @@ export function InstallSettingsPage() {
     <>
       <PageHeader
         title="Install settings"
-        description="Settings for the whole install: the GitHub App, the Linear app, the sandbox image and providers, and the git author."
+        description="Settings for the whole install: the GitHub App, the Linear app, the sandbox image and providers, the git author and the transcript bucket."
       />
       {!canEdit ? (
         <Alert tone="info" className="mb-4 max-w-[640px]">
@@ -45,6 +45,7 @@ export function InstallSettingsPage() {
           <LinearSection settings={settings.data} canEdit={canEdit} />
           <SandboxImageSection settings={settings.data} canEdit={canEdit} />
           <GitAuthorSection settings={settings.data} canEdit={canEdit} />
+          <TranscriptBucketSection settings={settings.data} canEdit={canEdit} />
           <SandboxProvidersSection
             canEdit={canEdit}
             localAllowed={settings.data.sandbox.localAllowed}
@@ -406,6 +407,143 @@ function GitAuthorSection({ settings, canEdit }: { settings: Settings; canEdit: 
               Save git author
             </Button>
             <SavedNote show={save.isSuccess && !changed} />
+          </div>
+        ) : null}
+      </form>
+    </Section>
+  );
+}
+
+type BucketField = Settings["transcriptBucket"]["locked"][number];
+
+/** docs/specs/retro-agent.md. The environment variable that sets and locks each bucket field. */
+const BUCKET_ENV: Record<BucketField, string> = {
+  endpoint: "FACTOREE_TRANSCRIPT_S3_ENDPOINT",
+  bucket: "FACTOREE_TRANSCRIPT_S3_BUCKET",
+  region: "FACTOREE_TRANSCRIPT_S3_REGION",
+  accessKey: "FACTOREE_TRANSCRIPT_S3_ACCESS_KEY",
+  secretKey: "FACTOREE_TRANSCRIPT_S3_SECRET_KEY",
+};
+
+type BucketForm = Record<Exclude<BucketField, "secretKey">, string> & { secretKey: string };
+
+const bucketFormOf = (b: Settings["transcriptBucket"]): BucketForm => ({
+  endpoint: b.endpoint ?? "",
+  bucket: b.bucket ?? "",
+  region: b.region ?? "",
+  accessKey: b.accessKey ?? "",
+  secretKey: "",
+});
+
+/** bucketPatch sends only the unlocked fields that changed. An emptied field becomes null, which clears it. */
+function bucketPatch(form: BucketForm, b: Settings["transcriptBucket"]): NonNullable<Patch["transcriptBucket"]> {
+  const patch: NonNullable<Patch["transcriptBucket"]> = {};
+  const text = (v: string) => (v.trim() ? v.trim() : null);
+  for (const field of ["endpoint", "bucket", "region", "accessKey"] as const) {
+    if (!b.locked.includes(field) && text(form[field]) !== b[field]) patch[field] = text(form[field]);
+  }
+  if (!b.locked.includes("secretKey") && form.secretKey.trim()) patch.secretKey = form.secretKey.trim();
+  return patch;
+}
+
+/**
+ * docs/specs/retro-agent.md. An optional S3-compatible bucket for kept transcripts. Without one,
+ * transcripts go to Postgres. A FACTOREE_TRANSCRIPT_S3_* environment variable wins and locks its field.
+ */
+function TranscriptBucketSection({ settings, canEdit }: { settings: Settings; canEdit: boolean }) {
+  const b = settings.transcriptBucket;
+  const [form, setForm] = useState<BucketForm>(() => bucketFormOf(b));
+  const save = useSave();
+  const clear = useSave();
+  const patch = bucketPatch(form, b);
+  const changed = Object.keys(patch).length > 0;
+  const locked = (field: BucketField) => b.locked.includes(field);
+  const lockHint = (field: BucketField) => `Locked. The environment variable ${BUCKET_ENV[field]} sets it.`;
+  const set = (field: keyof BucketForm) => (value: string) => setForm((f) => ({ ...f, [field]: value }));
+  const unlockedStored =
+    (["endpoint", "bucket", "region", "accessKey"] as const).some((field) => !locked(field) && b[field] !== null) ||
+    (!locked("secretKey") && b.secretKeySet);
+
+  const text = (field: Exclude<BucketField, "secretKey">, label: string, hint: string, placeholder: string, type = "text") => (
+    <Field
+      label={label}
+      hint={locked(field) ? lockHint(field) : hint}
+      trailing={locked(field) ? <Badge>locked</Badge> : undefined}
+    >
+      {(props) => (
+        <Input
+          {...props}
+          mono
+          type={type}
+          autoComplete="off"
+          disabled={!canEdit || locked(field)}
+          placeholder={placeholder}
+          value={form[field]}
+          onChange={(e) => set(field)(e.target.value)}
+        />
+      )}
+    </Field>
+  );
+
+  return (
+    <Section
+      title="Transcript bucket"
+      description="Where kept transcripts go. Without a complete bucket they go to Postgres. With one, new transcripts go to the bucket and the row keeps the object key."
+    >
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <span className="t-label text-mute">Transcripts go to</span>
+        {b.active ? <Badge tone="success">the bucket</Badge> : <Badge>Postgres</Badge>}
+      </div>
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save.mutate({ transcriptBucket: patch }, { onSuccess: (next) => setForm(bucketFormOf(next.transcriptBucket)) });
+        }}
+      >
+        <FieldGrid>
+          {text("endpoint", "Endpoint", "The S3 API URL, for example https://s3.eu-west-2.amazonaws.com.", "https://", "url")}
+          {text("bucket", "Bucket", "The bucket name.", "factoree-transcripts")}
+          {text("region", "Region", "The bucket region.", "eu-west-2")}
+          {text("accessKey", "Access key", "The access key id.", "")}
+          {locked("secretKey") ? (
+            <Field label="Secret key" hint={lockHint("secretKey")} trailing={<Badge>locked</Badge>}>
+              {(props) => <Input {...props} mono type="password" disabled placeholder="••••••••" value="" readOnly />}
+            </Field>
+          ) : (
+            <SecretInput
+              label="Secret key"
+              stored={b.secretKeySet}
+              value={form.secretKey}
+              onChange={set("secretKey")}
+              disabled={!canEdit}
+            />
+          )}
+        </FieldGrid>
+        <ErrorAlert error={save.error} />
+        <ErrorAlert error={clear.error} />
+        {canEdit ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="submit" disabled={!changed || clear.isPending} mutation={save}>
+              Save the bucket
+            </Button>
+            {unlockedStored ? (
+              <Button
+                variant="ghost"
+                disabled={save.isPending}
+                mutation={clear}
+                onClick={() => {
+                  const cleared: NonNullable<Patch["transcriptBucket"]> = {};
+                  for (const field of ["endpoint", "bucket", "region", "accessKey", "secretKey"] as const) {
+                    if (!locked(field)) cleared[field] = null;
+                  }
+                  clear.mutate({ transcriptBucket: cleared }, { onSuccess: (next) => setForm(bucketFormOf(next.transcriptBucket)) });
+                }}
+              >
+                Remove the bucket
+              </Button>
+            ) : null}
+            <SavedNote show={(save.isSuccess || clear.isSuccess) && !changed} />
           </div>
         ) : null}
       </form>

@@ -83,7 +83,7 @@ export interface NugetPrecheckResult {
   config: string | null;
 }
 
-/** DI-21.228. The most restore rounds the transitive loop runs. */
+/** DI-21.236. The most restore rounds the transitive loop runs. */
 export const NUGET_RESTORE_ROUNDS = 5;
 const RESTORE_TIMEOUT_MS = 20 * 60_000;
 const LOOKUP_CONCURRENCY = 6;
@@ -111,7 +111,7 @@ const PACKAGE_FILES = scanScriptOf(
 const SOLUTIONS = scanScriptOf("-iname '*.sln' -o -iname '*.slnx'", "4096k");
 
 /**
- * DI-21.228. The global packages folder and HTTP cache of the restore. The pre-check empties them
+ * DI-21.236. The global packages folder and HTTP cache of the restore. The pre-check empties them
  * before each round: a warm sandbox holds the packages its bootstrap restored, and an earlier round
  * may have restored a version from nuget.org that the next mapping sends to the mirror. A package
  * restore takes from them is never read from a source. `--packages` sets the folder, since it wins
@@ -120,7 +120,7 @@ const SOLUTIONS = scanScriptOf("-iname '*.sln' -o -iname '*.slnx'", "4096k");
 const RESTORE_CACHE = "/tmp/factoree-nuget-precheck";
 
 /**
- * DI-21.228. Restores each target with the generated file. A sandbox image with no .NET SDK gets
+ * DI-21.236. Restores each target with the generated file. A sandbox image with no .NET SDK gets
  * the one global.json names, or the LTS one, from dotnet-install.sh on the ecosystem host list.
  */
 const RESTORE_SCRIPT = `if ! dotnet --version >/dev/null 2>&1; then
@@ -223,7 +223,7 @@ const mapLimit = async <T, R>(items: readonly T[], limit: number, work: (item: T
 };
 
 /**
- * DI-21.225. True when nuget.org has the exact id and version and lists it: the flat container
+ * DI-21.233. True when nuget.org has the exact id and version and lists it: the flat container
  * names the version, and its registration leaf is not unlisted. A package that shares an id with a
  * public one, or a public version that was unlisted, stays private. An answer that is no answer
  * throws, a 200 whose body does not parse included, because a guess either way sends people to
@@ -260,7 +260,7 @@ const hostOf = (url: string): string | null => {
 };
 
 /**
- * DI-21.226. One package on the mirror: the flat container index, then a one-byte download of
+ * DI-21.234. One package on the mirror: the flat container index, then a one-byte download of
  * the exact version, because the download redirects to another host and the index alone passes
  * where the file fails. A null request checks the index only. A request that is not exact checks
  * the lowest version the index lists at or above it, which is the one restore takes. Only a 2xx
@@ -396,7 +396,7 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
   report.packages.push(...unchecked.values());
 
   const lookups = lookupsOf(references);
-  // DI-21.227. An id the repository's own source mapping sends only to the private feed never
+  // DI-21.235. An id the repository's own source mapping sends only to the private feed never
   // comes from nuget.org, whatever nuget.org has.
   const pinned = lookups.filter((lookup) => pinnedToPrivateFeed(configs, feeds, lookup.id));
   const open = lookups.filter((lookup) => !pinned.includes(lookup));
@@ -406,12 +406,12 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
   } catch (error) {
     return fail(`${error instanceof Error ? error.message : String(error)}. Factoree could not tell the public packages from the private ones. Run the setup again.`);
   }
-  // DI-21.227. The file maps a whole id to the mirror, so each version of a private id reads from the mirror.
+  // DI-21.235. The file maps a whole id to the mirror, so each version of a private id reads from the mirror.
   const privateIds = new Set([...pinned, ...open.filter((_, index) => publicFlags[index] !== true)].map((lookup) => lookup.id.toLowerCase()));
   const privatePackages = lookups.filter((lookup) => privateIds.has(lookup.id.toLowerCase()));
   report.publicPackages = lookups.length - privatePackages.length;
 
-  // DI-21.231. A repository that already restores from GitHub Packages needs no swap: only the
+  // DI-21.239. A repository that already restores from GitHub Packages needs no swap: only the
   // credential, and only when a package needs that feed.
   if (!mapped) {
     const owner = githubPackagesOwnerOf(mirrorFeed!.url) ?? NUGET_MIRROR_OWNER;
@@ -464,7 +464,7 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
   } catch (error) {
     return failedScan(error);
   }
-  // DI-21.228. Each solution, and each project no solution names, so no project goes unrestored.
+  // DI-21.236. Each solution, and each project no solution names, so no project goes unrestored.
   const inSolutions = new Set(solutionFiles.flatMap(solutionProjectsOf));
   const solutions = solutionFiles.map((file) => file.path).sort();
   const standalone = files
@@ -493,12 +493,12 @@ export const runNugetPrecheck = async (input: NugetPrecheckInput): Promise<Nuget
       report.restore = { outcome: "failed", rounds: round, detail: failureExcerpt(output) };
       return fail(checkCredential() ?? `the restore could not load the service index ${unloaded.join(", ")} (NU1301): ${mirrorStatusText("unreachable")}.`);
     }
-    // DI-21.228. NU1100 is package evidence only for an id the repository's own mapping sends to
+    // DI-21.236. NU1100 is package evidence only for an id the repository's own mapping sends to
     // the private feed alone: the generated file routes it nowhere until the mirror has it. Any
     // other NU1100 fails the committed config too.
     const failures = restoreFailuresOf(output).filter((failure) => failure.code !== "NU1100" || pinnedToPrivateFeed(configs, feeds, failure.id));
     if (failures.length === 0) {
-      // DI-21.228. A restore that fails for a reason other than a missing package is no feed
+      // DI-21.236. A restore that fails for a reason other than a missing package is no feed
       // fault. The setup agent sees the same failure and repairs it from `.factoree/`.
       report.restore = restore.exitCode === 0 && !restore.timedOut
         ? { outcome: "passed", rounds: round, detail: coverage }

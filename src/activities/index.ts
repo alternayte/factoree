@@ -56,6 +56,7 @@ import { createPublishingActivities } from "./publishing.activities.js";
 import { createDiscoveryActivities } from "./discovery.activities.js";
 import { createBuildAheadActivities } from "./build-ahead.activities.js";
 import { createSetupActivities } from "./setup.activities.js";
+import { createRetroActivities, type RetroActivities, type RetroActivityDependencies } from "./retro.activities.js";
 import { withHeartbeats } from "./heartbeat.js";
 import { createAppChangeActivities } from "./app-change.activities.js";
 import type { AppChangeIssuePort, AppChangeIssueStore } from "~/domain/setup/app-change-issues.js";
@@ -80,7 +81,18 @@ import {
   type SkillRegistryFactory,
 } from "./skill-registry.activities.js";
 
+/** A worker with no retro wiring, as in a test, fails a retro activity with a clear message. */
+const noRetro = (): Promise<never> => Promise.reject(new Error("this worker holds no retro dependencies"));
+const NO_RETRO_ACTIVITIES: RetroActivities = {
+  prepareRetro: noRetro,
+  skipRetroSession: noRetro,
+  runRetroSession: noRetro,
+  finishRetro: noRetro,
+};
+
 export interface ActivityDependencies {
+  /** docs/specs/retro-agent.md. The stores and ports of the retro activities. Absent in a test that runs no retro. */
+  retro?: RetroActivityDependencies | undefined;
   /** docs/specs/sandbox-memory-and-size.md. Starts the setup run after a sandbox fault of a run. */
   onSandboxFault?: SandboxFaultSink;
   /** docs/specs/drain-mode.md. True while drain mode is on. Absent means never. */
@@ -362,6 +374,7 @@ export const HEARTBEAT_ACTIVITIES = [
   "precheckNugetFeeds",
   "runSetupSession",
   "proveAndPublishSetup",
+  "runRetroSession",
 ] as const;
 
 const createActivityTable = (dependencies: ActivityDependencies) => ({
@@ -641,6 +654,7 @@ const createActivityTable = (dependencies: ActivityDependencies) => ({
     ...(dependencies.factoreeAppSlug === undefined ? {} : { factoreeAppSlug: dependencies.factoreeAppSlug }),
     redactText: (text: string) => dependencies.redactor.redactText(text),
   }),
+  ...(dependencies.retro === undefined ? NO_RETRO_ACTIVITIES : createRetroActivities(dependencies.retro)),
   /** docs/specs/drain-mode.md. A PR workflow waits before it starts a run while drain mode is on. */
   async isDrainModeOn(): Promise<boolean> {
     return (await dependencies.drainModeOn?.()) ?? false;

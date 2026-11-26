@@ -87,6 +87,9 @@ type ProductRow = {
   appChangeIssues: string;
   reviewAppDenyList: string[];
   automaticFollowUpLimit: number;
+  productGoal: string | null;
+  keepTranscripts: boolean;
+  retroRetentionDays: number;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -235,13 +238,13 @@ export class PrismaProductRegistry implements ProductRegistry {
     return this.prisma.$transaction(async (tx) => {
       const source = await tx.product.findFirst({
         where: { id: sourceId, tenantId },
-        include: { secrets: true, hostCredentials: true, contextSources: true },
+        include: { secrets: true, hostCredentials: true, contextSources: true, signalSources: true },
       });
       if (source === null) return null;
-      const { secrets, hostCredentials, contextSources, riskCaps } = source;
+      const { secrets, hostCredentials, contextSources, signalSources, riskCaps } = source;
       const row = await tx.product.create({
         data: {
-          ...omitColumns(source, ["id", "status", "createdAt", "updatedAt", "secrets", "hostCredentials", "contextSources", "riskCaps"]),
+          ...omitColumns(source, ["id", "status", "createdAt", "updatedAt", "secrets", "hostCredentials", "contextSources", "signalSources", "riskCaps"]),
           riskCaps: riskCaps ?? Prisma.DbNull,
           slug: input.slug,
           name: input.name,
@@ -263,6 +266,10 @@ export class PrismaProductRegistry implements ProductRegistry {
           settings: context.settings as Prisma.InputJsonValue,
           productId: row.id,
         })),
+      });
+      // docs/specs/retro-agent.md. A signal source is product configuration, as a context source is.
+      await tx.signalSource.createMany({
+        data: signalSources.map((signal) => ({ ...omitColumns(signal, owned), queries: signal.queries as Prisma.InputJsonValue, productId: row.id })),
       });
       await tx.productPolicyChange.create({
         data: {
@@ -450,6 +457,9 @@ export class PrismaProductRegistry implements ProductRegistry {
         appChangeIssues: settings.appChangeIssues,
         reviewAppDenyList: settings.reviewAppDenyList,
         automaticFollowUpLimit: settings.automaticFollowUpLimit,
+        productGoal: settings.productGoal,
+        keepTranscripts: settings.keepTranscripts,
+        retroRetentionDays: settings.retroRetentionDays,
       }).filter(([, value]) => value !== undefined),
     );
     const updated = await this.prisma.product.updateMany({ where: { tenantId, id }, data });

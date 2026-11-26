@@ -169,7 +169,7 @@ export const renderImplementerPrompt = (fields: ImplementerPromptFields): string
         "Factoree runs these checks in a new sandbox after you finish.",
         "A failed check returns to you as repair findings, and each repair uses the repair budget of the Run.",
         "You can run any of these checks yourself. Your result is not evidence.",
-        // docs/specs/nuget-private-feed-mapping.md, DI-21.230. An implicit restore reads the committed NuGet.config.
+        // docs/specs/nuget-private-feed-mapping.md, DI-21.238. An implicit restore reads the committed NuGet.config.
         "When the repository has `.factoree/nuget.config`, restore with `dotnet restore --configfile .factoree/nuget.config` and `dotnet tool restore --configfile .factoree/nuget.config`, and pass `--no-restore` to `dotnet build`, `dotnet test`, `dotnet run` and `dotnet publish`: the committed NuGet.config names a feed no sandbox reaches.",
         ...(fields.selfCheck === true
           ? ["agent-browser is installed. A browser check of your own work is optional, and it is not evidence."]

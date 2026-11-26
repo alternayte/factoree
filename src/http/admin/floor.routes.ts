@@ -55,10 +55,22 @@ export const floorSchema = z.object({
   setups: z.array(
     z.object({ id: z.string(), productId: z.string(), repository: z.string(), approximate: z.boolean(), statuses: z.array(statusChangeSchema) }),
   ),
+  /** docs/specs/retro-agent.md. The retros of the window, with the products each reads in order. */
+  retros: z.array(
+    z.object({
+      id: z.string(),
+      status: z.enum(["running", "succeeded", "failed"]),
+      productIds: z.array(z.string()),
+      startedAt: z.string(),
+      endedAt: z.string().nullable(),
+    }),
+  ),
   pulses: z.array(
     z.object({
       runId: z.string().nullable(),
       setupId: z.string().nullable(),
+      retroId: z.string().nullable(),
+      productId: z.string().nullable(),
       role: z.string(),
       toolKind: z.enum(TOOL_KINDS),
       lastOutputAt: z.string(),
@@ -85,6 +97,7 @@ const toJson = (floor: FloorData): FloorJson => ({
     deploys: run.deploys.map((deploy) => ({ ...deploy, at: iso(deploy.at) })),
   })),
   setups: floor.setups.map((setup) => ({ ...setup, statuses: setup.statuses.map((change) => ({ status: change.status, at: iso(change.at) })) })),
+  retros: floor.retros.map((retro) => ({ ...retro, startedAt: iso(retro.startedAt), endedAt: retro.endedAt === null ? null : iso(retro.endedAt) })),
   pulses: floor.pulses.map((pulse) => ({ ...pulse, lastOutputAt: iso(pulse.lastOutputAt), at: iso(pulse.at) })),
   throughput: floor.throughput,
 });

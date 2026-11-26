@@ -3,6 +3,7 @@ import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import { z } from "zod";
 import type { FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { applyPatch, type InstallSettingsStore, type SandboxSettings } from "~/domain/settings/install-settings.js";
+import { lockedBucketFields } from "~/domain/retro/transcript.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import { linearInstallUrl } from "~/adapters/linear/linear-app-flows.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
@@ -18,6 +19,7 @@ import {
   meSchema,
   sandboxSettingsProblem,
   viewInstallSettings,
+  type TranscriptBucketEnv,
   workspaceQuerySchema,
   workspaceSchema,
 } from "./schemas.js";
@@ -36,6 +38,8 @@ export interface SettingsRouteDependencies {
   listLinearTeams: (linearWorkspaceId: string) => Promise<Array<{ id: string; key: string; name: string }>>;
   /** docs/specs/run-speed.md. A new provider, image or size makes every warm snapshot stale. */
   buildAhead?: Pick<BuildAheadTrigger, "afterTemplateChange">;
+  /** docs/specs/retro-agent.md. The transcript bucket env vars, which lock their fields. */
+  transcriptBucketEnv?: TranscriptBucketEnv;
 }
 
 /**
@@ -89,7 +93,7 @@ export const registerSettingsRoutes = (app: FastifyInstance, dependencies: Setti
       },
     },
     async () =>
-      viewInstallSettings(await dependencies.settings.read(), dependencies.publicUrl, dependencies.localSandboxAllowed),
+      viewInstallSettings(await dependencies.settings.read(), dependencies.publicUrl, dependencies.localSandboxAllowed, dependencies.transcriptBucketEnv),
   );
 
   app.put(
@@ -115,9 +119,13 @@ export const registerSettingsRoutes = (app: FastifyInstance, dependencies: Setti
       const sandbox = applyPatch(current.sandbox, body.data.sandbox);
       const problem = sandboxSettingsProblem(sandbox);
       if (problem !== null) return reply.code(422).send({ error: problem });
+      // docs/specs/retro-agent.md. An env var wins and locks its field: the owner's env-over-UI rule.
+      const locked = lockedBucketFields(dependencies.transcriptBucketEnv ?? {});
+      const lockedChange = locked.find((field) => body.data.transcriptBucket?.[field] !== undefined);
+      if (lockedChange !== undefined) return reply.code(422).send({ error: `an env var sets the transcript bucket ${lockedChange}, so it is locked` });
       const updated = await dependencies.settings.update(body.data);
       if (templateOf(current.sandbox) !== templateOf(updated.sandbox)) await dependencies.buildAhead?.afterTemplateChange();
-      return viewInstallSettings(updated, dependencies.publicUrl, dependencies.localSandboxAllowed);
+      return viewInstallSettings(updated, dependencies.publicUrl, dependencies.localSandboxAllowed, dependencies.transcriptBucketEnv);
     },
   );
 
