@@ -137,6 +137,7 @@ export const createWorkItemActivities = (dependencies: WorkItemActivityDependenc
         name: `work-item-${imageFileName(image)}`,
         contentType: image.contentType,
         bytes: image.bytes,
+        kind: "work_item_image",
       });
       await dependencies.evidence.record({
         tenantId: input.tenantId,

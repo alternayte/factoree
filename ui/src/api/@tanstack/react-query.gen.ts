@@ -57,6 +57,7 @@ import {
   listRepositorySetupHistory,
   listRepositorySetups,
   listRetros,
+  listRunArtifacts,
   listRunEvents,
   listRuns,
   listSandboxProviders,
@@ -81,6 +82,7 @@ import {
   startSetupLinearInstall,
   stopRun,
   testContextSource,
+  testObjectStore,
   testSignalSource,
   updateInstallSettings,
   updateProduct,
@@ -224,6 +226,9 @@ import type {
   ListRetrosData,
   ListRetrosError,
   ListRetrosResponse,
+  ListRunArtifactsData,
+  ListRunArtifactsError,
+  ListRunArtifactsResponse,
   ListRunEventsData,
   ListRunEventsError,
   ListRunEventsResponse,
@@ -291,6 +296,9 @@ import type {
   TestContextSourceData,
   TestContextSourceError,
   TestContextSourceResponse,
+  TestObjectStoreData,
+  TestObjectStoreError,
+  TestObjectStoreResponse,
   TestSignalSourceData,
   TestSignalSourceError,
   TestSignalSourceResponse,
@@ -1027,6 +1035,31 @@ export const getRunOptions = (options: Options<GetRunData>) =>
     queryKey: getRunQueryKey(options),
   });
 
+export const listRunArtifactsQueryKey = (options: Options<ListRunArtifactsData>) =>
+  createQueryKey("listRunArtifacts", options);
+
+/**
+ * The stored evidence of a run, with its store, size and retention delete
+ */
+export const listRunArtifactsOptions = (options: Options<ListRunArtifactsData>) =>
+  queryOptions<
+    ListRunArtifactsResponse,
+    ListRunArtifactsError,
+    ListRunArtifactsResponse,
+    ReturnType<typeof listRunArtifactsQueryKey>
+  >({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await listRunArtifacts({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: listRunArtifactsQueryKey(options),
+  });
+
 export const listRunEventsQueryKey = (options: Options<ListRunEventsData>) => createQueryKey("listRunEvents", options);
 
 /**
@@ -1563,6 +1596,26 @@ export const updateInstallSettingsMutation = (
   > = {
     mutationFn: async (fnOptions) => {
       const { data } = await updateInstallSettings({
+        ...options,
+        ...fnOptions,
+        throwOnError: true,
+      });
+      return data;
+    },
+  };
+  return mutationOptions;
+};
+
+export const testObjectStoreMutation = (
+  options?: Partial<Options<TestObjectStoreData>>,
+): UseMutationOptions<TestObjectStoreResponse, TestObjectStoreError, Options<TestObjectStoreData>> => {
+  const mutationOptions: UseMutationOptions<
+    TestObjectStoreResponse,
+    TestObjectStoreError,
+    Options<TestObjectStoreData>
+  > = {
+    mutationFn: async (fnOptions) => {
+      const { data } = await testObjectStore({
         ...options,
         ...fnOptions,
         throwOnError: true,

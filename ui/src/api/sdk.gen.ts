@@ -139,6 +139,9 @@ import type {
   ListRetrosData,
   ListRetrosErrors,
   ListRetrosResponses,
+  ListRunArtifactsData,
+  ListRunArtifactsErrors,
+  ListRunArtifactsResponses,
   ListRunEventsData,
   ListRunEventsErrors,
   ListRunEventsResponses,
@@ -206,6 +209,9 @@ import type {
   TestContextSourceData,
   TestContextSourceErrors,
   TestContextSourceResponses,
+  TestObjectStoreData,
+  TestObjectStoreErrors,
+  TestObjectStoreResponses,
   TestSignalSourceData,
   TestSignalSourceErrors,
   TestSignalSourceResponses,
@@ -857,6 +863,29 @@ export const getRun = <ThrowOnError extends boolean = false>(
   });
 
 /**
+ * The stored evidence of a run, with its store, size and retention delete
+ */
+export const listRunArtifacts = <ThrowOnError extends boolean = false>(
+  options: Options<ListRunArtifactsData, ThrowOnError>,
+): RequestResult<ListRunArtifactsResponses, ListRunArtifactsErrors, ThrowOnError> =>
+  (options.client ?? client).get<ListRunArtifactsResponses, ListRunArtifactsErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/runs/{id}/artifacts",
+    ...options,
+  });
+
+/**
  * The faults and Factoree decisions of a run, in order
  */
 export const listRunEvents = <ThrowOnError extends boolean = false>(
@@ -1319,6 +1348,26 @@ export const updateInstallSettings = <ThrowOnError extends boolean = false>(
       "Content-Type": "application/json",
       ...options.headers,
     },
+  });
+
+export const testObjectStore = <ThrowOnError extends boolean = false>(
+  options?: Options<TestObjectStoreData, ThrowOnError>,
+): RequestResult<TestObjectStoreResponses, TestObjectStoreErrors, ThrowOnError> =>
+  (options?.client ?? client).post<TestObjectStoreResponses, TestObjectStoreErrors, ThrowOnError>({
+    security: [
+      {
+        key: "bearer",
+        scheme: "bearer",
+        type: "http",
+      },
+      {
+        in: "cookie",
+        name: "better-auth.session_token",
+        type: "apiKey",
+      },
+    ],
+    url: "/admin/install-settings/object-store/test",
+    ...options,
   });
 
 export const listWorkspaces = <ThrowOnError extends boolean = false>(

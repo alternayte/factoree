@@ -137,6 +137,7 @@ export const createEvidencePersistence = (
         name: storageNameOf(input.outcome.assertionId, artifact),
         contentType: artifact.contentType,
         bytes: artifact.bytes,
+        kind: artifact.kind,
       });
 
       await dependencies.evidence.record({
@@ -200,6 +201,7 @@ export const createEvidencePersistence = (
         name: storageNameOf(capture.id, capture.artifact),
         contentType: capture.artifact.contentType,
         bytes: capture.artifact.bytes,
+        kind: "screenshot",
       });
       await dependencies.evidence.record({
         tenantId: input.tenantId,
@@ -775,6 +777,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
       name: PROOF_PACK_DOCUMENT_NAME,
       contentType: "application/json",
       bytes: Buffer.from(documentText, "utf8"),
+      kind: "proof_pack_document",
     });
 
     const body = dependencies.redactor.redactText(renderProofPack(proofPackInput, stored.storageRef));
@@ -854,6 +857,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         name: PROOF_PACK_DOCUMENT_NAME,
         contentType: "application/json",
         bytes: Buffer.from(documentText, "utf8"),
+        kind: "proof_pack_document",
       });
       body = dependencies.redactor.redactText(renderProofPack(next, storedDocument.storageRef));
       const nextInput = JSON.parse(dependencies.redactor.redactText(JSON.stringify(next))) as Record<string, unknown>;
@@ -867,6 +871,7 @@ export const createProofPackActivities = (dependencies: ProofPackActivityDepende
         name: PROOF_PACK_DOCUMENT_NAME,
         contentType: "application/json",
         bytes: Buffer.from(documentText, "utf8"),
+        kind: "proof_pack_document",
       });
       body = dependencies.redactor.redactText(
         ["## Factoree delivery", "", `_Amended: ${after.amendedFor}_`, "", ...afterPublicationLines(after), "---", "", `Run ${input.runId}`, ""].join("\n"),

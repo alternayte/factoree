@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import type { PrismaStoredArtifactStore } from "~/persistence/prisma/stored-artifact.prisma.js";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import type { RunViewReader } from "~/domain/runs/run-view.js";
 import type { StopRequest } from "~/domain/runs/run-stop.js";
@@ -183,6 +184,20 @@ export const runDetailSchema = runListItemSchema.extend({
   ),
 });
 
+const runArtifactSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  source: z.string(),
+  sha256: z.string(),
+  link: z.string(),
+  store: z.enum(["s3", "linear", "filesystem"]),
+  bytes: z.number().nullable(),
+  /** docs/specs/s3-object-store.md. Set when the product's Evidence retention deleted the object. */
+  deletedAt: z.string().nullable(),
+  deletedAfterDays: z.number().nullable(),
+  createdAt: z.string(),
+});
+
 /**
  * docs/specs/run-visibility.md. The read model of the Runs pages. Every member of the workspace
  * reads it. Issue #45: only the stop route changes a run, and the admin guard limits it to a
@@ -201,6 +216,8 @@ export const registerRunRoutes = (
     requestDraft: (input: { tenantId: string; runId: string; request: DraftRequest }) => Promise<DraftOutcome>;
     /** docs/specs/run-diagnostics.md. The run events of each run. */
     events: RunEventStore;
+    /** docs/specs/s3-object-store.md. The stored evidence of a run. */
+    artifacts: Pick<PrismaStoredArtifactStore, "runArtifacts">;
   },
 ): void => {
   useSchemasAsDocumentation(app);
@@ -256,6 +273,31 @@ export const registerRunRoutes = (
       if (!run) return reply.code(404).send({ error: "run not found" });
       const diagnosis = await runDiagnosisOf(dependencies.events, tenant.id, run);
       return { ...run, diagnosis: toDiagnosisJson(diagnosis) };
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/admin/runs/:id/artifacts",
+    {
+      schema: {
+        tags: TAGS,
+        operationId: "listRunArtifacts",
+        summary: "The stored evidence of a run, with its store, size and retention delete",
+        security: SESSION_SECURITY,
+        params: schemaOf(z.object({ id: z.string() })),
+        querystring: schemaOf(detailQuerySchema),
+        response: { 200: schemaOf(z.object({ items: z.array(runArtifactSchema) })), 400: errorSchema, 404: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const query = detailQuerySchema.safeParse(request.query);
+      if (!query.success) return reply.code(400).send({ error: query.error.flatten() });
+      const tenant = await dependencies.tenants.findByWorkspace(query.data.linearWorkspaceId);
+      if (!tenant) return reply.code(404).send({ error: "tenant not found" });
+      const run = await dependencies.runViews.detail(tenant.id, request.params.id);
+      if (!run) return reply.code(404).send({ error: "run not found" });
+      const items = await dependencies.artifacts.runArtifacts(tenant.id, run.id);
+      return { items: items.map((item) => ({ ...item, deletedAt: item.deletedAt?.toISOString() ?? null, createdAt: item.createdAt.toISOString() })) };
     },
   );
 

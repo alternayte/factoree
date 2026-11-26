@@ -15,6 +15,11 @@ export interface PutArtifactInput {
   name: string;
   contentType: string;
   bytes: Uint8Array;
+  /**
+   * docs/specs/s3-object-store.md. The evidence kind, for example `screenshot` or `trace`. The
+   * object store gives a screenshot or video an open link, and retention reads it.
+   */
+  kind: string;
 }
 
 /**

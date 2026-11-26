@@ -3,7 +3,9 @@ import type { BuildAheadTrigger } from "~/domain/runs/build-ahead.js";
 import { z } from "zod";
 import type { FactoreePrismaClient } from "~/persistence/prisma/client.js";
 import { applyPatch, type InstallSettingsStore, type SandboxSettings } from "~/domain/settings/install-settings.js";
-import { lockedBucketFields } from "~/domain/retro/transcript.js";
+import { completeBucket, effectiveBucket, lockedBucketFields, objectStoreFingerprint, objectStoreTested } from "~/domain/retro/transcript.js";
+import { S3ObjectStore } from "~/adapters/s3/s3-object-store.js";
+import { randomUUID } from "node:crypto";
 import type { TenantRegistry } from "~/domain/products/tenant-registry.js";
 import { linearInstallUrl } from "~/adapters/linear/linear-app-flows.js";
 import { errorSchema, schemaOf, SESSION_SECURITY, useSchemasAsDocumentation } from "../openapi.js";
@@ -19,7 +21,7 @@ import {
   meSchema,
   sandboxSettingsProblem,
   viewInstallSettings,
-  type TranscriptBucketEnv,
+  type ObjectStoreEnv,
   workspaceQuerySchema,
   workspaceSchema,
 } from "./schemas.js";
@@ -39,7 +41,9 @@ export interface SettingsRouteDependencies {
   /** docs/specs/run-speed.md. A new provider, image or size makes every warm snapshot stale. */
   buildAhead?: Pick<BuildAheadTrigger, "afterTemplateChange">;
   /** docs/specs/retro-agent.md. The transcript bucket env vars, which lock their fields. */
-  transcriptBucketEnv?: TranscriptBucketEnv;
+  objectStoreEnv?: ObjectStoreEnv;
+  /** The object store client of a test. A unit test passes a fake. */
+  objectStoreFor?: (location: { endpoint: string; bucket: string; region: string; accessKey: string; secretKey: string }) => Pick<S3ObjectStore, "put" | "get" | "delete">;
 }
 
 /**
@@ -93,7 +97,7 @@ export const registerSettingsRoutes = (app: FastifyInstance, dependencies: Setti
       },
     },
     async () =>
-      viewInstallSettings(await dependencies.settings.read(), dependencies.publicUrl, dependencies.localSandboxAllowed, dependencies.transcriptBucketEnv),
+      viewInstallSettings(await dependencies.settings.read(), dependencies.publicUrl, dependencies.localSandboxAllowed, dependencies.objectStoreEnv),
   );
 
   app.put(
@@ -120,15 +124,63 @@ export const registerSettingsRoutes = (app: FastifyInstance, dependencies: Setti
       const problem = sandboxSettingsProblem(sandbox);
       if (problem !== null) return reply.code(422).send({ error: problem });
       // docs/specs/retro-agent.md. An env var wins and locks its field: the owner's env-over-UI rule.
-      const locked = lockedBucketFields(dependencies.transcriptBucketEnv ?? {});
-      const lockedChange = locked.find((field) => body.data.transcriptBucket?.[field] !== undefined);
-      if (lockedChange !== undefined) return reply.code(422).send({ error: `an env var sets the transcript bucket ${lockedChange}, so it is locked` });
-      if (dependencies.transcriptBucketEnv?.FACTOREE_WEB_SEARCH_EXA_API_KEY !== undefined && body.data.webSearch?.exaApiKey !== undefined) {
+      const locked = lockedBucketFields(dependencies.objectStoreEnv ?? {});
+      const lockedChange = locked.find((field) => body.data.objectStore?.[field] !== undefined);
+      if (lockedChange !== undefined) return reply.code(422).send({ error: `an env var sets the object store ${lockedChange}, so it is locked` });
+      // docs/specs/s3-object-store.md. The env var locks the choice, and S3 needs a tested object store.
+      if (body.data.evidenceStorage !== undefined) {
+        if (dependencies.objectStoreEnv?.FACTOREE_EVIDENCE_STORAGE !== undefined) {
+          return reply.code(422).send({ error: "FACTOREE_EVIDENCE_STORAGE sets the evidence store, so it is locked" });
+        }
+        const objectStore = applyPatch(current.objectStore, body.data.objectStore);
+        if (body.data.evidenceStorage === "s3" && !objectStoreTested(objectStore, current.objectStoreTestedSha256, dependencies.objectStoreEnv ?? {})) {
+          return reply.code(422).send({ error: "S3 needs a complete object store that passed Test object store" });
+        }
+      }
+      if (dependencies.objectStoreEnv?.FACTOREE_WEB_SEARCH_EXA_API_KEY !== undefined && body.data.webSearch?.exaApiKey !== undefined) {
         return reply.code(422).send({ error: "FACTOREE_WEB_SEARCH_EXA_API_KEY sets the Exa key, so it is locked" });
       }
       const updated = await dependencies.settings.update(body.data);
       if (templateOf(current.sandbox) !== templateOf(updated.sandbox)) await dependencies.buildAhead?.afterTemplateChange();
-      return viewInstallSettings(updated, dependencies.publicUrl, dependencies.localSandboxAllowed, dependencies.transcriptBucketEnv);
+      return viewInstallSettings(updated, dependencies.publicUrl, dependencies.localSandboxAllowed, dependencies.objectStoreEnv);
+    },
+  );
+
+  // docs/specs/s3-object-store.md. Puts, reads and deletes one probe object with the effective
+  // object store, and stores the fingerprint of the settings that passed.
+  app.post(
+    "/admin/install-settings/object-store/test",
+    {
+      schema: {
+        tags: ["install"],
+        operationId: "testObjectStore",
+        security: SESSION_SECURITY,
+        response: { 200: schemaOf(z.object({ ok: z.boolean(), error: z.string().nullable() })), 403: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      if (!principalOf(request).operatorAdmin) {
+        return reply.code(403).send({ error: "only a Linear admin of the setup workspace changes the install settings" });
+      }
+      const current = await dependencies.settings.read();
+      const effective = effectiveBucket(current.objectStore, dependencies.objectStoreEnv ?? {});
+      const bucket = completeBucket(effective);
+      if (bucket === null) return { ok: false, error: "the object store needs an endpoint, a bucket, an access key and a secret key" };
+      const store = (dependencies.objectStoreFor ?? ((location) => new S3ObjectStore(location)))(bucket);
+      const key = `factoree-probe/${randomUUID()}.txt`;
+      const body = Buffer.from(`factoree object store test ${new Date().toISOString()}`, "utf8");
+      try {
+        await store.put(key, body, "text/plain");
+        const read = await store.get(key);
+        if (read === null || !read.equals(body)) throw new Error("the probe object read back different bytes");
+        await store.delete(key);
+      } catch (error) {
+        await dependencies.settings.update({ objectStoreTestedSha256: null });
+        const message = (error instanceof Error ? error.message : String(error)).split(bucket.secretKey).join("[redacted]");
+        return { ok: false, error: message.slice(0, 500) };
+      }
+      await dependencies.settings.update({ objectStoreTestedSha256: objectStoreFingerprint(effective) });
+      return { ok: true, error: null };
     },
   );
 

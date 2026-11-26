@@ -38,10 +38,17 @@ const schema = z
     FACTOREE_UNSAFE_LOCAL_SANDBOX: z.literal("1").optional(),
     FACTOREE_SANDBOX_LOCAL_ROOT: z.string().min(1).default("/tmp/factoree-sandboxes"),
     // Test only. "filesystem" keeps visual evidence on the worker disk instead of Linear.
-    FACTOREE_EVIDENCE_STORAGE: z.enum(["filesystem", "linear"]).default("linear"),
+    // docs/specs/s3-object-store.md. When set, it wins over the Evidence store choice and locks it.
+    FACTOREE_EVIDENCE_STORAGE: z.enum(["filesystem", "linear", "s3"]).optional(),
     FACTOREE_EVIDENCE_LOCAL_ROOT: z.string().min(1).default("/tmp/factoree-evidence"),
     // docs/specs/retro-agent.md. The S3-compatible bucket of kept transcripts. Each one set wins
     // over the install setting of the same name, and the Settings page shows that field locked.
+    // docs/specs/s3-object-store.md. The object store. Each wins over its install setting and over its 0.23 alias below.
+    FACTOREE_S3_ENDPOINT: z.string().url().optional(),
+    FACTOREE_S3_BUCKET: z.string().min(1).optional(),
+    FACTOREE_S3_REGION: z.string().min(1).optional(),
+    FACTOREE_S3_ACCESS_KEY: z.string().min(1).optional(),
+    FACTOREE_S3_SECRET_KEY: z.string().min(1).optional(),
     FACTOREE_TRANSCRIPT_S3_ENDPOINT: z.string().url().optional(),
     FACTOREE_TRANSCRIPT_S3_BUCKET: z.string().min(1).optional(),
     FACTOREE_TRANSCRIPT_S3_REGION: z.string().min(1).optional(),

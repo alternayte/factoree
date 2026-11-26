@@ -2567,6 +2567,12 @@
                     "webResearch": {
                       "type": "boolean"
                     },
+                    "evidenceRetentionDays": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -2609,6 +2615,7 @@
                     "keepTranscripts",
                     "retroRetentionDays",
                     "webResearch",
+                    "evidenceRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3352,6 +3359,12 @@
                     "webResearch": {
                       "type": "boolean"
                     },
+                    "evidenceRetentionDays": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -3394,6 +3407,7 @@
                     "keepTranscripts",
                     "retroRetentionDays",
                     "webResearch",
+                    "evidenceRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3813,6 +3827,12 @@
                       "webResearch": {
                         "type": "boolean"
                       },
+                      "evidenceRetentionDays": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
                       "createdAt": {
                         "type": "string"
                       },
@@ -3855,6 +3875,7 @@
                       "keepTranscripts",
                       "retroRetentionDays",
                       "webResearch",
+                      "evidenceRetentionDays",
                       "createdAt",
                       "updatedAt"
                     ]
@@ -4297,6 +4318,12 @@
                     "webResearch": {
                       "type": "boolean"
                     },
+                    "evidenceRetentionDays": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -4339,6 +4366,7 @@
                     "keepTranscripts",
                     "retroRetentionDays",
                     "webResearch",
+                    "evidenceRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -4766,6 +4794,12 @@
                     "webResearch": {
                       "type": "boolean"
                     },
+                    "evidenceRetentionDays": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -4808,6 +4842,7 @@
                     "keepTranscripts",
                     "retroRetentionDays",
                     "webResearch",
+                    "evidenceRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -5250,6 +5285,18 @@
                   },
                   "webResearch": {
                     "type": "boolean"
+                  },
+                  "evidenceRetentionDays": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 3650
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "additionalProperties": false
@@ -5620,6 +5667,12 @@
                     "webResearch": {
                       "type": "boolean"
                     },
+                    "evidenceRetentionDays": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -5662,6 +5715,7 @@
                     "keepTranscripts",
                     "retroRetentionDays",
                     "webResearch",
+                    "evidenceRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -6201,6 +6255,12 @@
                     "webResearch": {
                       "type": "boolean"
                     },
+                    "evidenceRetentionDays": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -6243,6 +6303,7 @@
                     "keepTranscripts",
                     "retroRetentionDays",
                     "webResearch",
+                    "evidenceRetentionDays",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -10416,6 +10477,155 @@
                     "findings",
                     "skills",
                     "skillProposals"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/runs/{id}/artifacts": {
+      "get": {
+        "operationId": "listRunArtifacts",
+        "summary": "The stored evidence of a run, with its store, size and retention delete",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "sha256": {
+                            "type": "string"
+                          },
+                          "link": {
+                            "type": "string"
+                          },
+                          "store": {
+                            "type": "string",
+                            "enum": [
+                              "s3",
+                              "linear",
+                              "filesystem"
+                            ]
+                          },
+                          "bytes": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "deletedAt": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "deletedAfterDays": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "source",
+                          "sha256",
+                          "link",
+                          "store",
+                          "bytes",
+                          "deletedAt",
+                          "deletedAfterDays",
+                          "createdAt"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
                   ]
                 }
               }
@@ -17574,7 +17784,7 @@
                         "email"
                       ]
                     },
-                    "transcriptBucket": {
+                    "objectStore": {
                       "type": "object",
                       "properties": {
                         "endpoint": {
@@ -17619,6 +17829,9 @@
                         },
                         "active": {
                           "type": "boolean"
+                        },
+                        "tested": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -17628,7 +17841,41 @@
                         "accessKey",
                         "secretKeySet",
                         "locked",
-                        "active"
+                        "active",
+                        "tested"
+                      ]
+                    },
+                    "evidenceStorage": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "string",
+                          "enum": [
+                            "linear",
+                            "s3",
+                            "filesystem"
+                          ]
+                        },
+                        "stored": {
+                          "type": "string",
+                          "enum": [
+                            "linear",
+                            "s3",
+                            "filesystem"
+                          ]
+                        },
+                        "locked": {
+                          "type": "boolean"
+                        },
+                        "s3Allowed": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "value",
+                        "stored",
+                        "locked",
+                        "s3Allowed"
                       ]
                     },
                     "webSearch": {
@@ -17653,7 +17900,8 @@
                     "linear",
                     "sandbox",
                     "gitAuthor",
-                    "transcriptBucket",
+                    "objectStore",
+                    "evidenceStorage",
                     "webSearch"
                   ]
                 }
@@ -17760,7 +18008,7 @@
                     },
                     "additionalProperties": false
                   },
-                  "transcriptBucket": {
+                  "objectStore": {
                     "type": "object",
                     "properties": {
                       "endpoint": {
@@ -17837,6 +18085,14 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "evidenceStorage": {
+                    "type": "string",
+                    "enum": [
+                      "linear",
+                      "s3",
+                      "filesystem"
+                    ]
                   }
                 },
                 "additionalProperties": false
@@ -18019,7 +18275,7 @@
                         "email"
                       ]
                     },
-                    "transcriptBucket": {
+                    "objectStore": {
                       "type": "object",
                       "properties": {
                         "endpoint": {
@@ -18064,6 +18320,9 @@
                         },
                         "active": {
                           "type": "boolean"
+                        },
+                        "tested": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -18073,7 +18332,41 @@
                         "accessKey",
                         "secretKeySet",
                         "locked",
-                        "active"
+                        "active",
+                        "tested"
+                      ]
+                    },
+                    "evidenceStorage": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "string",
+                          "enum": [
+                            "linear",
+                            "s3",
+                            "filesystem"
+                          ]
+                        },
+                        "stored": {
+                          "type": "string",
+                          "enum": [
+                            "linear",
+                            "s3",
+                            "filesystem"
+                          ]
+                        },
+                        "locked": {
+                          "type": "boolean"
+                        },
+                        "s3Allowed": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "value",
+                        "stored",
+                        "locked",
+                        "s3Allowed"
                       ]
                     },
                     "webSearch": {
@@ -18098,7 +18391,8 @@
                     "linear",
                     "sandbox",
                     "gitAuthor",
-                    "transcriptBucket",
+                    "objectStore",
+                    "evidenceStorage",
                     "webSearch"
                   ]
                 }
@@ -18122,6 +18416,65 @@
             }
           },
           "422": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/install-settings/object-store/test": {
+      "post": {
+        "operationId": "testObjectStore",
+        "tags": [
+          "install"
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
             "description": "Default Response",
             "content": {
               "application/json": {

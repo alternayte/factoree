@@ -111,7 +111,9 @@ import { createLinearWorkItemReader } from "~/adapters/linear/linear-work-item-c
 import { GitHubWorkItemLinks } from "~/adapters/github/github-work-item-links.js";
 import { createModelsDevSource } from "~/adapters/models-dev/models-dev-source.js";
 import { PrismaRetroGatewayStore, PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore, PrismaTranscriptStore } from "~/persistence/prisma/retro.prisma.js";
-import { effectiveExaKey } from "~/domain/settings/install-settings.js";
+import { effectiveEvidenceStore, effectiveExaKey } from "~/domain/settings/install-settings.js";
+import { PrismaStoredArtifactStore } from "~/persistence/prisma/stored-artifact.prisma.js";
+import { S3EvidenceStorage } from "~/adapters/evidence/s3-evidence-storage.js";
 import { parseRetroSessionRunId, resolveRetroRole } from "~/domain/retro/retro-settings.js";
 import { completeBucket, effectiveBucket } from "~/domain/retro/transcript.js";
 import { S3ObjectStore, type ObjectStore } from "~/adapters/s3/s3-object-store.js";
@@ -248,11 +250,11 @@ const modelCatalog = new ModelCatalogService({ store: new PrismaModelCatalogStor
 // transcript bucket is read for each write, so a change in Settings applies to the next one.
 const retroSettingsStore = new PrismaRetroSettingsStore(prisma);
 const retroStore = new PrismaRetroStore(prisma);
-const transcriptBucket = async (): Promise<ObjectStore | null> => {
-  const bucket = completeBucket(effectiveBucket((await settings.read()).transcriptBucket, env));
+const objectStore = async (): Promise<ObjectStore | null> => {
+  const bucket = completeBucket(effectiveBucket((await settings.read()).objectStore, env));
   return bucket === null ? null : new S3ObjectStore(bucket);
 };
-const transcriptStore = new PrismaTranscriptStore(prisma, transcriptBucket);
+const transcriptStore = new PrismaTranscriptStore(prisma, objectStore);
 // SDD section 61. Only a run of a product that keeps transcripts stores one. A setup or a retro
 // session has no run row, and its owner holds a colon.
 const transcriptSink: TranscriptSink = {
@@ -514,10 +516,13 @@ const linearFileUploadApiForTenant = async (tenantId: string) => {
   return createLinearFileUploadApi(await linearTokens.tokenFor(tenant.linearWorkspaceId));
 };
 
+// docs/specs/s3-object-store.md. The evidence store is read for each upload; the env var wins.
+const storedArtifacts = new PrismaStoredArtifactStore(prisma);
 const evidenceStorage = createEvidenceStorage({
-  storage: env.FACTOREE_EVIDENCE_STORAGE,
+  store: async () => effectiveEvidenceStore((await settings.read()).evidenceStorage, env.FACTOREE_EVIDENCE_STORAGE),
   localRoot: env.FACTOREE_EVIDENCE_LOCAL_ROOT,
   linearApiForTenant: linearFileUploadApiForTenant,
+  s3: new S3EvidenceStorage({ objectStore, artifacts: storedArtifacts, publicUrl: env.FACTOREE_PUBLIC_URL, masterKey: env.FACTOREE_MASTER_KEY }),
 });
 
 const httpValidationFetch: HttpValidationFetch = async (url, init) => {
@@ -745,10 +750,10 @@ let retroCleaning = false;
 const retroRetentionTimer = setInterval(() => {
   if (retroCleaning) return;
   retroCleaning = true;
-  void transcriptBucket()
-    .then((bucket) => retroStore.deleteExpired(new Date(), bucket))
+  void objectStore()
+    .then(async (bucket) => ({ ...(await retroStore.deleteExpired(new Date(), bucket)), evidence: await storedArtifacts.deleteExpired(new Date(), bucket) }))
     .then((deleted) => {
-      if (deleted.transcripts + deleted.signalResults > 0) logger.info("retro data past its retention deleted", { ...deleted, step: "retention" });
+      if (deleted.transcripts + deleted.signalResults + deleted.webResults + deleted.evidence > 0) logger.info("data past its retention deleted", { ...deleted, step: "retention" });
     })
     .catch((error: unknown) => logger.error("the retro data retention pass failed", { error: String(error), step: "retention" }))
     .finally(() => {

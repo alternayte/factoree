@@ -1,7 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 
 /**
- * docs/specs/retro-agent.md. A small S3-compatible object client: put, get and delete of one key,
+ * docs/specs/retro-agent.md, docs/specs/s3-object-store.md. A small S3-compatible object client: put, get, delete and a presigned GET of one key,
  * signed with AWS Signature Version 4 over path-style URLs, so AWS S3, MinIO, Cloudflare R2 and
  * Backblaze B2 all work. Three calls do not earn the AWS SDK. No message holds the secret key.
  */
@@ -17,6 +17,11 @@ export interface ObjectStore {
   put(key: string, body: Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<Buffer | null>;
   delete(key: string): Promise<void>;
+  /**
+   * docs/specs/s3-object-store.md. A presigned GET URL of one key that lasts `expiresSeconds`, with
+   * the response content type and disposition the reader gets.
+   */
+  presignGet?(key: string, expiresSeconds: number, response: { contentType: string; disposition: string | null }): string;
 }
 
 const TIMEOUT_MS = 30_000;
@@ -64,6 +69,36 @@ export const signS3Request = (
   return { ...sent, authorization: `AWS4-HMAC-SHA256 Credential=${credentials.accessKey}/${scope}, SignedHeaders=${names.join(";")}, Signature=${signature}` };
 };
 
+/**
+ * docs/specs/s3-object-store.md. The query string of a SigV4 presigned request: the signature
+ * covers only the host header, and the payload is unsigned, as AWS query authentication requires.
+ */
+export const presignS3Query = (
+  credentials: Pick<S3Location, "region" | "accessKey" | "secretKey">,
+  request: { method: string; host: string; path: string; expiresSeconds: number; query?: Record<string, string> },
+  now: Date,
+): string => {
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const day = amzDate.slice(0, 8);
+  const scope = `${day}/${credentials.region}/s3/aws4_request`;
+  const params: Record<string, string> = {
+    ...(request.query ?? {}),
+    "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+    "X-Amz-Credential": `${credentials.accessKey}/${scope}`,
+    "X-Amz-Date": amzDate,
+    "X-Amz-Expires": String(request.expiresSeconds),
+    "X-Amz-SignedHeaders": "host",
+  };
+  const query = Object.keys(params)
+    .sort()
+    .map((name) => `${encodeSegment(name)}=${encodeSegment(params[name]!)}`)
+    .join("&");
+  const canonical = [request.method, request.path, query, `host:${request.host}`, "", "host", "UNSIGNED-PAYLOAD"].join("\n");
+  const toSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256Hex(canonical)].join("\n");
+  const signingKey = hmac(hmac(hmac(hmac(`AWS4${credentials.secretKey}`, day), credentials.region), "s3"), "aws4_request");
+  return `${query}&X-Amz-Signature=${createHmac("sha256", signingKey).update(toSign).digest("hex")}`;
+};
+
 export class S3ObjectStore implements ObjectStore {
   constructor(
     private readonly location: S3Location,
@@ -86,24 +121,43 @@ export class S3ObjectStore implements ObjectStore {
     });
   }
 
-  private failure(action: string, key: string, response: Response): Error {
-    return new Error(`the transcript bucket ${this.location.bucket} answered ${response.status} to the ${action} of ${key}`);
+  private async failure(action: string, key: string, response: Response): Promise<Error> {
+    // S3 names the fault in an XML body, for example SignatureDoesNotMatch or NoSuchBucket.
+    const text = await response.text().catch(() => "");
+    const code = /<Code>([^<]{1,100})<\/Code>/.exec(text)?.[1];
+    return new Error(`the object store bucket ${this.location.bucket} answered ${response.status}${code === undefined ? "" : ` ${code}`} to the ${action} of ${key}`);
+  }
+
+  presignGet(key: string, expiresSeconds: number, response: { contentType: string; disposition: string | null }): string {
+    const url = objectUrlOf(this.location, key);
+    const query = presignS3Query(
+      this.location,
+      {
+        method: "GET",
+        host: url.host,
+        path: url.path,
+        expiresSeconds,
+        query: { "response-content-type": response.contentType, ...(response.disposition === null ? {} : { "response-content-disposition": response.disposition }) },
+      },
+      this.clock(),
+    );
+    return `${url.origin}${url.path}?${query}`;
   }
 
   async put(key: string, body: Buffer, contentType: string): Promise<void> {
     const response = await this.send("PUT", key, body, contentType);
-    if (!response.ok) throw this.failure("upload", key, response);
+    if (!response.ok) throw await this.failure("upload", key, response);
   }
 
   async get(key: string): Promise<Buffer | null> {
     const response = await this.send("GET", key);
     if (response.status === 404) return null;
-    if (!response.ok) throw this.failure("download", key, response);
+    if (!response.ok) throw await this.failure("download", key, response);
     return Buffer.from(await response.arrayBuffer());
   }
 
   async delete(key: string): Promise<void> {
     const response = await this.send("DELETE", key);
-    if (!response.ok && response.status !== 404) throw this.failure("delete", key, response);
+    if (!response.ok && response.status !== 404) throw await this.failure("delete", key, response);
   }
 }

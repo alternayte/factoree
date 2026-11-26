@@ -18,7 +18,7 @@ The install gets one S3-compatible object store in Install settings. It holds ke
 - Screenshots and videos get an open link, `/artifacts/<id>/<token>`. The token is HMAC-SHA256 of the artifact id under the master key, in base64url. It opens with no sign-in and never expires — Linear and GitHub fetch images through their own servers with no Factoree session, so only an open link renders inline.
 - The proof pack and the PR body use the open link for screenshots and videos, and the sign-in link for every other kind — a trace holds request data, so it never opens without a sign-in.
 - An open link of a deleted artifact answers 404. A new master key makes every open link answer 404, and Install settings say so beside the master key — Factoree revokes a link by deleting the artifact.
-- The run page lists each artifact with its kind, size, SHA-256 and link, as today.
+- The run page gets an Artifacts section that lists each stored artifact with its kind, store, size, SHA-256 and link — the run page showed no artifact before, and a retention delete must be visible.
 - Evidence is kept until its run is deleted, as in Linear today — evidence is the proof behind a merged change.
 - The product page has an optional "Evidence retention" in days, empty by default. The hourly retention pass deletes video and trace objects older than it from the object store. Their rows stay and show "deleted after N days" — screenshots, logs and documents are small and are the proof.
 - Signal results and web results stay in Postgres — each is capped at 256 KiB, kept for the retro data retention, and read row by row.
