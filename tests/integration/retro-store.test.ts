@@ -37,9 +37,30 @@ describe("retro store", () => {
       const second = await start("retro-b");
       await store.storeFindings({ tenantId, retroId: second.id, productId, findings: [{ ...finding, title: "the seed step times out", duplicateOfId: original! }] });
       const detail = await store.detail(tenantId, second.id);
-      expect(detail?.findings.map((entry) => [entry.status, entry.duplicateOfId])).toEqual([["already_proposed", original]]);
+      expect(detail?.findings.map((entry) => [entry.status, entry.duplicateOfId, entry.duplicateOfRetroId])).toEqual([
+        ["already_proposed", original, first.id],
+      ]);
       // A start with the same workflow id reads the same retro.
       expect((await start("retro-a")).id).toBe(first.id);
+    });
+  });
+
+  it("pages the retros newest first by cursor", async () => {
+    await withDatabase(async (prisma) => {
+      const { tenantId, productId } = await seedTenantProjectAndRun(prisma);
+      const store = new PrismaRetroStore(prisma);
+      const ids: string[] = [];
+      for (const [index, workflowId] of ["retro-1", "retro-2", "retro-3"].entries()) {
+        const retro = await store.start({ tenantId, workflowId, trigger: "manual", windowStart: null, windowEnd: new Date(), promptVersion: "retro@1", productIds: [productId] });
+        await prisma.retro.update({ where: { id: retro.id }, data: { startedAt: new Date(Date.UTC(2026, 10, 20 + index)) } });
+        ids.push(retro.id);
+      }
+      const first = await store.list(tenantId, 2);
+      expect(first.items.map((retro) => retro.id)).toEqual([ids[2], ids[1]]);
+      const second = await store.list(tenantId, 2, first.nextCursor!);
+      expect(second).toEqual({ items: [expect.objectContaining({ id: ids[0] })], nextCursor: null });
+      // A cursor of another tenant's retro reads nothing.
+      expect(await store.list("another-tenant", 2, ids[0])).toEqual({ items: [], nextCursor: null });
     });
   });
 

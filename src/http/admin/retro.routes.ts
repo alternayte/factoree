@@ -52,6 +52,8 @@ const retroSummarySchema = z.object({
 
 const settingsViewSchema = z.object({
   settings: retroSettingsSchema,
+  /** True when the workspace saved its retro settings at least once. False shows the defaults. */
+  saved: z.boolean(),
   /** The next retro time the Temporal Schedule holds, or null when it is off or unknown. */
   nextRunAt: z.string().nullable(),
   /** Why the schedule could not be read or saved, or null. */
@@ -81,6 +83,8 @@ const findingSchema = z.object({
   repositories: z.array(z.string()),
   status: z.enum(RETRO_FINDING_STATUSES),
   duplicateOfId: z.string().nullable(),
+  /** The retro of the finding that this one repeats, or null. */
+  duplicateOfRetroId: z.string().nullable(),
   linearIssueIdentifier: z.string().nullable(),
   linearIssueUrl: z.string().nullable(),
   decidedBy: z.string().nullable(),
@@ -89,7 +93,7 @@ const findingSchema = z.object({
 });
 
 const retroDetailSchema = retroSummarySchema.extend({
-  events: z.array(z.object({ kind: z.string(), productId: z.string().nullable(), message: z.string() })),
+  events: z.array(z.object({ kind: z.string(), productId: z.string().nullable(), message: z.string(), at: z.string().nullable() })),
   sessions: z.array(
     z.object({
       productId: z.string(),
@@ -142,6 +146,9 @@ const signalTestSchema = z.object({
   results: z.array(z.object({ queryName: z.string(), ok: z.boolean(), bytes: z.number().nullable(), preview: z.string().nullable(), reason: z.string().nullable() })),
 });
 
+const RETRO_PAGE_SIZE = 25;
+const listRetrosQuerySchema = z.object({ linearWorkspaceId: z.string().min(1), cursor: z.string().min(1).optional() });
+
 const workspaceBodySchema = z.object({ linearWorkspaceId: z.string().min(1) }).strict();
 const settingsBodySchema = retroSettingsInputSchema.extend({ linearWorkspaceId: z.string().min(1) }).strict();
 const signalBodySchema = signalSourceInputSchema.extend({ linearWorkspaceId: z.string().min(1) }).strict();
@@ -181,7 +188,7 @@ export interface RetroRouteDependencies {
   tenants: TenantRegistry;
   products: Pick<ProductRegistry, "findById" | "list">;
   secrets: Pick<SecretStore, "get">;
-  retroSettings: Pick<PrismaRetroSettingsStore, "read" | "write">;
+  retroSettings: Pick<PrismaRetroSettingsStore, "read" | "write" | "saved">;
   retros: PrismaRetroStore;
   signalSources: PrismaSignalSourceStore;
   /** Null on a server with no Temporal client: the schedule and Run now answer 503. */
@@ -212,7 +219,11 @@ export const registerRetroRoutes = (app: FastifyInstance, dependencies: RetroRou
         error ??= "The schedule could not be read: Temporal is unreachable";
       }
     }
-    const [running, last] = await Promise.all([dependencies.retros.running(tenantId), dependencies.retros.latest(tenantId)]);
+    const [running, last, saved] = await Promise.all([
+      dependencies.retros.running(tenantId),
+      dependencies.retros.latest(tenantId),
+      dependencies.retroSettings.saved(tenantId),
+    ]);
     return {
       settings: {
         schedule: settings.schedule,
@@ -225,6 +236,7 @@ export const registerRetroRoutes = (app: FastifyInstance, dependencies: RetroRou
         effort: settings.effort,
         costCapUsd: settings.costCapUsd,
       },
+      saved,
       nextRunAt,
       scheduleError: error,
       running: running === null ? null : toSummary(running),
@@ -332,21 +344,25 @@ export const registerRetroRoutes = (app: FastifyInstance, dependencies: RetroRou
     },
   );
 
-  app.get<{ Querystring: { linearWorkspaceId: string } }>(
+  app.get<{ Querystring: { linearWorkspaceId: string; cursor?: string } }>(
     "/admin/retros",
     {
       schema: {
         tags: TAGS,
         operationId: "listRetros",
         security: SESSION_SECURITY,
-        querystring: workspaceQuery,
-        response: { 200: schemaOf(z.object({ retros: z.array(retroSummarySchema) })), 404: errorSchema },
+        querystring: schemaOf(listRetrosQuerySchema),
+        response: {
+          200: schemaOf(z.object({ retros: z.array(retroSummarySchema), nextCursor: z.string().nullable() })),
+          404: errorSchema,
+        },
       },
     },
     async (request, reply) => {
       const tenant = await tenantOf(request.query.linearWorkspaceId);
       if (!tenant) return reply.code(404).send({ error: "tenant not found" });
-      return reply.send({ retros: (await dependencies.retros.list(tenant.id, 50)).map(toSummary) });
+      const page = await dependencies.retros.list(tenant.id, RETRO_PAGE_SIZE, request.query.cursor);
+      return reply.send({ retros: page.items.map(toSummary), nextCursor: page.nextCursor });
     },
   );
 

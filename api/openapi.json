@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Factoree",
-    "version": "0.23.0"
+    "version": "0.23.1"
   },
   "components": {
     "securitySchemes": {
@@ -18631,6 +18631,9 @@
                         "costCapUsd"
                       ]
                     },
+                    "saved": {
+                      "type": "boolean"
+                    },
                     "nextRunAt": {
                       "type": [
                         "string",
@@ -18796,6 +18799,7 @@
                   },
                   "required": [
                     "settings",
+                    "saved",
                     "nextRunAt",
                     "scheduleError",
                     "running",
@@ -19012,6 +19016,9 @@
                         "costCapUsd"
                       ]
                     },
+                    "saved": {
+                      "type": "boolean"
+                    },
                     "nextRunAt": {
                       "type": [
                         "string",
@@ -19177,6 +19184,7 @@
                   },
                   "required": [
                     "settings",
+                    "saved",
                     "nextRunAt",
                     "scheduleError",
                     "running",
@@ -19332,6 +19340,9 @@
                         "costCapUsd"
                       ]
                     },
+                    "saved": {
+                      "type": "boolean"
+                    },
                     "nextRunAt": {
                       "type": [
                         "string",
@@ -19497,6 +19508,7 @@
                   },
                   "required": [
                     "settings",
+                    "saved",
                     "nextRunAt",
                     "scheduleError",
                     "running",
@@ -19676,6 +19688,15 @@
             "in": "query",
             "name": "linearWorkspaceId",
             "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "cursor",
+            "required": false
           }
         ],
         "security": [
@@ -19764,10 +19785,17 @@
                           "endedAt"
                         ]
                       }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
-                    "retros"
+                    "retros",
+                    "nextCursor"
                   ]
                 }
               }
@@ -19899,12 +19927,19 @@
                           },
                           "message": {
                             "type": "string"
+                          },
+                          "at": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
                           }
                         },
                         "required": [
                           "kind",
                           "productId",
-                          "message"
+                          "message",
+                          "at"
                         ]
                       }
                     },
@@ -20091,6 +20126,12 @@
                               "null"
                             ]
                           },
+                          "duplicateOfRetroId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "linearIssueIdentifier": {
                             "type": [
                               "string",
@@ -20132,6 +20173,7 @@
                           "repositories",
                           "status",
                           "duplicateOfId",
+                          "duplicateOfRetroId",
                           "linearIssueIdentifier",
                           "linearIssueUrl",
                           "decidedBy",
@@ -20442,6 +20484,12 @@
                         "null"
                       ]
                     },
+                    "duplicateOfRetroId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "linearIssueIdentifier": {
                       "type": [
                         "string",
@@ -20483,6 +20531,7 @@
                     "repositories",
                     "status",
                     "duplicateOfId",
+                    "duplicateOfRetroId",
                     "linearIssueIdentifier",
                     "linearIssueUrl",
                     "decidedBy",
@@ -20671,6 +20720,12 @@
                         "null"
                       ]
                     },
+                    "duplicateOfRetroId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "linearIssueIdentifier": {
                       "type": [
                         "string",
@@ -20712,6 +20767,7 @@
                     "repositories",
                     "status",
                     "duplicateOfId",
+                    "duplicateOfRetroId",
                     "linearIssueIdentifier",
                     "linearIssueUrl",
                     "decidedBy",

@@ -187,6 +187,7 @@ function EventsSection({ retro }: { retro: RetroDetail }) {
             <div className="flex flex-wrap items-center gap-2">
               <span className="t-value text-ink">{event.kind}</span>
               {event.productId ? <span className="t-hint">{productName.get(event.productId) ?? event.productId}</span> : null}
+              {event.at ? <span className="t-hint ml-auto font-mono tabular-nums">{formatDate(event.at)}</span> : null}
             </div>
             <p className="break-words text-sm text-body">{event.message}</p>
           </li>
@@ -333,7 +334,18 @@ function FindingItem({
         </p>
       ) : null}
       {finding.status === "already_proposed" ? (
-        <p className="t-hint">An open finding of this product has the same title. Decide that one.</p>
+        <p className="t-hint">
+          An open finding of this product has the same title. Decide that one
+          {finding.duplicateOfRetroId ? (
+            <>
+              {" in "}
+              <Link to="/retro/$retroId" params={{ retroId: finding.duplicateOfRetroId }} search={{ ws: linearWorkspaceId }} className="link">
+                its retro
+              </Link>
+            </>
+          ) : null}
+          .
+        </p>
       ) : null}
 
       {finding.status === "proposed" && canEdit ? (

@@ -32,6 +32,11 @@ export class PrismaRetroSettingsStore {
     };
   }
 
+  /** True when the tenant saved its retro settings at least once. */
+  async saved(tenantId: string): Promise<boolean> {
+    return (await this.prisma.retroSettings.count({ where: { tenantId } })) > 0;
+  }
+
   async read(tenantId: string): Promise<RetroSettings> {
     const row = await this.prisma.retroSettings.findUnique({ where: { tenantId } });
     return row === null ? defaultRetroSettings(tenantId) : this.toSettings(row);
@@ -102,6 +107,8 @@ export interface RetroEvent {
   kind: "signal_skipped" | "session_failed" | "session_skipped" | "finding_dropped";
   productId: string | null;
   message: string;
+  /** When Factoree recorded the event. Null on an event recorded before 0.23.1. */
+  at: string | null;
 }
 
 export interface RetroSessionRecord {
@@ -132,6 +139,8 @@ export interface RetroFindingRecord {
   repositories: string[];
   status: RetroFindingStatus;
   duplicateOfId: string | null;
+  /** The retro of the finding that this one repeats, or null. */
+  duplicateOfRetroId: string | null;
   linearIssueIdentifier: string | null;
   linearIssueUrl: string | null;
   decidedBy: string | null;
@@ -178,7 +187,9 @@ const toRetro = (row: Prisma.RetroGetPayload<object>): RetroRecord => ({
   costUsd: row.costUsd,
   findingCount: row.findingCount,
   failureMessage: row.failureMessage,
-  events: Array.isArray(row.events) ? (row.events as unknown as RetroEvent[]) : [],
+  events: Array.isArray(row.events)
+    ? (row.events as unknown as Array<Omit<RetroEvent, "at"> & { at?: string }>).map((event) => ({ ...event, at: event.at ?? null }))
+    : [],
   startedAt: row.startedAt,
   endedAt: row.endedAt,
 });
@@ -196,6 +207,7 @@ const toFinding = (row: Prisma.RetroFindingGetPayload<{ include: { product: { se
   repositories: row.repositories,
   status: row.status as RetroFindingStatus,
   duplicateOfId: row.duplicateOfId,
+  duplicateOfRetroId: null,
   linearIssueIdentifier: row.linearIssueIdentifier,
   linearIssueUrl: row.linearIssueUrl,
   decidedBy: row.decidedBy,
@@ -247,12 +259,14 @@ export class PrismaRetroStore {
     return row === null ? null : toRetro(row);
   }
 
-  async addEvents(retroId: string, events: readonly RetroEvent[]): Promise<void> {
+  async addEvents(retroId: string, events: ReadonlyArray<Omit<RetroEvent, "at">>): Promise<void> {
     if (events.length === 0) return;
+    const at = new Date().toISOString();
     await this.prisma.$transaction(async (tx) => {
       const row = await tx.retro.findUniqueOrThrow({ where: { id: retroId }, select: { events: true } });
       const current = Array.isArray(row.events) ? row.events : [];
-      await tx.retro.update({ where: { id: retroId }, data: { events: [...current, ...events] as unknown as Prisma.InputJsonValue } });
+      const stamped = events.map((event) => ({ ...event, at }));
+      await tx.retro.update({ where: { id: retroId }, data: { events: [...current, ...stamped] } });
     });
   }
 
@@ -346,9 +360,19 @@ export class PrismaRetroStore {
     });
   }
 
-  async list(tenantId: string, limit: number): Promise<RetroRecord[]> {
-    const rows = await this.prisma.retro.findMany({ where: { tenantId }, orderBy: { startedAt: "desc" }, take: limit });
-    return rows.map(toRetro);
+  /** One page of the tenant's retros, newest first. The cursor is the id of the last retro of the page before. */
+  async list(tenantId: string, limit: number, cursor?: string): Promise<{ items: RetroRecord[]; nextCursor: string | null }> {
+    if (cursor !== undefined && (await this.prisma.retro.count({ where: { id: cursor, tenantId } })) === 0) {
+      return { items: [], nextCursor: null };
+    }
+    const rows = await this.prisma.retro.findMany({
+      where: { tenantId },
+      orderBy: [{ startedAt: "desc" }, { id: "desc" }],
+      take: limit + 1,
+      ...(cursor === undefined ? {} : { cursor: { id: cursor }, skip: 1 }),
+    });
+    const items = rows.slice(0, limit).map(toRetro);
+    return { items, nextCursor: rows.length > limit ? (items[items.length - 1]?.id ?? null) : null };
   }
 
   async detail(tenantId: string, id: string): Promise<RetroDetail | null> {
@@ -361,6 +385,12 @@ export class PrismaRetroStore {
       },
     });
     if (row === null) return null;
+    const duplicateOfIds = [...new Set(row.findings.flatMap((finding) => (finding.duplicateOfId === null ? [] : [finding.duplicateOfId])))];
+    const originals =
+      duplicateOfIds.length === 0
+        ? []
+        : await this.prisma.retroFinding.findMany({ where: { tenantId, id: { in: duplicateOfIds } }, select: { id: true, retroId: true } });
+    const retroOf = new Map(originals.map((original) => [original.id, original.retroId]));
     return {
       ...toRetro(row),
       sessions: row.sessions.map((session) => ({
@@ -377,7 +407,10 @@ export class PrismaRetroStore {
         metrics: (session.metrics as unknown as RetroMetrics | null) ?? null,
         failureMessage: session.failureMessage,
       })),
-      findings: row.findings.map(toFinding),
+      findings: row.findings.map((finding) => ({
+        ...toFinding(finding),
+        duplicateOfRetroId: finding.duplicateOfId === null ? null : (retroOf.get(finding.duplicateOfId) ?? null),
+      })),
       signalResults: row.signalResults.map((result) => ({ ...result, sourceKind: result.sourceKind === "analytics" ? "analytics" : "errors" })),
     };
   }

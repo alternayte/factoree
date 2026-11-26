@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-11-26
+
+### Fixed
+
+- The retro settings response has a `saved` flag. The Retro page fills in the browser time zone only for a workspace that never saved its settings.
+- An already proposed finding has `duplicateOfRetroId`. The Retro page links to the retro of the finding it repeats.
+- Each retro event has an `at` time, and the Retro page shows it. An event recorded before 0.23.1 has no time.
+- The retro list has pages of 25 with a `cursor`. The Retro page has "Load older retros".
+
 ## [0.23.0] - 2026-11-25
 
 ### Added

@@ -58,7 +58,7 @@ const slug = (value: string): string => value.replace(/[^A-Za-z0-9_-]/g, "-").sl
 export const createRetroActivities = (dependencies: RetroActivityDependencies) => {
   const now = dependencies.clock ?? (() => new Date());
 
-  const event = (kind: RetroEvent["kind"], productId: string | null, message: string): RetroEvent => ({
+  const event = (kind: RetroEvent["kind"], productId: string | null, message: string): Omit<RetroEvent, "at"> => ({
     kind,
     productId,
     message: dependencies.redactor.redactText(message).slice(0, 1_000),
@@ -260,7 +260,7 @@ export const createRetroActivities = (dependencies: RetroActivityDependencies) =
         };
         const open = await dependencies.retros.openFindingsByTitle(input.tenantId, input.productId);
         const kept: Array<CheckedFinding & { duplicateOfId: string | null }> = [];
-        const dropped: RetroEvent[] = [];
+        const dropped: Array<Omit<RetroEvent, "at">> = [];
         const seen = new Set<string>();
         for (const entry of raw.slice(0, MAX_FINDINGS)) {
           const checked = checkFinding(entry, sessionInput);
