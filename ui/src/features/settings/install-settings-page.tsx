@@ -25,7 +25,7 @@ export function InstallSettingsPage() {
     <>
       <PageHeader
         title="Install settings"
-        description="Settings for the whole install: the GitHub App, the Linear app, the sandbox image and providers, the git author and the transcript bucket."
+        description="Settings for the whole install: the GitHub App, the Linear app, the sandbox image and providers, the git author, the transcript bucket and web search."
       />
       {!canEdit ? (
         <Alert tone="info" className="mb-4 max-w-[640px]">
@@ -46,6 +46,7 @@ export function InstallSettingsPage() {
           <SandboxImageSection settings={settings.data} canEdit={canEdit} />
           <GitAuthorSection settings={settings.data} canEdit={canEdit} />
           <TranscriptBucketSection settings={settings.data} canEdit={canEdit} />
+          <WebSearchSection settings={settings.data} canEdit={canEdit} />
           <SandboxProvidersSection
             canEdit={canEdit}
             localAllowed={settings.data.sandbox.localAllowed}
@@ -541,6 +542,64 @@ function TranscriptBucketSection({ settings, canEdit }: { settings: Settings; ca
                 }}
               >
                 Remove the bucket
+              </Button>
+            ) : null}
+            <SavedNote show={(save.isSuccess || clear.isSuccess) && !changed} />
+          </div>
+        ) : null}
+      </form>
+    </Section>
+  );
+}
+
+/**
+ * docs/specs/retro-web-research.md. The Exa key for the retro gateway's web_search and fetch_page.
+ * FACTOREE_WEB_SEARCH_EXA_API_KEY wins and locks the field.
+ */
+function WebSearchSection({ settings, canEdit }: { settings: Settings; canEdit: boolean }) {
+  const w = settings.webSearch;
+  const [key, setKey] = useState("");
+  const save = useSave();
+  const clear = useSave();
+  const changed = key.trim() !== "";
+  return (
+    <Section
+      title="Web search"
+      description="The Exa API key. With it, a product that turns on Web research lets the retro agent search the web and read the pages it found. The query text goes to Exa."
+    >
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save.mutate({ webSearch: { exaApiKey: key.trim() } }, { onSuccess: () => setKey("") });
+        }}
+      >
+        {w.locked ? (
+          <Field
+            label="Exa API key"
+            hint="Locked. The environment variable FACTOREE_WEB_SEARCH_EXA_API_KEY sets it."
+            trailing={<Badge>locked</Badge>}
+          >
+            {(props) => <Input {...props} mono type="password" disabled placeholder="••••••••" value="" readOnly />}
+          </Field>
+        ) : (
+          <SecretInput label="Exa API key" stored={w.exaKeySet} value={key} onChange={setKey} disabled={!canEdit} />
+        )}
+        <ErrorAlert error={save.error} />
+        <ErrorAlert error={clear.error} />
+        {canEdit && !w.locked ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="submit" disabled={!changed || clear.isPending} mutation={save}>
+              Save the key
+            </Button>
+            {w.exaKeySet ? (
+              <Button
+                variant="ghost"
+                disabled={save.isPending}
+                mutation={clear}
+                onClick={() => clear.mutate({ webSearch: { exaApiKey: null } }, { onSuccess: () => setKey("") })}
+              >
+                Remove the key
               </Button>
             ) : null}
             <SavedNote show={(save.isSuccess || clear.isSuccess) && !changed} />
