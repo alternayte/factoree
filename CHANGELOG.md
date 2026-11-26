@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-26
+
+### Added
+
+- The object store: the install's S3-compatible bucket in Install settings, for kept transcripts and evidence, with "Test object store" (docs/specs/s3-object-store.md, DI-21.235 to DI-21.238).
+- The Evidence store choice in Install settings: Linear, the object store (S3) or the filesystem. S3 can be chosen once the object store test passes. A new artifact goes to the chosen store, and old artifacts stay where they are.
+- Stable evidence links: `/artifacts/<id>` needs a Factoree sign-in as a member of the workspace, and redirects to a 5-minute presigned URL. Screenshots and videos get open links that need no sign-in, so they still show inline in Linear and GitHub.
+- Evidence retention per product: video and traces older than N days leave the object store.
+- An Artifacts section on the run page.
+- The sign-in page returns to the page that sent the reader to it.
+
+### Changed
+
+- `FACTOREE_S3_*` env vars set the object store. The `FACTOREE_TRANSCRIPT_S3_*` names still work as aliases.
+- `FACTOREE_EVIDENCE_STORAGE` accepts `s3` and has no default. When set, it locks the Evidence store choice.
+
 ## [0.24.0] - 2026-11-26
 
 ### Added
