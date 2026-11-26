@@ -15,7 +15,8 @@ describe("loadEnv", () => {
     expect(env.FACTOREE_TEMPORAL_TASK_QUEUE).toBe("factoree");
     expect(env.FACTOREE_PORT).toBe(3000);
     expect(env.FACTOREE_LOG_LEVEL).toBe("info");
-    expect(env.FACTOREE_EVIDENCE_STORAGE).toBe("linear");
+    // docs/specs/s3-object-store.md. Unset, so the Evidence store choice in Install settings decides.
+    expect(env.FACTOREE_EVIDENCE_STORAGE).toBeUndefined();
   });
 
   it("trims a trailing slash of the public URL, because every webhook and callback URL appends a path", () => {
@@ -48,8 +49,9 @@ describe("loadEnv", () => {
     expect(Object.keys(env).every((key) => key.startsWith("FACTOREE_"))).toBe(true);
   });
 
-  it("accepts the filesystem evidence storage and rejects an unknown one", () => {
+  it("accepts the filesystem and s3 evidence stores and rejects an unknown one", () => {
     expect(loadEnv({ ...base, FACTOREE_EVIDENCE_STORAGE: "filesystem" }).FACTOREE_EVIDENCE_STORAGE).toBe("filesystem");
-    expect(() => loadEnv({ ...base, FACTOREE_EVIDENCE_STORAGE: "s3" })).toThrow();
+    expect(loadEnv({ ...base, FACTOREE_EVIDENCE_STORAGE: "s3" }).FACTOREE_EVIDENCE_STORAGE).toBe("s3");
+    expect(() => loadEnv({ ...base, FACTOREE_EVIDENCE_STORAGE: "gcs" })).toThrow();
   });
 });
