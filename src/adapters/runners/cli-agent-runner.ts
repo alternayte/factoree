@@ -8,6 +8,7 @@ import type {
   AgentRunResult,
   AgentRunner,
   AgentSessionRef,
+  SessionMcpServer,
 } from "~/domain/runs/agent-runner.js";
 import type { ProcessRef, ProcessSnapshot, Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
 import type { Redactor } from "~/telemetry/redaction.js";
@@ -94,6 +95,11 @@ export interface AgentSessionSettings {
    * environment variables only, never a value.
    */
   providerConfig?: Record<string, unknown> | null;
+  /**
+   * docs/specs/retro-web-research.md. The session's one MCP server. With it, the CLI's own web
+   * search and web fetch are off, so the session reaches the web only through that server.
+   */
+  mcpServer?: SessionMcpServer | null;
 }
 
 export interface CliAgentRunnerOptions {
@@ -302,8 +308,11 @@ export abstract class CliAgentRunner implements AgentRunner {
   protected abstract defaultSettings(role: AgentRole): Omit<AgentSessionSettings, "silenceLimitMs">;
 
   private async settingsOf(input: AgentRunInput): Promise<AgentSessionSettings> {
-    if (this.cliOptions.settingsFor !== undefined) return this.cliOptions.settingsFor(input, this.name);
-    return { ...this.defaultSettings(input.role), silenceLimitMs: this.silenceLimitMs };
+    const settings =
+      this.cliOptions.settingsFor !== undefined
+        ? await this.cliOptions.settingsFor(input, this.name)
+        : { ...this.defaultSettings(input.role), silenceLimitMs: this.silenceLimitMs };
+    return input.mcpServer === undefined ? settings : { ...settings, mcpServer: input.mcpServer };
   }
 
   /**

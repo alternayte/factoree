@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { SignalSourceKind } from "./signal-source.js";
 
-/** docs/specs/retro-agent.md. A factory finding rests on runs, an error finding on errors, an idea finding on analytics. */
+/** docs/specs/retro-agent.md. A factory finding rests on runs, an error finding on errors, an idea finding on analytics or the web. */
 export const RETRO_FINDING_KINDS = ["factory", "error", "idea"] as const;
 export type RetroFindingKind = (typeof RETRO_FINDING_KINDS)[number];
 
@@ -18,6 +18,7 @@ export const proposedFindingSchema = z.object({
   description: z.string().min(1).max(8_000),
   runIds: z.array(z.string().min(1)).max(50).default([]),
   signalResultIds: z.array(z.string().min(1)).max(50).default([]),
+  webResultIds: z.array(z.string().min(1)).max(50).default([]),
   repositories: z.array(z.string().min(1)).max(10).default([]),
 });
 export type ProposedFinding = z.infer<typeof proposedFindingSchema>;
@@ -31,6 +32,8 @@ export interface RetroSessionInput {
   productNames: string[];
   runIds: ReadonlySet<string>;
   signalResults: ReadonlyMap<string, SignalSourceKind>;
+  /** docs/specs/retro-web-research.md. The web results the session received through the retro gateway. */
+  webResults: ReadonlySet<string>;
   repositories: ReadonlySet<string>;
 }
 
@@ -40,6 +43,7 @@ export interface CheckedFinding {
   description: string;
   runIds: string[];
   signalResultIds: string[];
+  webResultIds: string[];
   repositories: string[];
 }
 
@@ -71,10 +75,14 @@ export const checkFinding = (raw: unknown, input: RetroSessionInput): { kept: Ch
   if (foreignRun !== undefined) return drop(`it cites the run ${foreignRun}, which is not in the retro input`);
   const foreignSignal = signalResultIds.find((id) => !input.signalResults.has(id));
   if (foreignSignal !== undefined) return drop(`it cites the signal result ${foreignSignal}, which is not in the retro input`);
+  const webResultIds = unique(finding.webResultIds);
+  const foreignWeb = webResultIds.find((id) => !input.webResults.has(id));
+  if (foreignWeb !== undefined) return drop(`it cites the web result ${foreignWeb}, which this session did not receive`);
   const cites = (kind: SignalSourceKind) => signalResultIds.some((id) => input.signalResults.get(id) === kind);
   if (finding.kind === "factory" && runIds.length === 0) return drop("a factory finding cites no run");
   if (finding.kind === "error" && !cites("errors")) return drop("an error finding cites no result from an errors source");
-  if (finding.kind === "idea" && !cites("analytics")) return drop("an idea finding cites no result from an analytics source");
+  // docs/specs/retro-web-research.md. An idea rests on analytics or on the web. It stays human-gated.
+  if (finding.kind === "idea" && !cites("analytics") && webResultIds.length === 0) return drop("an idea finding cites no analytics result and no web result");
   return {
     kept: {
       kind: finding.kind,
@@ -82,6 +90,7 @@ export const checkFinding = (raw: unknown, input: RetroSessionInput): { kept: Ch
       description: finding.description.trim(),
       runIds,
       signalResultIds,
+      webResultIds,
       repositories: unique(finding.repositories).filter((name) => input.repositories.has(name)),
     },
   };
@@ -93,11 +102,17 @@ export const titleKeyOf = (title: string): string => title.trim().replace(/\s+/g
 /** The text of the Linear issue "Create issue" makes from a finding. */
 export const findingIssueText = (
   finding: CheckedFinding,
-  links: { runUrl: (runId: string) => string; signalResultUrl: (signalResultId: string) => string; retroUrl: string },
+  links: {
+    runUrl: (runId: string) => string;
+    signalResultUrl: (signalResultId: string) => string;
+    webResultUrl: (webResultId: string) => string;
+    retroUrl: string;
+  },
 ): { title: string; description: string } => {
   const lines = [finding.description, "", `Proposed by a Factoree retro: ${links.retroUrl}`];
   if (finding.runIds.length > 0) lines.push("", "Runs:", ...finding.runIds.map((id) => `- ${links.runUrl(id)}`));
   if (finding.signalResultIds.length > 0) lines.push("", "Signal results:", ...finding.signalResultIds.map((id) => `- ${links.signalResultUrl(id)}`));
+  if (finding.webResultIds.length > 0) lines.push("", "Web results:", ...finding.webResultIds.map((id) => `- ${links.webResultUrl(id)}`));
   if (finding.repositories.length > 0) lines.push("", "Repositories:", ...finding.repositories.map((name) => `- ${name}`));
   return { title: finding.title, description: lines.join("\n") };
 };

@@ -182,6 +182,9 @@ model Run {
   targetEdges               RunTargetEdge[]
   originOfPullRequests      PullRequest[]
   transcripts               AgentTranscript[]
+  // docs/specs/factory-floor.md. The status history and the session pulses of the run.
+  statusChanges             RunStatusChange[]
+  sessionPulses             SessionPulse[]
 
   @@index([tenantId])
   @@index([productId, status])
@@ -189,9 +192,6 @@ model Run {
   @@index([linearAgentSessionId, createdAt])
   // docs/specs/blocked-by-wait.md. The sweep reads every waiting run each minute.
   @@index([status])
-  // docs/specs/factory-floor.md. The status history and the session pulses of the run.
-  statusChanges             RunStatusChange[]
-  sessionPulses             SessionPulse[]
 }
 
 model AgentExecution {
@@ -731,6 +731,8 @@ model Product {
   productGoal                  String?                      @map("product_goal")
   keepTranscripts              Boolean                      @default(false) @map("keep_transcripts")
   retroRetentionDays           Int                          @default(30) @map("retro_retention_days")
+  // docs/specs/retro-web-research.md. The retro agent may search the web through the retro gateway.
+  webResearch                  Boolean                      @default(false) @map("web_research")
   createdAt                    DateTime                     @default(now())
   updatedAt                    DateTime                     @updatedAt
   repositories                 Repository[]
@@ -745,6 +747,8 @@ model Product {
   retroSessions                RetroSession[]
   retroFindings                RetroFinding[]
   signalResults                SignalResult[]
+  webResults                   WebResult[]
+  retroGatewaySessions         RetroGatewaySession[]
   transcripts                  AgentTranscript[]
 
   @@unique([tenantId, slug])
@@ -961,6 +965,8 @@ model InstallSettings {
   transcriptS3Region          String?   @map("transcript_s3_region")
   transcriptS3AccessKey       String?   @map("transcript_s3_access_key")
   transcriptS3SecretKeyCipher String?   @map("transcript_s3_secret_key_cipher")
+  // docs/specs/retro-web-research.md. The Exa key of the retro gateway. FACTOREE_WEB_SEARCH_EXA_API_KEY wins.
+  exaApiKeyCipher             String?   @map("exa_api_key_cipher")
   updatedAt                   DateTime  @updatedAt
 }
 
@@ -1169,71 +1175,71 @@ model ModelCatalog {
 // docs/specs/pr-review-merge-and-deploy.md, DI-21.99. One pull request that a run published. The PR
 // workflow keyed `pr:<tenant>:<repository>#<number>` owns it after the run ends READY_FOR_HUMAN.
 model PullRequest {
-  id                   String              @id @default(uuid())
-  tenantId             String              @map("tenant_id")
-  repositoryId         String              @map("repository_id")
-  repository           Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  number               Int
-  url                  String
-  headBranch           String              @map("head_branch")
+  id                          String              @id @default(uuid())
+  tenantId                    String              @map("tenant_id")
+  repositoryId                String              @map("repository_id")
+  repository                  Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  number                      Int
+  url                         String
+  headBranch                  String              @map("head_branch")
   // The newest head commit GitHub reported: the published commit, then each synchronize.
-  headSha              String              @map("head_sha")
-  baseBranch           String              @map("base_branch")
+  headSha                     String              @map("head_sha")
+  baseBranch                  String              @map("base_branch")
   // The run that published the pull request. Issue completion on a merge reads its issue state,
   // because a later run on the same branch moved no issue.
-  originRunId          String              @map("origin_run_id")
-  originRun            Run                 @relation(fields: [originRunId], references: [id], onDelete: Cascade)
+  originRunId                 String              @map("origin_run_id")
+  originRun                   Run                 @relation(fields: [originRunId], references: [id], onDelete: Cascade)
   // open, merged or closed.
-  state                String              @default("open")
-  mergeCommitSha       String?             @map("merge_commit_sha")
-  closedAt             DateTime?           @map("closed_at")
+  state                       String              @default("open")
+  mergeCommitSha              String?             @map("merge_commit_sha")
+  closedAt                    DateTime?           @map("closed_at")
   // The PR follow-up runs that a failed PR reviewer check started. The spec caps them at 3.
-  reviewerFollowUps    Int                 @default(0) @map("reviewer_follow_ups")
+  reviewerFollowUps           Int                 @default(0) @map("reviewer_follow_ups")
   // The contract revision of the head commit. It starts at 1 and each PR follow-up run adds one.
   // ValidationContract.version is the schema version, not this counter.
-  contractRevision     Int                 @default(1) @map("contract_revision")
+  contractRevision            Int                 @default(1) @map("contract_revision")
   // off, enabled, unavailable or stopped. Factoree turns on GitHub auto-merge only at L4. enabled
   // means Factoree turned it on. stopped means a human turned off what Factoree turned on (DI-21.105).
-  autoMerge            String              @default("off") @map("auto_merge")
-  autoMergeReason      String?             @map("auto_merge_reason")
+  autoMerge                   String              @default("off") @map("auto_merge")
+  autoMergeReason             String?             @map("auto_merge_reason")
   // docs/specs/pr-review-merge-and-deploy.md, DI-21.104. The head commit whose every Factoree check
   // passed: the commit a publication pushed. Only this head can auto-merge.
-  verifiedHeadSha      String?             @map("verified_head_sha")
+  verifiedHeadSha             String?             @map("verified_head_sha")
   // The autonomy level of the run that published the verified head. Null on a row from before it.
-  autonomyLevel        String?             @map("autonomy_level")
+  autonomyLevel               String?             @map("autonomy_level")
   // DI-21.106. The base branch whose L4 gate Factoree read. Null until it reads one.
-  autoMergeGateBase    String?             @map("auto_merge_gate_base")
+  autoMergeGateBase           String?             @map("auto_merge_gate_base")
   // D2. The base SHA of the verified head, and the run that published it. A PR follow-up run starts
   // its work sprite at this base with the pull request change applied.
-  verifiedBaseSha      String?             @map("verified_base_sha")
-  verifiedRunId        String?             @map("verified_run_id")
+  verifiedBaseSha             String?             @map("verified_base_sha")
+  verifiedRunId               String?             @map("verified_run_id")
   // DI-21.108. The failed PR reviewer check that last started a triage or a limit notice.
-  reviewerHandledKey   String?             @map("reviewer_handled_key")
+  reviewerHandledKey          String?             @map("reviewer_handled_key")
   // DI-21.114. The PR follow-up runs that reviewerFollowUps counted, by run id, so a retry of the
   // count after a successful write counts nothing.
-  reviewerFollowUpKeys String[]            @default([]) @map("reviewer_follow_up_keys")
+  reviewerFollowUpKeys        String[]            @default([]) @map("reviewer_follow_up_keys")
   // DI-21.118. The head commit of the last bring-current update that pushed nothing. Factoree
   // starts no other one on that head until the base branch moves.
-  bringCurrentHeadSha  String?             @map("bring_current_head_sha")
+  bringCurrentHeadSha         String?             @map("bring_current_head_sha")
   // docs/specs/pr-feedback-loop.md, DI-21.214. The SHA-256 fingerprints of the review app findings
   // with no thread (annotations and review bodies) that Factoree answered. A later plan skips them
   // until their text changes.
-  answeredFindingFingerprints String[]     @default([]) @map("answered_finding_fingerprints")
+  answeredFindingFingerprints String[]            @default([]) @map("answered_finding_fingerprints")
   // DI-21.212. The head and the review apps of the last "Needs your attention" post about review
   // apps that hold back an L4 merge, so one head posts it once.
-  reviewAppNoticeKey   String?             @map("review_app_notice_key")
+  reviewAppNoticeKey          String?             @map("review_app_notice_key")
   // docs/specs/pr-body-for-humans.md, DI-21.220. The environment URL of the last successful
   // deployment on the head, and that head. A new head clears both until its own deployment.
-  previewUrl           String?             @map("preview_url")
-  previewHeadSha       String?             @map("preview_head_sha")
+  previewUrl                  String?             @map("preview_url")
+  previewHeadSha              String?             @map("preview_head_sha")
   // docs/specs/change-sets.md, DI-21.155. The last factoree/change-set commit status Factoree set on
   // this consumer pull request, as `<sha> <state> <description>`, so an unchanged status is not set again.
-  changeSetStatusKey   String?             @map("change_set_status_key")
-  workflowId           String              @map("workflow_id")
-  createdAt            DateTime            @default(now()) @map("created_at")
-  updatedAt            DateTime            @updatedAt @map("updated_at")
-  events               PullRequestEvent[]
-  deploys              PullRequestDeploy[]
+  changeSetStatusKey          String?             @map("change_set_status_key")
+  workflowId                  String              @map("workflow_id")
+  createdAt                   DateTime            @default(now()) @map("created_at")
+  updatedAt                   DateTime            @updatedAt @map("updated_at")
+  events                      PullRequestEvent[]
+  deploys                     PullRequestDeploy[]
 
   @@unique([tenantId, repositoryId, number])
   @@index([tenantId, headSha])
@@ -1388,31 +1394,33 @@ model RetroSettings {
 
 // docs/specs/retro-agent.md. One pass of the retro agent over the ended runs of a tenant.
 model Retro {
-  id             String         @id @default(uuid())
-  tenantId       String         @map("tenant_id")
-  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  workflowId     String         @unique @map("workflow_id")
+  id              String                @id @default(uuid())
+  tenantId        String                @map("tenant_id")
+  tenant          Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  workflowId      String                @unique @map("workflow_id")
   // schedule or manual.
-  trigger        String
+  trigger         String
   // running, succeeded or failed.
-  status         String
+  status          String
   // The runs it reads ended after windowStart (null: no earlier successful retro) and at or before windowEnd.
-  windowStart    DateTime?      @map("window_start")
-  windowEnd      DateTime       @map("window_end")
-  promptVersion  String         @map("prompt_version")
+  windowStart     DateTime?             @map("window_start")
+  windowEnd       DateTime              @map("window_end")
+  promptVersion   String                @map("prompt_version")
   // The products the retro reads, in session order.
-  productIds     String[]       @default([]) @map("product_ids")
-  costUsd        Float?         @map("cost_usd")
-  findingCount   Int            @default(0) @map("finding_count")
-  failureMessage String?        @map("failure_message")
+  productIds      String[]              @default([]) @map("product_ids")
+  costUsd         Float?                @map("cost_usd")
+  findingCount    Int                   @default(0) @map("finding_count")
+  failureMessage  String?               @map("failure_message")
   // Each fault of the retro: kind, product, message.
-  events         Json           @default("[]")
-  startedAt      DateTime       @default(now()) @map("started_at")
-  endedAt        DateTime?      @map("ended_at")
-  sessions       RetroSession[]
-  findings       RetroFinding[]
-  signalResults  SignalResult[]
-  sessionPulses  SessionPulse[]
+  events          Json                  @default("[]")
+  startedAt       DateTime              @default(now()) @map("started_at")
+  endedAt         DateTime?             @map("ended_at")
+  sessions        RetroSession[]
+  findings        RetroFinding[]
+  signalResults   SignalResult[]
+  webResults      WebResult[]
+  gatewaySessions RetroGatewaySession[]
+  sessionPulses   SessionPulse[]
 
   @@index([tenantId, startedAt])
   @@index([tenantId, status])
@@ -1460,6 +1468,8 @@ model RetroFinding {
   description           String
   runIds                String[]  @map("run_ids")
   signalResultIds       String[]  @map("signal_result_ids")
+  // docs/specs/retro-web-research.md. The web results of the session that the finding cites.
+  webResultIds          String[]  @default([]) @map("web_result_ids")
   repositories          String[]
   // proposed, created, dismissed or already_proposed.
   status                String
@@ -1480,21 +1490,23 @@ model RetroFinding {
 // docs/specs/retro-agent.md. A product's MCP server for production errors or analytics, with the
 // queries Factoree runs before each retro session.
 model SignalSource {
-  id         String   @id @default(uuid())
-  tenantId   String   @map("tenant_id")
-  productId  String   @map("product_id")
-  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  name       String
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  productId   String   @map("product_id")
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name        String
   // errors or analytics.
-  kind       String
-  endpoint   String
+  kind        String
+  endpoint    String
   // The product secret that holds the bearer token, or null for none.
-  secretName String?  @map("secret_name")
+  secretName  String?  @map("secret_name")
   // Each query: name, tool, arguments, maxBytes.
-  queries    Json     @default("[]")
-  enabled    Boolean  @default(true)
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  queries     Json     @default("[]")
+  // docs/specs/retro-web-research.md. The ticked tools: the tools the retro agent may call live.
+  tickedTools String[] @default([]) @map("ticked_tools")
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@unique([productId, name])
   @@index([tenantId])
@@ -1503,24 +1515,84 @@ model SignalSource {
 
 // docs/specs/retro-agent.md. The redacted output of one signal source query in one retro.
 model SignalResult {
-  id         String   @id @default(uuid())
-  tenantId   String   @map("tenant_id")
-  retroId    String   @map("retro_id")
-  retro      Retro    @relation(fields: [retroId], references: [id], onDelete: Cascade)
-  productId  String   @map("product_id")
-  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  sourceName String   @map("source_name")
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  retroId          String   @map("retro_id")
+  retro            Retro    @relation(fields: [retroId], references: [id], onDelete: Cascade)
+  productId        String   @map("product_id")
+  product          Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sourceName       String   @map("source_name")
   // errors or analytics.
-  sourceKind String   @map("source_kind")
-  queryName  String   @map("query_name")
-  content    String
-  sha256     String
-  bytes      Int
-  createdAt  DateTime @default(now()) @map("created_at")
+  sourceKind       String   @map("source_kind")
+  // The query name, or for a live call the tool name.
+  queryName        String   @map("query_name")
+  content          String
+  sha256           String
+  bytes            Int
+  // docs/specs/retro-web-research.md. A live call of a ticked tool through the retro gateway, with its arguments.
+  live             Boolean  @default(false)
+  arguments        Json?
+  gatewaySessionId String?  @map("gateway_session_id")
+  createdAt        DateTime @default(now()) @map("created_at")
 
   @@index([retroId])
   @@index([productId, createdAt])
   @@map("signal_result")
+}
+
+// docs/specs/retro-web-research.md. The retro gateway access of one retro session. Only the
+// SHA-256 of the token is stored. The gateway refuses a call once endedAt is set.
+model RetroGatewaySession {
+  id          String      @id @default(uuid())
+  tenantId    String      @map("tenant_id")
+  retroId     String      @map("retro_id")
+  retro       Retro       @relation(fields: [retroId], references: [id], onDelete: Cascade)
+  productId   String      @map("product_id")
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tokenSha256 String      @unique @map("token_sha256")
+  webResearch Boolean     @map("web_research")
+  // The cost cap of the retro that was left when the session started.
+  costLeftUsd Float       @map("cost_left_usd")
+  spentUsd    Float       @default(0) @map("spent_usd")
+  searches    Int         @default(0)
+  pages       Int         @default(0)
+  signalCalls Int         @default(0) @map("signal_calls")
+  expiresAt   DateTime    @map("expires_at")
+  endedAt     DateTime?   @map("ended_at")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  webResults  WebResult[]
+
+  @@index([retroId])
+  @@map("retro_gateway_session")
+}
+
+// docs/specs/retro-web-research.md. One search result or one fetched page of a retro session.
+model WebResult {
+  id               String              @id @default(uuid())
+  tenantId         String              @map("tenant_id")
+  retroId          String              @map("retro_id")
+  retro            Retro               @relation(fields: [retroId], references: [id], onDelete: Cascade)
+  productId        String              @map("product_id")
+  product          Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  gatewaySessionId String              @map("gateway_session_id")
+  gatewaySession   RetroGatewaySession @relation(fields: [gatewaySessionId], references: [id], onDelete: Cascade)
+  // search or page.
+  kind             String
+  // The redacted query of a search result.
+  query            String?
+  url              String
+  title            String?
+  publishedDate    String?             @map("published_date")
+  // The snippet of a search result, or the text of a page.
+  content          String
+  sha256           String
+  bytes            Int
+  createdAt        DateTime            @default(now()) @map("created_at")
+
+  @@index([gatewaySessionId, url])
+  @@index([retroId])
+  @@index([productId, createdAt])
+  @@map("web_result")
 }
 
 // docs/specs/retro-agent.md, SDD section 61. The redacted, gzipped transcript of one agent session

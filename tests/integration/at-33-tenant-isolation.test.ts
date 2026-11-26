@@ -156,6 +156,8 @@ describe("AT-33 tenant isolation", () => {
         "signal_source",
         "signal_result",
         "agent_transcript",
+        "retro_gateway_session",
+        "web_result",
       ].sort(),
     );
   });

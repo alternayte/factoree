@@ -1,12 +1,15 @@
 import { z } from "zod";
 import { PROJECT_SECRET_KINDS } from "~/domain/products/secret-store.js";
-import { DEFAULT_KILN_SANDBOX_SIZE, SANDBOX_PROVIDERS, type InstallSettings } from "~/domain/settings/install-settings.js";
+import { DEFAULT_KILN_SANDBOX_SIZE, effectiveExaKey, SANDBOX_PROVIDERS, type InstallSettings } from "~/domain/settings/install-settings.js";
 import type { SandboxProviderSettings } from "~/domain/settings/sandbox-providers.js";
 import { buildInfo } from "~/config/build-info.js";
 import { completeBucket, effectiveBucket, lockedBucketFields } from "~/domain/retro/transcript.js";
 
 /** The `FACTOREE_TRANSCRIPT_S3_*` env vars, each of which wins over its install setting. */
-export type TranscriptBucketEnv = Parameters<typeof lockedBucketFields>[0];
+export type TranscriptBucketEnv = Parameters<typeof lockedBucketFields>[0] & {
+  /** docs/specs/retro-web-research.md. Wins over the stored Exa key and locks its field. */
+  FACTOREE_WEB_SEARCH_EXA_API_KEY?: string | undefined;
+};
 import { AGENT_RUNNERS } from "~/domain/products/agent-settings.js";
 import { REFINER_CRITERIA_LIMIT_MAX, REFINER_CRITERIA_LIMIT_MIN } from "~/domain/refinement/refiner-proposal.js";
 import { REPAIR_MAX_ATTEMPTS_MAX } from "~/domain/runs/repair-budget.js";
@@ -91,6 +94,8 @@ export const productSchema = z.object({
   keepTranscripts: z.boolean(),
   /** docs/specs/retro-agent.md. The days kept transcripts and signal results stay. */
   retroRetentionDays: z.number(),
+  /** docs/specs/retro-web-research.md. The retro agent may search the web through the retro gateway. */
+  webResearch: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
   /** docs/specs/repository-membership.md. The products list only: the claims no admin decided yet. */
@@ -171,6 +176,7 @@ export const productSettingsFields = {
     .nullable(),
   keepTranscripts: z.boolean(),
   retroRetentionDays: z.number().int().min(RETRO_RETENTION_DAYS_MIN).max(RETRO_RETENTION_DAYS_MAX),
+  webResearch: z.boolean(),
 };
 
 /** docs/specs/pr-review-merge-and-deploy.md. What each GitHub App installation of a product lacks. */
@@ -256,6 +262,8 @@ export const installSettingsUpdateSchema = z
       })
       .partial()
       .strict(),
+    // docs/specs/retro-web-research.md. The Exa key. Null clears it.
+    webSearch: z.object({ exaApiKey: z.string().min(1).nullable() }).partial().strict(),
   })
   .partial()
   .strict();
@@ -302,6 +310,12 @@ export const installSettingsViewSchema = z.object({
     locked: z.array(z.enum(["endpoint", "bucket", "region", "accessKey", "secretKey"])),
     /** True when new transcripts go to the bucket, false when they stay in Postgres. */
     active: z.boolean(),
+  }),
+  /** docs/specs/retro-web-research.md. The Exa key of the retro gateway, never its value. */
+  webSearch: z.object({
+    exaKeySet: z.boolean(),
+    /** True when FACTOREE_WEB_SEARCH_EXA_API_KEY sets the key, so the field is locked. */
+    locked: z.boolean(),
   }),
 });
 
@@ -362,6 +376,10 @@ export const viewInstallSettings = (
       active: completeBucket(bucket) !== null,
     };
   })(),
+  webSearch: {
+    exaKeySet: effectiveExaKey(settings.webSearch, bucketEnv.FACTOREE_WEB_SEARCH_EXA_API_KEY) !== null,
+    locked: bucketEnv.FACTOREE_WEB_SEARCH_EXA_API_KEY !== undefined,
+  },
 });
 
 /** The registry login of the sandbox image is a pair. */

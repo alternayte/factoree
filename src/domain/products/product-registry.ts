@@ -60,6 +60,8 @@ export interface ProductRecord {
   keepTranscripts: boolean;
   /** docs/specs/retro-agent.md. The days kept transcripts and signal results stay. */
   retroRetentionDays: number;
+  /** docs/specs/retro-web-research.md. The retro agent may search the web through the retro gateway. */
+  webResearch: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -108,6 +110,7 @@ export interface ProductSettingsUpdate {
   productGoal?: string | null;
   keepTranscripts?: boolean;
   retroRetentionDays?: number;
+  webResearch?: boolean;
 }
 
 export interface CreateProductInput {

@@ -73,6 +73,25 @@ describe("ClaudeCodeRunner", () => {
     await started;
   });
 
+  // docs/specs/retro-web-research.md. The token stays out of the command line, the gateway is the
+  // only MCP server, and the CLI's own web tools are off.
+  it("gives a session MCP server through a file and denies the CLI's own web tools", async () => {
+    const sandbox = new FakeSandbox();
+    const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
+    const runner = new ClaudeCodeRunner({ redactor: new Redactor(), pollIntervalMs: 1 });
+    const started = runner.run({ ...runInput(sandbox, ref, "goal"), mcpServer: { name: "factoree", url: "https://factoree.example/retro-gateway/mcp", bearerToken: "frg_secret" } });
+    await waitUntil(() => sandbox.commands.at(-1)?.file === "sh");
+    const args = sandbox.commands.at(-1)?.args ?? [];
+    expect(args.join(" ")).not.toContain("frg_secret");
+    expect(args.slice(-4, -3)).toEqual(["--mcp-config"]);
+    expect(args.slice(-2)).toEqual(["--disallowedTools", "WebSearch,WebFetch"]);
+    expect(JSON.parse(sandbox.files.get(args.at(-3)!)!)).toEqual({
+      mcpServers: { factoree: { type: "http", url: "https://factoree.example/retro-gateway/mcp", headers: { Authorization: "Bearer frg_secret" } } },
+    });
+    sandbox.finishProcess("process-2", { exitCode: 0, stdout: '{"type":"result","result":"ok"}' });
+    await started;
+  });
+
   it("resumes the named session and keeps the identifier out of the command line", async () => {
     const sandbox = new FakeSandbox();
     const ref = await sandbox.create({ runId: "run-1", tenantId: "t", productId: "p" });
