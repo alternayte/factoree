@@ -22,7 +22,19 @@ import { formatCost, formatDuration } from "@/features/runs/run-format";
 import { useMe } from "@/lib/session";
 import { formatDate } from "@/lib/utils";
 import { pickWorkspace } from "@/lib/workspace";
-import { decimal, FINDING_STATUS_LABEL, KIND_TONE, percent, retroTone, type Finding, type RetroDetail } from "./retro-format";
+import {
+  decimal,
+  FINDING_STATUS_LABEL,
+  formatBytes,
+  formatDay,
+  KIND_TONE,
+  percent,
+  retroTone,
+  webResultLabel,
+  type Finding,
+  type RetroDetail,
+  type WebResultRef,
+} from "./retro-format";
 
 const RUNNING_POLL_MS = 5_000;
 
@@ -115,6 +127,8 @@ export function RetroDetailPage({ retroId, ws }: { retroId: string; ws?: string 
         </Section>
         <ProductsSection retro={data} />
         <FindingsSection retro={data} linearWorkspaceId={linearWorkspaceId} canEdit={workspace.admin} />
+        <SignalResultsSection retro={data} linearWorkspaceId={linearWorkspaceId} />
+        <WebResearchSection retro={data} linearWorkspaceId={linearWorkspaceId} />
         <EventsSection retro={data} />
       </Stack>
     </>
@@ -209,7 +223,7 @@ function FindingsSection({
   return (
     <Section
       title="Findings"
-      description="Each finding cites the runs or the signal results that show it. Factoree dropped every finding with a citation outside this retro."
+      description="Each finding cites the runs, the signal results or the web results that show it. Factoree dropped every finding with a citation outside this retro."
     >
       {retro.findings.length === 0 ? (
         <Empty>{retro.status === "running" ? "No finding yet." : "This retro proposed no finding."}</Empty>
@@ -259,7 +273,10 @@ function FindingItem({
     onError: () => void qc.invalidateQueries({ queryKey: key }),
   });
   const results = new Map(retro.signalResults.map((result) => [result.id, result]));
+  const webResults = new Map(retro.webResults.map((result) => [result.id, result]));
   const idea = finding.kind === "idea";
+  // docs/specs/retro-web-research.md. An idea with no cited analytics result rests on web results alone.
+  const webOnly = idea && !finding.signalResultIds.some((id) => results.get(id)?.sourceKind === "analytics");
 
   return (
     <li className="flex min-w-0 flex-col gap-3 py-4">
@@ -268,6 +285,7 @@ function FindingItem({
         <Badge tone={finding.status === "created" ? "success" : "neutral"}>
           {FINDING_STATUS_LABEL[finding.status]}
         </Badge>
+        {webOnly ? <Badge tone="warning">web only</Badge> : null}
         <span className="t-hint">{finding.productName}</span>
       </div>
       <p className="text-[15px] font-semibold break-words text-ink">{finding.title}</p>
@@ -300,6 +318,28 @@ function FindingItem({
                     className="link font-mono break-all"
                   >
                     {result ? `${result.sourceName}/${result.queryName}` : resultId.slice(0, 8)}
+                    {result?.live ? " (live)" : ""}
+                  </Link>
+                );
+              })}
+            </dd>
+          </>
+        ) : null}
+        {finding.webResultIds.length > 0 ? (
+          <>
+            <dt className="t-label text-mute">Web results</dt>
+            <dd className="flex min-w-0 flex-col gap-1">
+              {finding.webResultIds.map((resultId) => {
+                const result = webResults.get(resultId);
+                return (
+                  <Link
+                    key={resultId}
+                    to="/retro/web-results/$resultId"
+                    params={{ resultId }}
+                    search={{ ws: linearWorkspaceId }}
+                    className="link min-w-0 break-all"
+                  >
+                    {result ? webResultLabel(result) : resultId.slice(0, 8)}
                   </Link>
                 );
               })}
@@ -367,6 +407,124 @@ function FindingItem({
           <ErrorAlert error={dismiss.error} />
         </div>
       ) : null}
+    </li>
+  );
+}
+
+/** docs/specs/retro-web-research.md. Every signal result of the retro: the operator queries and the live calls. */
+function SignalResultsSection({ retro, linearWorkspaceId }: { retro: RetroDetail; linearWorkspaceId: string }) {
+  const productName = new Map(retro.sessions.map((session) => [session.productId, session.productName]));
+  return (
+    <Section
+      title="Signal results"
+      description="What the retro agent read from the signal sources, redacted. A live result is a tool call the agent made during the session."
+    >
+      {retro.signalResults.length === 0 ? <Empty>No signal result.</Empty> : null}
+      <ul className="-my-2 divide-y divide-hairline">
+        {retro.signalResults.map((result) => (
+          <li key={result.id} className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 py-2.5">
+            <Link
+              to="/retro/signal-results/$resultId"
+              params={{ resultId: result.id }}
+              search={{ ws: linearWorkspaceId }}
+              className="link min-w-0 font-mono text-sm break-all"
+            >
+              {result.sourceName}/{result.queryName}
+            </Link>
+            <Badge>{result.sourceKind}</Badge>
+            {result.live ? <Badge tone="accent">live</Badge> : null}
+            <span className="t-hint">{productName.get(result.productId) ?? result.productId}</span>
+            <span className="t-hint ml-auto font-mono tabular-nums">{formatBytes(result.bytes)}</span>
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
+/**
+ * docs/specs/retro-web-research.md. The searches and pages of the retro, by product. The text is
+ * untrusted web content, so the list shows only titles and URLs, and each links to its stored copy.
+ */
+function WebResearchSection({ retro, linearWorkspaceId }: { retro: RetroDetail; linearWorkspaceId: string }) {
+  const products = retro.sessions
+    .map((session) => ({ id: session.productId, name: session.productName }))
+    .filter((product) => retro.webResults.some((result) => result.productId === product.id));
+  // A result of a product with no session still shows.
+  for (const result of retro.webResults) {
+    if (!products.some((product) => product.id === result.productId)) products.push({ id: result.productId, name: result.productId });
+  }
+  return (
+    <Section
+      title="Web research"
+      description="The searches the retro agent made and the pages it read, through Factoree. Factoree deletes them after the product's retro data retention."
+    >
+      {retro.webResults.length === 0 ? <Empty>No web research.</Empty> : null}
+      <div className="flex flex-col gap-5">
+        {products.map((product) => {
+          const own = retro.webResults.filter((result) => result.productId === product.id);
+          const searches = new Map<string, WebResultRef[]>();
+          for (const result of own.filter((entry) => entry.kind === "search")) {
+            const query = result.query ?? "";
+            searches.set(query, [...(searches.get(query) ?? []), result]);
+          }
+          const pages = own.filter((result) => result.kind === "page");
+          return (
+            <div key={product.id} className="flex min-w-0 flex-col gap-3">
+              <p className="text-sm font-medium text-ink">{product.name}</p>
+              {searches.size > 0 ? (
+                <div className="flex min-w-0 flex-col gap-3">
+                  <p className="t-label text-mute">
+                    {searches.size} {searches.size === 1 ? "search" : "searches"}
+                  </p>
+                  {[...searches].map(([query, hits]) => (
+                    <div key={query} className="flex min-w-0 flex-col gap-1.5 rounded-control border border-hairline p-3">
+                      <p className="t-value break-words text-ink">{query || "—"}</p>
+                      <ul className="flex min-w-0 flex-col gap-1.5">
+                        {hits.map((hit) => (
+                          <WebResultRow key={hit.id} result={hit} linearWorkspaceId={linearWorkspaceId} />
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {pages.length > 0 ? (
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <p className="t-label text-mute">
+                    {pages.length} {pages.length === 1 ? "page" : "pages"} read
+                  </p>
+                  <ul className="flex min-w-0 flex-col gap-1.5">
+                    {pages.map((page) => (
+                      <WebResultRow key={page.id} result={page} linearWorkspaceId={linearWorkspaceId} />
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+function WebResultRow({ result, linearWorkspaceId }: { result: WebResultRef; linearWorkspaceId: string }) {
+  return (
+    <li className="flex min-w-0 flex-col gap-0.5">
+      <Link
+        to="/retro/web-results/$resultId"
+        params={{ resultId: result.id }}
+        search={{ ws: linearWorkspaceId }}
+        className="link min-w-0 text-sm break-words"
+      >
+        {webResultLabel(result)}
+      </Link>
+      <span className="flex min-w-0 flex-wrap gap-x-2 text-xs text-mute">
+        <span className="min-w-0 font-mono break-all">{result.url}</span>
+        {result.publishedDate ? <span>{formatDay(result.publishedDate)}</span> : null}
+        <span className="font-mono tabular-nums">{formatBytes(result.bytes)}</span>
+      </span>
     </li>
   );
 }

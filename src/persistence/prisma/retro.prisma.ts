@@ -62,6 +62,7 @@ const toSignalSource = (row: Prisma.SignalSourceGetPayload<object>): SignalSourc
   endpoint: row.endpoint,
   secretName: row.secretName,
   enabled: row.enabled,
+  tickedTools: row.tickedTools,
   // A stored query that no longer parses is left out: it cannot run.
   queries: (Array.isArray(row.queries) ? row.queries : []).flatMap((query) => {
     const parsed = signalQuerySchema.safeParse(query);
@@ -104,7 +105,7 @@ export class PrismaSignalSourceStore {
 export type RetroStatus = "running" | "succeeded" | "failed";
 
 export interface RetroEvent {
-  kind: "signal_skipped" | "session_failed" | "session_skipped" | "finding_dropped";
+  kind: "signal_skipped" | "session_failed" | "session_skipped" | "finding_dropped" | "gateway_refused";
   productId: string | null;
   message: string;
   /** When Factoree recorded the event. Null on an event recorded before 0.23.1. */
@@ -136,6 +137,7 @@ export interface RetroFindingRecord {
   description: string;
   runIds: string[];
   signalResultIds: string[];
+  webResultIds: string[];
   repositories: string[];
   status: RetroFindingStatus;
   duplicateOfId: string | null;
@@ -169,7 +171,9 @@ export interface RetroRecord {
 export interface RetroDetail extends RetroRecord {
   sessions: RetroSessionRecord[];
   findings: RetroFindingRecord[];
-  signalResults: Array<{ id: string; productId: string; sourceName: string; sourceKind: SignalSourceKind; queryName: string; bytes: number }>;
+  signalResults: Array<{ id: string; productId: string; sourceName: string; sourceKind: SignalSourceKind; queryName: string; bytes: number; live: boolean }>;
+  /** docs/specs/retro-web-research.md. The searches and pages of the retro, without their text. */
+  webResults: Array<{ id: string; productId: string; kind: "search" | "page"; query: string | null; url: string; title: string | null; publishedDate: string | null; bytes: number }>;
 }
 
 const toStatus = (value: string): RetroStatus => (value === "succeeded" || value === "failed" ? value : "running");
@@ -204,6 +208,7 @@ const toFinding = (row: Prisma.RetroFindingGetPayload<{ include: { product: { se
   description: row.description,
   runIds: row.runIds,
   signalResultIds: row.signalResultIds,
+  webResultIds: row.webResultIds,
   repositories: row.repositories,
   status: row.status as RetroFindingStatus,
   duplicateOfId: row.duplicateOfId,
@@ -306,7 +311,7 @@ export class PrismaRetroStore {
   async storeSignalResults(tenantId: string, retroId: string, productId: string, results: readonly FetchedSignal[]): Promise<Array<FetchedSignal & { id: string }>> {
     const rows = results.map((result) => ({ ...result, id: randomUUID() }));
     await this.prisma.$transaction([
-      this.prisma.signalResult.deleteMany({ where: { retroId, productId } }),
+      this.prisma.signalResult.deleteMany({ where: { retroId, productId, live: false } }),
       this.prisma.signalResult.createMany({ data: rows.map((row) => ({ ...row, tenantId, retroId, productId })) }),
     ]);
     return rows;
@@ -341,6 +346,7 @@ export class PrismaRetroStore {
           description: finding.description,
           runIds: finding.runIds,
           signalResultIds: finding.signalResultIds,
+          webResultIds: finding.webResultIds,
           repositories: finding.repositories,
           status: finding.duplicateOfId === null ? "proposed" : "already_proposed",
           duplicateOfId: finding.duplicateOfId,
@@ -381,7 +387,11 @@ export class PrismaRetroStore {
       include: {
         sessions: { include: { product: { select: { name: true } } }, orderBy: { createdAt: "asc" } },
         findings: { include: { product: { select: { name: true } } }, orderBy: { createdAt: "asc" } },
-        signalResults: { select: { id: true, productId: true, sourceName: true, sourceKind: true, queryName: true, bytes: true }, orderBy: { createdAt: "asc" } },
+        signalResults: { select: { id: true, productId: true, sourceName: true, sourceKind: true, queryName: true, bytes: true, live: true }, orderBy: { createdAt: "asc" } },
+        webResults: {
+          select: { id: true, productId: true, kind: true, query: true, url: true, title: true, publishedDate: true, bytes: true },
+          orderBy: { createdAt: "asc" },
+        },
       },
     });
     if (row === null) return null;
@@ -412,6 +422,7 @@ export class PrismaRetroStore {
         duplicateOfRetroId: finding.duplicateOfId === null ? null : (retroOf.get(finding.duplicateOfId) ?? null),
       })),
       signalResults: row.signalResults.map((result) => ({ ...result, sourceKind: result.sourceKind === "analytics" ? "analytics" : "errors" })),
+      webResults: row.webResults.map((result) => ({ ...result, kind: result.kind === "page" ? "page" : "search" })),
     };
   }
 
@@ -500,10 +511,11 @@ export class PrismaRetroStore {
    * each product older than its retro data retention. Bucket objects go first, so a failed delete
    * leaves the row and the next pass tries again.
    */
-  async deleteExpired(now: Date, bucket: ObjectStore | null): Promise<{ transcripts: number; signalResults: number }> {
+  async deleteExpired(now: Date, bucket: ObjectStore | null): Promise<{ transcripts: number; signalResults: number; webResults: number }> {
     const products = await this.prisma.product.findMany({ select: { id: true, retroRetentionDays: true } });
     let transcripts = 0;
     let signalResults = 0;
+    let webResults = 0;
     for (const product of products) {
       const before = new Date(now.getTime() - product.retroRetentionDays * 24 * 60 * 60_000);
       const stored = await this.prisma.agentTranscript.findMany({ where: { productId: product.id, createdAt: { lt: before } }, select: { id: true, objectKey: true } });
@@ -521,8 +533,11 @@ export class PrismaRetroStore {
       }
       transcripts += (await this.prisma.agentTranscript.deleteMany({ where: { id: { in: removable } } })).count;
       signalResults += (await this.prisma.signalResult.deleteMany({ where: { productId: product.id, createdAt: { lt: before } } })).count;
+      // docs/specs/retro-web-research.md. A gateway session goes with its web results.
+      webResults += (await this.prisma.webResult.deleteMany({ where: { productId: product.id, createdAt: { lt: before } } })).count;
+      await this.prisma.retroGatewaySession.deleteMany({ where: { productId: product.id, createdAt: { lt: before } } });
     }
-    return { transcripts, signalResults };
+    return { transcripts, signalResults, webResults };
   }
 }
 
@@ -573,3 +588,135 @@ export class PrismaTranscriptStore implements TranscriptStore {
   }
 }
 
+
+/** docs/specs/retro-web-research.md. The retro gateway access of one retro session. */
+export interface GatewaySessionRecord {
+  id: string;
+  tenantId: string;
+  retroId: string;
+  productId: string;
+  webResearch: boolean;
+  costLeftUsd: number;
+  spentUsd: number;
+  expiresAt: Date;
+  endedAt: Date | null;
+}
+
+export type GatewayCounter = "searches" | "pages" | "signalCalls";
+
+const COUNTER_COLUMN: Record<GatewayCounter, string> = { searches: "searches", pages: "pages", signalCalls: "signal_calls" };
+
+export interface StoredWebResult {
+  id: string;
+  kind: "search" | "page";
+  query: string | null;
+  url: string;
+  title: string | null;
+  publishedDate: string | null;
+  content: string;
+  bytes: number;
+}
+
+/**
+ * docs/specs/retro-web-research.md. Gateway sessions, their web results and their live signal
+ * calls. Only the SHA-256 of a token is stored.
+ */
+export class PrismaRetroGatewayStore {
+  constructor(private readonly prisma: FactoreePrismaClient) {}
+
+  async open(input: {
+    tenantId: string;
+    retroId: string;
+    productId: string;
+    tokenSha256: string;
+    webResearch: boolean;
+    costLeftUsd: number;
+    expiresAt: Date;
+  }): Promise<string> {
+    return (await this.prisma.retroGatewaySession.create({ data: input, select: { id: true } })).id;
+  }
+
+  async byToken(tokenSha256: string): Promise<GatewaySessionRecord | null> {
+    return this.prisma.retroGatewaySession.findUnique({
+      where: { tokenSha256 },
+      select: { id: true, tenantId: true, retroId: true, productId: true, webResearch: true, costLeftUsd: true, spentUsd: true, expiresAt: true, endedAt: true },
+    });
+  }
+
+  async end(id: string, at: Date): Promise<void> {
+    await this.prisma.retroGatewaySession.updateMany({ where: { id, endedAt: null }, data: { endedAt: at } });
+  }
+
+  /**
+   * Takes one call of a counter and its cost in one statement, so two calls at once cannot pass a
+   * limit. False when the session ended, expired, reached the limit, or would pass the cost cap.
+   */
+  async reserve(id: string, counter: GatewayCounter, limit: number, costUsd: number, now: Date): Promise<boolean> {
+    const column = Prisma.raw(`"${COUNTER_COLUMN[counter]}"`);
+    const count = await this.prisma.$executeRaw`
+      UPDATE "retro_gateway_session"
+      SET ${column} = ${column} + 1, "spent_usd" = "spent_usd" + ${costUsd}
+      WHERE "id" = ${id} AND "ended_at" IS NULL AND "expires_at" > ${now}
+        AND ${column} < ${limit} AND "spent_usd" + ${costUsd} <= "cost_left_usd"`;
+    return count > 0;
+  }
+
+  async storeWebResults(
+    session: Pick<GatewaySessionRecord, "id" | "tenantId" | "retroId" | "productId">,
+    results: ReadonlyArray<Omit<StoredWebResult, "id" | "bytes"> & { sha256: string }>,
+  ): Promise<StoredWebResult[]> {
+    const rows = results.map((result) => ({ ...result, id: randomUUID(), bytes: Buffer.byteLength(result.content, "utf8") }));
+    await this.prisma.webResult.createMany({
+      data: rows.map((row) => ({ ...row, tenantId: session.tenantId, retroId: session.retroId, productId: session.productId, gatewaySessionId: session.id })),
+    });
+    return rows.map((row) => ({ id: row.id, kind: row.kind, query: row.query, url: row.url, title: row.title, publishedDate: row.publishedDate, content: row.content, bytes: row.bytes }));
+  }
+
+  /** True when a web_search of this session returned the URL. */
+  async searched(sessionId: string, url: string): Promise<boolean> {
+    return (await this.prisma.webResult.count({ where: { gatewaySessionId: sessionId, kind: "search", url } })) > 0;
+  }
+
+  async storeLiveSignal(
+    session: Pick<GatewaySessionRecord, "id" | "tenantId" | "retroId" | "productId">,
+    result: FetchedSignal & { arguments: Record<string, unknown> },
+  ): Promise<string> {
+    const id = randomUUID();
+    await this.prisma.signalResult.create({
+      data: {
+        id,
+        tenantId: session.tenantId,
+        retroId: session.retroId,
+        productId: session.productId,
+        sourceName: result.sourceName,
+        sourceKind: result.sourceKind,
+        queryName: result.queryName,
+        content: result.content,
+        sha256: result.sha256,
+        bytes: result.bytes,
+        live: true,
+        arguments: result.arguments as Prisma.InputJsonValue,
+        gatewaySessionId: session.id,
+      },
+    });
+    return id;
+  }
+
+  /** What a session received through the gateway: its web results and its live signal calls with their kinds. */
+  async evidence(sessionId: string): Promise<{ webResultIds: string[]; liveSignals: Map<string, SignalSourceKind>; spentUsd: number }> {
+    const [web, live, session] = await Promise.all([
+      this.prisma.webResult.findMany({ where: { gatewaySessionId: sessionId }, select: { id: true } }),
+      this.prisma.signalResult.findMany({ where: { gatewaySessionId: sessionId }, select: { id: true, sourceKind: true } }),
+      this.prisma.retroGatewaySession.findUnique({ where: { id: sessionId }, select: { spentUsd: true } }),
+    ]);
+    return {
+      webResultIds: web.map((row) => row.id),
+      liveSignals: new Map(live.map((row) => [row.id, row.sourceKind === "analytics" ? "analytics" : "errors"])),
+      spentUsd: session?.spentUsd ?? 0,
+    };
+  }
+
+  async webResult(tenantId: string, id: string) {
+    return this.prisma.webResult.findFirst({ where: { id, tenantId } });
+  }
+}

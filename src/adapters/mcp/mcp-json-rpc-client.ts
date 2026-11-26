@@ -11,6 +11,16 @@ import { readEventStreamAnswer } from "./event-stream.js";
 export interface McpToolPort {
   /** Calls one tool and returns the concatenated text content of the answer. */
   callTool(name: string, args: Record<string, unknown>): Promise<string>;
+  /** docs/specs/retro-web-research.md. The tools the server lists, for the signal source connection test. */
+  listTools?(): Promise<McpToolDescription[]>;
+}
+
+/** One tool a server lists. readOnly is the server's readOnlyHint: a hint, never a guarantee. */
+export interface McpToolDescription {
+  name: string;
+  description: string | null;
+  readOnly: boolean;
+  inputSchema: Record<string, unknown> | null;
 }
 
 export class McpError extends Error {
@@ -108,6 +118,30 @@ export class McpJsonRpcClient implements McpToolPort {
     }
 
     return text;
+  }
+
+  async listTools(): Promise<McpToolDescription[]> {
+    await this.ensureInitialized();
+    const tools: McpToolDescription[] = [];
+    let cursor: string | null = null;
+    // A server pages its tool list. Ten pages bound a hostile server.
+    for (let page = 0; page < 10; page += 1) {
+      const result = asRecord(await this.request("tools/list", cursor === null ? {} : { cursor }));
+      for (const entry of Array.isArray(result["tools"]) ? (result["tools"] as unknown[]) : []) {
+        const tool = asRecord(entry);
+        if (typeof tool["name"] !== "string" || tool["name"] === "") continue;
+        const annotations = asRecord(tool["annotations"]);
+        tools.push({
+          name: tool["name"],
+          description: typeof tool["description"] === "string" ? tool["description"] : null,
+          readOnly: annotations["readOnlyHint"] === true,
+          inputSchema: isRecord(tool["inputSchema"]) ? tool["inputSchema"] : null,
+        });
+      }
+      cursor = typeof result["nextCursor"] === "string" && result["nextCursor"] !== "" ? result["nextCursor"] : null;
+      if (cursor === null) break;
+    }
+    return tools;
   }
 
   private ensureInitialized(): Promise<void> {

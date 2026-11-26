@@ -42,6 +42,8 @@ export type ProductForm = {
   /** docs/specs/retro-agent.md. The product goal in markdown. Empty clears it. */
   productGoal: string;
   keepTranscripts: boolean;
+  /** docs/specs/retro-web-research.md. The retro agent may search the web through the retro gateway. */
+  webResearch: boolean;
   retroRetentionDays: string;
 };
 
@@ -96,6 +98,7 @@ export function formOf(p: Product): ProductForm {
     allowedDomains: p.allowedDomains.join("\n"),
     productGoal: p.productGoal ?? "",
     keepTranscripts: p.keepTranscripts,
+    webResearch: p.webResearch,
     retroRetentionDays: String(p.retroRetentionDays),
   };
 }
@@ -198,6 +201,7 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
       // An empty goal clears it.
       productGoal: form.productGoal.trim() ? form.productGoal : "",
       keepTranscripts: form.keepTranscripts,
+      webResearch: form.webResearch,
       retroRetentionDays: retention,
     },
   };

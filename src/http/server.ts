@@ -40,7 +40,13 @@ import { registerInstallationRoutes } from "./admin/installations.routes.js";
 import { registerContextSourceRoutes } from "./admin/context-sources.routes.js";
 import { registerSettingsRoutes } from "./admin/settings.routes.js";
 import { registerRetroRoutes, type RetroRouteDependencies } from "./admin/retro.routes.js";
-import { PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore } from "~/persistence/prisma/retro.prisma.js";
+import { PrismaRetroGatewayStore, PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore } from "~/persistence/prisma/retro.prisma.js";
+import { RetroGateway } from "~/domain/retro/retro-gateway.js";
+import { registerRetroGatewayRoutes } from "./retro-gateway.routes.js";
+import { ExaSearch } from "~/adapters/exa/exa-search.js";
+import { effectiveExaKey } from "~/domain/settings/install-settings.js";
+import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
+import { Redactor } from "~/telemetry/redaction.js";
 import { registerSandboxProviderRoutes } from "./admin/sandbox-providers.routes.js";
 import { registerDrainRoutes, type DrainRouteDependencies } from "./admin/drain.routes.js";
 import { PrismaSandboxProviderStore } from "~/persistence/prisma/sandbox-provider.prisma.js";
@@ -73,6 +79,7 @@ export interface ServerDependencies {
         | "FACTOREE_TRANSCRIPT_S3_REGION"
         | "FACTOREE_TRANSCRIPT_S3_ACCESS_KEY"
         | "FACTOREE_TRANSCRIPT_S3_SECRET_KEY"
+        | "FACTOREE_WEB_SEARCH_EXA_API_KEY"
       >
     >;
   /** The release version, for the OpenAPI document. */
@@ -199,6 +206,34 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
     });
 
     registerAuthRoutes(root, { auth: dependencies.auth, publicUrl });
+
+    // docs/specs/retro-web-research.md. The retro gateway, reached from a retro sandbox with a session token.
+    const exaKey = async (): Promise<string | null> => effectiveExaKey((await dependencies.settings.read()).webSearch, dependencies.env.FACTOREE_WEB_SEARCH_EXA_API_KEY);
+    const retroStore = new PrismaRetroStore(dependencies.prisma);
+    registerRetroGatewayRoutes(
+      root,
+      new RetroGateway({
+        store: new PrismaRetroGatewayStore(dependencies.prisma),
+        retros: retroStore,
+        signalSources: new PrismaSignalSourceStore(dependencies.prisma),
+        secrets: dependencies.secrets,
+        mcpTools:
+          dependencies.retro?.mcpTools ??
+          (() => ({ callTool: () => Promise.reject(new Error("this server calls no MCP server")) })),
+        webSearch: async () => {
+          const key = await exaKey();
+          return key === null ? null : new ExaSearch(key);
+        },
+        redactorFor: async (tenantId, productId, extra) => {
+          const redactor = new Redactor(extra);
+          await registerProjectSecrets(redactor, dependencies.secrets, tenantId, productId);
+          const key = await exaKey();
+          if (key !== null) redactor.addSecret(key);
+          return redactor;
+        },
+        logger: dependencies.logger,
+      }),
+    );
     registerSetupRoutes(root, {
       prisma: dependencies.prisma,
       settings: dependencies.settings,
@@ -357,6 +392,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
           FACTOREE_TRANSCRIPT_S3_REGION: dependencies.env.FACTOREE_TRANSCRIPT_S3_REGION,
           FACTOREE_TRANSCRIPT_S3_ACCESS_KEY: dependencies.env.FACTOREE_TRANSCRIPT_S3_ACCESS_KEY,
           FACTOREE_TRANSCRIPT_S3_SECRET_KEY: dependencies.env.FACTOREE_TRANSCRIPT_S3_SECRET_KEY,
+          FACTOREE_WEB_SEARCH_EXA_API_KEY: dependencies.env.FACTOREE_WEB_SEARCH_EXA_API_KEY,
         },
       });
       // docs/specs/retro-agent.md.
@@ -367,6 +403,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         retroSettings: new PrismaRetroSettingsStore(dependencies.prisma),
         retros: new PrismaRetroStore(dependencies.prisma),
         signalSources: new PrismaSignalSourceStore(dependencies.prisma),
+        webResults: new PrismaRetroGatewayStore(dependencies.prisma),
         scheduler: dependencies.retro?.scheduler ?? null,
         linearIssues: dependencies.retro?.linearIssues ?? (() => Promise.reject(new Error("this server creates no Linear issue"))),
         mcpTools:

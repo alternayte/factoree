@@ -45,6 +45,7 @@ import {
   getSetupState,
   getSetupStatus,
   getSignalResult,
+  getWebResult,
   listApiKeys,
   listContextSources,
   listHostCredentials,
@@ -188,6 +189,9 @@ import type {
   GetSignalResultData,
   GetSignalResultError,
   GetSignalResultResponse,
+  GetWebResultData,
+  GetWebResultError,
+  GetWebResultResponse,
   ListApiKeysData,
   ListApiKeysResponse,
   ListContextSourcesData,
@@ -1849,6 +1853,22 @@ export const getSignalResultOptions = (options: Options<GetSignalResultData>) =>
       return data;
     },
     queryKey: getSignalResultQueryKey(options),
+  });
+
+export const getWebResultQueryKey = (options: Options<GetWebResultData>) => createQueryKey("getWebResult", options);
+
+export const getWebResultOptions = (options: Options<GetWebResultData>) =>
+  queryOptions<GetWebResultResponse, GetWebResultError, GetWebResultResponse, ReturnType<typeof getWebResultQueryKey>>({
+    queryFn: async ({ queryKey, signal }) => {
+      const { data } = await getWebResult({
+        ...options,
+        ...queryKey[0],
+        signal,
+        throwOnError: true,
+      });
+      return data;
+    },
+    queryKey: getWebResultQueryKey(options),
   });
 
 /**

@@ -12,6 +12,7 @@ const input: RetroSessionInput = {
     ["errors-1", "errors"],
     ["analytics-1", "analytics"],
   ]),
+  webResults: new Set(["web-1"]),
   repositories: new Set(["alternayte/c-dash"]),
 };
 
@@ -51,13 +52,25 @@ describe("the retro finding check", () => {
   it("drops each kind that lacks its own evidence", () => {
     expect(reasonOf(finding({ runIds: [] }))).toMatch(/factory finding cites no run/);
     expect(reasonOf(finding({ kind: "error", signalResultIds: ["analytics-1"] }))).toMatch(/errors source/);
-    expect(reasonOf(finding({ kind: "idea", runIds: ["run-1"] }))).toMatch(/analytics source/);
+    expect(reasonOf(finding({ kind: "idea", runIds: ["run-1"] }))).toMatch(/no analytics result and no web result/);
+    expect(reasonOf(finding({ kind: "error", signalResultIds: [], webResultIds: ["web-1"] }))).toMatch(/errors source/);
   });
 
   it("keeps an idea that cites analytics, and drops a repository the product does not hold", () => {
     expect(checkFinding(finding({ kind: "idea", runIds: [], signalResultIds: ["analytics-1"], repositories: ["alternayte/c-dash", "evil/repo"] }), input)).toMatchObject({
       kept: { kind: "idea", repositories: ["alternayte/c-dash"] },
     });
+  });
+});
+
+describe("the web result citations", () => {
+  // docs/specs/retro-web-research.md. An idea may rest on the web, and only on what the session received.
+  it("keeps an idea that cites only a web result of the session", () => {
+    expect(checkFinding(finding({ kind: "idea", runIds: [], webResultIds: ["web-1"] }), input)).toMatchObject({ kept: { kind: "idea", webResultIds: ["web-1"] } });
+  });
+
+  it("drops a finding that cites a web result of another session", () => {
+    expect(reasonOf(finding({ webResultIds: ["web-of-another-session"] }))).toMatch(/did not receive/);
   });
 });
 

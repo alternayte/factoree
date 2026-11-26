@@ -54,13 +54,22 @@ export function SignalResultPage({ resultId, ws }: { resultId: string; ws?: stri
               items={[
                 { label: "Source", value: data.sourceName },
                 { label: "Kind", prose: true, value: <Badge>{data.sourceKind}</Badge> },
-                { label: "Query", value: data.queryName },
+                // docs/specs/retro-web-research.md. A live result is a tool call of the agent through the retro gateway.
+                ...(data.live ? [{ label: "Call", prose: true, value: <Badge tone="accent">live call</Badge> }] : []),
+                { label: data.live ? "Tool" : "Query", value: data.queryName },
                 { label: "Size", value: `${data.bytes} bytes` },
                 { label: "SHA-256", value: data.sha256 },
                 { label: "Stored", prose: true, value: formatDate(data.createdAt) },
               ]}
             />
           </Section>
+          {data.live && data.arguments !== null ? (
+            <Section title="Arguments" description="The arguments the agent sent, after redaction.">
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-control border border-hairline bg-canvas p-3 font-mono text-xs text-body">
+                {JSON.stringify(data.arguments, null, 2)}
+              </pre>
+            </Section>
+          ) : null}
           <Section title="Content">
             <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words rounded-control border border-hairline bg-canvas p-3 font-mono text-xs text-body">
               {data.content}

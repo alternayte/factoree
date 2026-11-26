@@ -67,6 +67,7 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
         accessKey: row.transcriptS3AccessKey,
         secretKey: this.open(row.transcriptS3SecretKeyCipher),
       },
+      webSearch: { exaApiKey: this.open(row.exaApiKeyCipher) },
       operatorTenantId: row.operatorTenantId,
       setupCompletedAt: row.setupCompletedAt,
     };
@@ -77,7 +78,7 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
   }
 
   async update(patch: InstallSettingsPatch): Promise<InstallSettings> {
-    const { github = {}, linear = {}, sandbox = {}, gitAuthor = {}, transcriptBucket = {} } = patch;
+    const { github = {}, linear = {}, sandbox = {}, gitAuthor = {}, transcriptBucket = {}, webSearch = {} } = patch;
     const data = {
       githubAppId: github.appId,
       githubAppSlug: github.appSlug,
@@ -100,6 +101,7 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
       transcriptS3Region: transcriptBucket.region,
       transcriptS3AccessKey: transcriptBucket.accessKey,
       transcriptS3SecretKeyCipher: this.seal(transcriptBucket.secretKey),
+      exaApiKeyCipher: this.seal(webSearch.exaApiKey),
       operatorTenantId: patch.operatorTenantId,
     };
     const defined = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));

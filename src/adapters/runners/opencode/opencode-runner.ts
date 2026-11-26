@@ -30,11 +30,20 @@ import { randomUUID } from "node:crypto";
 const OPENCODE_PERMISSION = { external_directory: "allow" };
 
 /** The inline config of one session. GitHub issue 37: the provider config of the model, when it has one. */
-const opencodeConfig = (settings: AgentSessionSettings): string =>
-  JSON.stringify({
-    permission: OPENCODE_PERMISSION,
+const opencodeConfig = (settings: AgentSessionSettings): string => {
+  const server = settings.mcpServer ?? null;
+  return JSON.stringify({
+    // docs/specs/retro-web-research.md. With a session MCP server, opencode's own web tools are off.
+    permission: server === null ? OPENCODE_PERMISSION : { ...OPENCODE_PERMISSION, webfetch: "deny", websearch: "deny" },
     ...(settings.providerConfig === undefined || settings.providerConfig === null ? {} : { provider: settings.providerConfig }),
+    ...(server === null
+      ? {}
+      : {
+          tools: { webfetch: false, websearch: false },
+          mcp: { [server.name]: { type: "remote", url: server.url, enabled: true, headers: { Authorization: `Bearer ${server.bearerToken}` } } },
+        }),
   });
+};
 
 /** docs/specs/model-picker.md. opencode reads the catalog from the file and fetches none. */
 const modelsEnvironment = (path: string): Record<string, string> => ({

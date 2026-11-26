@@ -27,6 +27,7 @@ import { Route as SetupGithubCreatedRouteImport } from './routes/setup/github/cr
 import { Route as SetupGithubInstalledRouteImport } from './routes/setup/github/installed'
 import { Route as AppProductsProductIdSetupsRouteImport } from './routes/_app/products/$productId_.setups'
 import { Route as AppRetroSignalResultsResultIdRouteImport } from './routes/_app/retro/signal-results/$resultId'
+import { Route as AppRetroWebResultsResultIdRouteImport } from './routes/_app/retro/web-results/$resultId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -119,6 +120,12 @@ const AppRetroSignalResultsResultIdRoute =
     path: '/retro/signal-results/$resultId',
     getParentRoute: () => AppRoute,
   } as any)
+const AppRetroWebResultsResultIdRoute =
+  AppRetroWebResultsResultIdRouteImport.update({
+    id: '/retro/web-results/$resultId',
+    path: '/retro/web-results/$resultId',
+    getParentRoute: () => AppRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -138,6 +145,7 @@ export interface FileRoutesByFullPath {
   '/runs/': typeof AppRunsIndexRoute
   '/products/$productId/setups': typeof AppProductsProductIdSetupsRoute
   '/retro/signal-results/$resultId': typeof AppRetroSignalResultsResultIdRoute
+  '/retro/web-results/$resultId': typeof AppRetroWebResultsResultIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -157,6 +165,7 @@ export interface FileRoutesByTo {
   '/runs': typeof AppRunsIndexRoute
   '/products/$productId/setups': typeof AppProductsProductIdSetupsRoute
   '/retro/signal-results/$resultId': typeof AppRetroSignalResultsResultIdRoute
+  '/retro/web-results/$resultId': typeof AppRetroWebResultsResultIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -178,6 +187,7 @@ export interface FileRoutesById {
   '/_app/runs/': typeof AppRunsIndexRoute
   '/_app/products/$productId_/setups': typeof AppProductsProductIdSetupsRoute
   '/_app/retro/signal-results/$resultId': typeof AppRetroSignalResultsResultIdRoute
+  '/_app/retro/web-results/$resultId': typeof AppRetroWebResultsResultIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -199,6 +209,7 @@ export interface FileRouteTypes {
     | '/runs/'
     | '/products/$productId/setups'
     | '/retro/signal-results/$resultId'
+    | '/retro/web-results/$resultId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -218,6 +229,7 @@ export interface FileRouteTypes {
     | '/runs'
     | '/products/$productId/setups'
     | '/retro/signal-results/$resultId'
+    | '/retro/web-results/$resultId'
   id:
     | '__root__'
     | '/'
@@ -238,6 +250,7 @@ export interface FileRouteTypes {
     | '/_app/runs/'
     | '/_app/products/$productId_/setups'
     | '/_app/retro/signal-results/$resultId'
+    | '/_app/retro/web-results/$resultId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -377,6 +390,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRetroSignalResultsResultIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/retro/web-results/$resultId': {
+      id: '/_app/retro/web-results/$resultId'
+      path: '/retro/web-results/$resultId'
+      fullPath: '/retro/web-results/$resultId'
+      preLoaderRoute: typeof AppRetroWebResultsResultIdRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -393,6 +413,7 @@ interface AppRouteChildren {
   AppRunsIndexRoute: typeof AppRunsIndexRoute
   AppProductsProductIdSetupsRoute: typeof AppProductsProductIdSetupsRoute
   AppRetroSignalResultsResultIdRoute: typeof AppRetroSignalResultsResultIdRoute
+  AppRetroWebResultsResultIdRoute: typeof AppRetroWebResultsResultIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -408,6 +429,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppRunsIndexRoute: AppRunsIndexRoute,
   AppProductsProductIdSetupsRoute: AppProductsProductIdSetupsRoute,
   AppRetroSignalResultsResultIdRoute: AppRetroSignalResultsResultIdRoute,
+  AppRetroWebResultsResultIdRoute: AppRetroWebResultsResultIdRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

@@ -15,7 +15,8 @@ import type { TranscriptStore } from "~/domain/retro/transcript.js";
 import type { AgentRunnerRegistry, AgentRunResult } from "~/domain/runs/agent-runner.js";
 import type { SandboxProviderSelector } from "~/domain/runs/provider-selection.js";
 import type { Sandbox, SandboxRef } from "~/domain/runs/sandbox.js";
-import type { PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore, RetroEvent } from "~/persistence/prisma/retro.prisma.js";
+import type { PrismaRetroGatewayStore, PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore, RetroEvent } from "~/persistence/prisma/retro.prisma.js";
+import { gatewayToolNameOf, GATEWAY_SERVER_NAME, GATEWAY_TOKEN_TTL_MS, gatewayUrlOf, newGatewayToken } from "~/domain/retro/web-research.js";
 import { RETRO_PROMPT_VERSION, renderRetroPrompt } from "~/prompts/retro.js";
 import type { Logger } from "~/telemetry/logger.js";
 import type { Redactor } from "~/telemetry/redaction.js";
@@ -36,6 +37,15 @@ export interface RetroActivityDependencies {
   redactor: Redactor;
   logger: Logger;
   clock?: () => Date;
+  /**
+   * docs/specs/retro-web-research.md. The retro gateway: its store, the Factoree public URL that
+   * serves it, and whether the install holds an Exa key. Absent, a session gets no gateway.
+   */
+  gateway?: {
+    store: Pick<PrismaRetroGatewayStore, "open" | "end" | "evidence">;
+    publicUrl: string;
+    webSearchReady: () => Promise<boolean>;
+  };
 }
 
 export type PreparedRetro = { kind: "run"; retroId: string; productIds: string[]; costCapUsd: number } | { kind: "skipped"; reason: string };
@@ -136,6 +146,12 @@ export const createRetroActivities = (dependencies: RetroActivityDependencies) =
         fetched.skipped.map((skip) => event("signal_skipped", input.productId, `The query ${skip.sourceName}/${skip.queryName} gave no result: ${skip.reason}`)),
       );
 
+      // docs/specs/retro-web-research.md. A session gets the gateway when it has a tool to offer.
+      const tickedTools = sources.filter((source) => source.enabled).flatMap((source) => source.tickedTools.map((tool) => gatewayToolNameOf(source.name, tool)));
+      const gateway = dependencies.gateway;
+      const webResearch = gateway !== undefined && product.webResearch && (await gateway.webSearchReady());
+      const useGateway = gateway !== undefined && (webResearch || tickedTools.length > 0);
+
       const recordSkip = async (reason: string): Promise<RetroSessionOutcome> => {
         await dependencies.retros.recordSession({
           tenantId: input.tenantId,
@@ -155,7 +171,7 @@ export const createRetroActivities = (dependencies: RetroActivityDependencies) =
         return { costUsd: 0 };
       };
       // An agent session with nothing to read costs money and finds nothing.
-      if (exported.length === 0 && signals.length === 0) return recordSkip("No run of the product ended in the window, and it has no signal result.");
+      if (exported.length === 0 && signals.length === 0 && !useGateway) return recordSkip("No run of the product ended in the window, and it has no signal result.");
 
       const repositories = (await dependencies.repositories.listByProduct(input.productId)).map((repository) => repository.fullName);
       const sessionRunId = retroSessionRunId(input.retroId, input.productId);
@@ -176,7 +192,9 @@ export const createRetroActivities = (dependencies: RetroActivityDependencies) =
       // P-08. The session reaches the model provider and nothing else: the Anthropic host for
       // Claude Code, and for opencode the product's allow list, where its model hosts live.
       const claudeHost = role.runner === "claude" ? claudeApiHostOf(runnerEnvironment) : null;
-      const hosts = role.runner === "claude" ? (claudeHost === null ? [] : [claudeHost]) : [...product.allowedDomains];
+      const modelHosts = role.runner === "claude" ? (claudeHost === null ? [] : [claudeHost]) : [...product.allowedDomains];
+      // The gateway host joins the egress only when the session has the gateway.
+      const hosts = useGateway ? [...new Set([...modelHosts, new URL(gateway.publicUrl).hostname])] : modelHosts;
       const ref: SandboxRef = await sandbox.create({ runId: sessionRunId, tenantId: input.tenantId, productId: input.productId });
       try {
         await attachRunnerEnvironment(dependencies.sandbox, ref, dependencies.secrets, input.tenantId, input.productId);
@@ -209,7 +227,27 @@ export const createRetroActivities = (dependencies: RetroActivityDependencies) =
           signals: promptSignals,
           skippedSignals: skippedLines,
           findingsPath,
+          gateway: useGateway ? { webResearch, signalTools: tickedTools } : null,
         });
+
+        // docs/specs/retro-web-research.md. A token bound to this retro, product and tenant, with
+        // the cost cap the earlier sessions left.
+        let gatewaySession: { id: string; token: string } | null = null;
+        if (useGateway) {
+          const { token, sha256 } = newGatewayToken();
+          dependencies.redactor.addSecret(token);
+          const costLeftUsd = Math.max(0, settings.costCapUsd - (await dependencies.retros.spent(input.retroId)));
+          const id = await gateway.store.open({
+            tenantId: input.tenantId,
+            retroId: input.retroId,
+            productId: input.productId,
+            tokenSha256: sha256,
+            webResearch,
+            costLeftUsd,
+            expiresAt: new Date(now().getTime() + GATEWAY_TOKEN_TTL_MS),
+          });
+          gatewaySession = { id, token };
+        }
 
         const runner = dependencies.runners.get(role.runner);
         const startSession = (timeoutMs: number) =>
@@ -225,17 +263,28 @@ export const createRetroActivities = (dependencies: RetroActivityDependencies) =
             environment: {},
             actionPolicy: buildActionPolicy({ role: "retro" }),
             timeoutMs,
+            ...(gatewaySession === null || !useGateway
+              ? {}
+              : { mcpServer: { name: GATEWAY_SERVER_NAME, url: gatewayUrlOf(gateway.publicUrl), bearerToken: gatewaySession.token } }),
           });
         const results: AgentRunResult[] = [];
-        results.push(await startSession(RETRO_SESSION_TIMEOUT_MS));
-        const left = RETRO_SESSION_TIMEOUT_MS - (Date.now() - started);
-        if (results[0]?.outcome === "hung" && left >= RETRO_HANG_RETRY_MIN_MS) {
-          dependencies.logger.warn("the retro session hung, so Factoree starts it once more", { retro_id: input.retroId, product_id: input.productId });
-          results.push(await startSession(left));
+        try {
+          results.push(await startSession(RETRO_SESSION_TIMEOUT_MS));
+          const left = RETRO_SESSION_TIMEOUT_MS - (Date.now() - started);
+          if (results[0]?.outcome === "hung" && left >= RETRO_HANG_RETRY_MIN_MS) {
+            dependencies.logger.warn("the retro session hung, so Factoree starts it once more", { retro_id: input.retroId, product_id: input.productId });
+            results.push(await startSession(left));
+          }
+        } finally {
+          // The token stops working when the session ends.
+          if (gatewaySession !== null && useGateway) await gateway.store.end(gatewaySession.id, now());
         }
+        const evidence = gatewaySession === null || !useGateway ? null : await gateway.store.evidence(gatewaySession.id);
         const result = results.at(-1)!;
         const costs = results.map((entry) => entry.usage?.costUsd).filter((cost): cost is number => cost !== null && cost !== undefined);
-        const costUsd = costs.length === 0 ? null : costs.reduce((sum, cost) => sum + cost, 0);
+        // The searches and pages the gateway paid count toward the retro cost cap.
+        const gatewaySpent = evidence?.spentUsd ?? 0;
+        const costUsd = costs.length === 0 && gatewaySpent === 0 ? null : costs.reduce((sum, cost) => sum + cost, 0) + gatewaySpent;
         const sessionFields = { runCount: exported.length, outcome: result.outcome, model: result.model ?? role.model, metrics };
 
         const read = await dependencies.sandbox.exec(ref, { file: "cat", args: [findingsPath], cwd: "/" });
@@ -255,7 +304,8 @@ export const createRetroActivities = (dependencies: RetroActivityDependencies) =
           productId: product.id,
           productNames: [product.id, product.slug],
           runIds: new Set(exported.map((run) => run.id)),
-          signalResults: new Map(signals.map((signal) => [signal.id, signal.sourceKind])),
+          signalResults: new Map([...signals.map((signal) => [signal.id, signal.sourceKind] as const), ...(evidence?.liveSignals ?? new Map())]),
+          webResults: new Set(evidence?.webResultIds ?? []),
           repositories: new Set(repositories),
         };
         const open = await dependencies.retros.openFindingsByTitle(input.tenantId, input.productId);

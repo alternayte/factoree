@@ -8,12 +8,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- A .NET repository whose `NuGet.config` names the private feed `nuget.frontiersin.net` now sets up with no change to the repository. Before the setup agent starts, a NuGet pre-check runs in a sandbox. It drops the packages that nuget.org lists at the exact version, checks the `nuget.pkg.github.com` host credential, and looks each private package up on the GitHub Packages mirror `nuget.pkg.github.com/frontiersin`, the index and then the download. It then writes `.factoree/nuget.config` with `packageSourceMapping`, and restores with it for at most 5 rounds to find each transitive private package (docs/specs/nuget-private-feed-mapping.md, DI-21.229 to DI-21.240).
-- A missing package, a missing or wrong credential, or another private feed fails the setup before any agent session, with no app-change issue. The setup report and the `setup_precheck:nuget` run event name each package, the file that references it, its parent chain and the fix: mirror it to https://github.com/orgs/frontiersin/packages, or fix the credential (DI-21.237).
+- A .NET repository whose `NuGet.config` names the private feed `nuget.frontiersin.net` now sets up with no change to the repository. Before the setup agent starts, a NuGet pre-check runs in a sandbox. It drops the packages that nuget.org lists at the exact version, checks the `nuget.pkg.github.com` host credential, and looks each private package up on the GitHub Packages mirror `nuget.pkg.github.com/frontiersin`, the index and then the download. It then writes `.factoree/nuget.config` with `packageSourceMapping`, and restores with it for at most 5 rounds to find each transitive private package (docs/specs/nuget-private-feed-mapping.md, DI-21.235 to DI-21.246).
+- A missing package, a missing or wrong credential, or another private feed fails the setup before any agent session, with no app-change issue. The setup report and the `setup_precheck:nuget` run event name each package, the file that references it, its parent chain and the fix: mirror it to https://github.com/orgs/frontiersin/packages, or fix the credential (DI-21.243).
 
 ### Changed
 
-- The setup prompt is `setup@18`: it gives the agent `.factoree/nuget.config`, restores with `--configfile` in the bootstrap, and passes `--no-restore` to later dotnet commands. The implementer prompt is `implementer/14`, with the same rule. A setup whose previous setup failed in the NuGet pre-check always runs, and the pre-check outcome is part of the setup input key (DI-21.230, DI-21.238).
+- The setup prompt is `setup@18`: it gives the agent `.factoree/nuget.config`, restores with `--configfile` in the bootstrap, and passes `--no-restore` to later dotnet commands. The implementer prompt is `implementer/14`, with the same rule. A setup whose previous setup failed in the NuGet pre-check always runs, and the pre-check outcome is part of the setup input key (DI-21.236, DI-21.244).
+
+## [0.24.0] - 2026-11-26
+
+### Added
+
+- The retro gateway: one Factoree MCP server per retro session, at `/retro-gateway/mcp` on the API, reached with a token bound to one retro, product and tenant. It ends with the session (docs/specs/retro-web-research.md, DI-21.229 to DI-21.234).
+- Web research per product, off by default. With an Exa key, the retro agent searches the web (`web_search`) and reads the pages its own searches returned (`fetch_page`). Exa fetches the pages, so Factoree opens no site. Each result and page is stored as a web result with an id.
+- Ticked tools: the signal source connection test lists the server's tools, read-only tools are ticked by default, and the retro agent calls ticked tools live. Each call is redacted and stored as a signal result.
+- An idea finding can rest on web results alone. The Retro page marks it "web only" and lists each retro's searches, pages and live calls.
+- The Exa key in Install settings. `FACTOREE_WEB_SEARCH_EXA_API_KEY` wins and locks the field.
+
+### Changed
+
+- The retro session turns off the runner's own web search and web fetch, and its egress adds the Factoree API host only when the gateway has a tool. Each session is capped at 20 searches, 40 pages and 50 signal calls, and the gateway cost counts toward the retro cost cap. The retro prompt is `retro@2`.
 
 ## [0.23.1] - 2026-11-26
 

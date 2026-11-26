@@ -4,6 +4,22 @@ import type { GetRetroResponse, ListRetrosResponse } from "@/api/types.gen";
 export type RetroSummary = ListRetrosResponse["retros"][number];
 export type RetroDetail = GetRetroResponse;
 export type Finding = RetroDetail["findings"][number];
+/** docs/specs/retro-web-research.md. A stored search hit or page of a retro. */
+export type WebResultRef = RetroDetail["webResults"][number];
+export type SignalResultRef = RetroDetail["signalResults"][number];
+
+/** formatDay renders a published date as a day, since a source date has no reliable time. */
+export const formatDay = (value: string | null): string => {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { dateStyle: "medium" });
+};
+
+export const formatBytes = (bytes: number): string =>
+  bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+
+/** webResultLabel names a web result by its title, or by its URL when it has none. */
+export const webResultLabel = (result: { title: string | null; url: string }): string => result.title?.trim() || result.url;
 
 export const retroTone = (status: RetroSummary["status"]) =>
   status === "running" ? "accent" : status === "succeeded" ? "success" : "danger";

@@ -915,7 +915,7 @@ export const createSetupActivities = (dependencies: SetupActivityDependencies) =
           },
           idempotencyKey: `setup:${setup.id}:precheck:nuget`,
         });
-        // DI-21.237. The report keeps the parts of the setup before it, so the next setup still
+        // DI-21.243. The report keeps the parts of the setup before it, so the next setup still
         // names what is unproven (DI-21.18). A failed pre-check renders only its own evidence.
         const previous = await dependencies.setups.previousWithReport(setup.productId, setup.repositoryFullName, setup.createdAt);
         await dependencies.setups.update(setup.id, {

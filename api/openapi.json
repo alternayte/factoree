@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Factoree",
-    "version": "0.23.1"
+    "version": "0.24.0"
   },
   "components": {
     "securitySchemes": {
@@ -2564,6 +2564,9 @@
                     "retroRetentionDays": {
                       "type": "number"
                     },
+                    "webResearch": {
+                      "type": "boolean"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -2605,6 +2608,7 @@
                     "productGoal",
                     "keepTranscripts",
                     "retroRetentionDays",
+                    "webResearch",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3345,6 +3349,9 @@
                     "retroRetentionDays": {
                       "type": "number"
                     },
+                    "webResearch": {
+                      "type": "boolean"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -3386,6 +3393,7 @@
                     "productGoal",
                     "keepTranscripts",
                     "retroRetentionDays",
+                    "webResearch",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -3802,6 +3810,9 @@
                       "retroRetentionDays": {
                         "type": "number"
                       },
+                      "webResearch": {
+                        "type": "boolean"
+                      },
                       "createdAt": {
                         "type": "string"
                       },
@@ -3843,6 +3854,7 @@
                       "productGoal",
                       "keepTranscripts",
                       "retroRetentionDays",
+                      "webResearch",
                       "createdAt",
                       "updatedAt"
                     ]
@@ -4282,6 +4294,9 @@
                     "retroRetentionDays": {
                       "type": "number"
                     },
+                    "webResearch": {
+                      "type": "boolean"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -4323,6 +4338,7 @@
                     "productGoal",
                     "keepTranscripts",
                     "retroRetentionDays",
+                    "webResearch",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -4747,6 +4763,9 @@
                     "retroRetentionDays": {
                       "type": "number"
                     },
+                    "webResearch": {
+                      "type": "boolean"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -4788,6 +4807,7 @@
                     "productGoal",
                     "keepTranscripts",
                     "retroRetentionDays",
+                    "webResearch",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -5227,6 +5247,9 @@
                     "type": "integer",
                     "minimum": 7,
                     "maximum": 365
+                  },
+                  "webResearch": {
+                    "type": "boolean"
                   }
                 },
                 "additionalProperties": false
@@ -5594,6 +5617,9 @@
                     "retroRetentionDays": {
                       "type": "number"
                     },
+                    "webResearch": {
+                      "type": "boolean"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -5635,6 +5661,7 @@
                     "productGoal",
                     "keepTranscripts",
                     "retroRetentionDays",
+                    "webResearch",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -6171,6 +6198,9 @@
                     "retroRetentionDays": {
                       "type": "number"
                     },
+                    "webResearch": {
+                      "type": "boolean"
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -6212,6 +6242,7 @@
                     "productGoal",
                     "keepTranscripts",
                     "retroRetentionDays",
+                    "webResearch",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -17599,6 +17630,21 @@
                         "locked",
                         "active"
                       ]
+                    },
+                    "webSearch": {
+                      "type": "object",
+                      "properties": {
+                        "exaKeySet": {
+                          "type": "boolean"
+                        },
+                        "locked": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "exaKeySet",
+                        "locked"
+                      ]
                     }
                   },
                   "required": [
@@ -17607,7 +17653,8 @@
                     "linear",
                     "sandbox",
                     "gitAuthor",
-                    "transcriptBucket"
+                    "transcriptBucket",
+                    "webSearch"
                   ]
                 }
               }
@@ -17761,6 +17808,23 @@
                         ]
                       },
                       "secretKey": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "webSearch": {
+                    "type": "object",
+                    "properties": {
+                      "exaApiKey": {
                         "anyOf": [
                           {
                             "type": "string",
@@ -18011,6 +18075,21 @@
                         "locked",
                         "active"
                       ]
+                    },
+                    "webSearch": {
+                      "type": "object",
+                      "properties": {
+                        "exaKeySet": {
+                          "type": "boolean"
+                        },
+                        "locked": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "exaKeySet",
+                        "locked"
+                      ]
                     }
                   },
                   "required": [
@@ -18019,7 +18098,8 @@
                     "linear",
                     "sandbox",
                     "gitAuthor",
-                    "transcriptBucket"
+                    "transcriptBucket",
+                    "webSearch"
                   ]
                 }
               }
@@ -20105,6 +20185,12 @@
                               "type": "string"
                             }
                           },
+                          "webResultIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
                           "repositories": {
                             "type": "array",
                             "items": {
@@ -20170,6 +20256,7 @@
                           "description",
                           "runIds",
                           "signalResultIds",
+                          "webResultIds",
                           "repositories",
                           "status",
                           "duplicateOfId",
@@ -20208,6 +20295,9 @@
                           },
                           "bytes": {
                             "type": "number"
+                          },
+                          "live": {
+                            "type": "boolean"
                           }
                         },
                         "required": [
@@ -20216,6 +20306,62 @@
                           "sourceName",
                           "sourceKind",
                           "queryName",
+                          "bytes",
+                          "live"
+                        ]
+                      }
+                    },
+                    "webResults": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "productId": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "search",
+                              "page"
+                            ]
+                          },
+                          "query": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "publishedDate": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "bytes": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "productId",
+                          "kind",
+                          "query",
+                          "url",
+                          "title",
+                          "publishedDate",
                           "bytes"
                         ]
                       }
@@ -20236,7 +20382,8 @@
                     "events",
                     "sessions",
                     "findings",
-                    "signalResults"
+                    "signalResults",
+                    "webResults"
                   ]
                 }
               }
@@ -20333,6 +20480,23 @@
                     "bytes": {
                       "type": "number"
                     },
+                    "live": {
+                      "type": "boolean"
+                    },
+                    "arguments": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "createdAt": {
                       "type": "string"
                     }
@@ -20344,6 +20508,136 @@
                     "sourceName",
                     "sourceKind",
                     "queryName",
+                    "content",
+                    "sha256",
+                    "bytes",
+                    "live",
+                    "arguments",
+                    "createdAt"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {}
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/retro/web-results/{id}": {
+      "get": {
+        "operationId": "getWebResult",
+        "tags": [
+          "retro"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in": "query",
+            "name": "linearWorkspaceId",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "retroId": {
+                      "type": "string"
+                    },
+                    "productId": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "search",
+                        "page"
+                      ]
+                    },
+                    "query": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "publishedDate": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "bytes": {
+                      "type": "number"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "retroId",
+                    "productId",
+                    "kind",
+                    "query",
+                    "url",
+                    "title",
+                    "publishedDate",
                     "content",
                     "sha256",
                     "bytes",
@@ -20463,6 +20757,12 @@
                         "type": "string"
                       }
                     },
+                    "webResultIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "repositories": {
                       "type": "array",
                       "items": {
@@ -20528,6 +20828,7 @@
                     "description",
                     "runIds",
                     "signalResultIds",
+                    "webResultIds",
                     "repositories",
                     "status",
                     "duplicateOfId",
@@ -20699,6 +21000,12 @@
                         "type": "string"
                       }
                     },
+                    "webResultIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "repositories": {
                       "type": "array",
                       "items": {
@@ -20764,6 +21071,7 @@
                     "description",
                     "runIds",
                     "signalResultIds",
+                    "webResultIds",
                     "repositories",
                     "status",
                     "duplicateOfId",
@@ -20933,6 +21241,12 @@
                               ]
                             }
                           },
+                          "tickedTools": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
                           "createdAt": {
                             "type": "string"
                           },
@@ -20949,6 +21263,7 @@
                           "secretName",
                           "enabled",
                           "queries",
+                          "tickedTools",
                           "createdAt",
                           "updatedAt"
                         ]
@@ -21058,6 +21373,16 @@
                       "additionalProperties": false
                     }
                   },
+                  "tickedTools": {
+                    "default": [],
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
                   "linearWorkspaceId": {
                     "type": "string",
                     "minLength": 1
@@ -21160,6 +21485,12 @@
                         ]
                       }
                     },
+                    "tickedTools": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -21176,6 +21507,7 @@
                     "secretName",
                     "enabled",
                     "queries",
+                    "tickedTools",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -21313,6 +21645,16 @@
                       "additionalProperties": false
                     }
                   },
+                  "tickedTools": {
+                    "default": [],
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
                   "linearWorkspaceId": {
                     "type": "string",
                     "minLength": 1
@@ -21423,6 +21765,12 @@
                         ]
                       }
                     },
+                    "tickedTools": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "createdAt": {
                       "type": "string"
                     },
@@ -21439,6 +21787,7 @@
                     "secretName",
                     "enabled",
                     "queries",
+                    "tickedTools",
                     "createdAt",
                     "updatedAt"
                   ]
@@ -21639,6 +21988,16 @@
                       "additionalProperties": false
                     }
                   },
+                  "tickedTools": {
+                    "default": [],
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    }
+                  },
                   "linearWorkspaceId": {
                     "type": "string",
                     "minLength": 1
@@ -21721,10 +22080,50 @@
                           "reason"
                         ]
                       }
+                    },
+                    "tools": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "readOnly": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "description",
+                              "readOnly"
+                            ]
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "toolsError": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
-                    "results"
+                    "results",
+                    "tools",
+                    "toolsError"
                   ]
                 }
               }
