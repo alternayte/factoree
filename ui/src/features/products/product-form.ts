@@ -45,11 +45,15 @@ export type ProductForm = {
   /** docs/specs/retro-web-research.md. The retro agent may search the web through the retro gateway. */
   webResearch: boolean;
   retroRetentionDays: string;
+  /** docs/specs/s3-object-store.md. The days the object store keeps video and traces. Empty keeps them. */
+  evidenceRetentionDays: string;
 };
 
 /** docs/specs/retro-agent.md. The limits of the product goal and of the retro data retention. */
 export const PRODUCT_GOAL_MAX_BYTES = 16 * 1024;
 export const RETRO_RETENTION = { min: 7, max: 365 } as const;
+/** docs/specs/s3-object-store.md. The limits of the evidence retention. */
+export const EVIDENCE_RETENTION = { min: 1, max: 3650 } as const;
 
 export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 
@@ -100,6 +104,7 @@ export function formOf(p: Product): ProductForm {
     keepTranscripts: p.keepTranscripts,
     webResearch: p.webResearch,
     retroRetentionDays: String(p.retroRetentionDays),
+    evidenceRetentionDays: p.evidenceRetentionDays === null ? "" : String(p.evidenceRetentionDays),
   };
 }
 
@@ -168,6 +173,17 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
   const retention = Number(form.retroRetentionDays.trim());
   if (!form.retroRetentionDays.trim() || !Number.isInteger(retention) || retention < RETRO_RETENTION.min || retention > RETRO_RETENTION.max)
     problems.push(`Retro data retention must be a whole number of days from ${RETRO_RETENTION.min} to ${RETRO_RETENTION.max}.`);
+  const evidenceRaw = form.evidenceRetentionDays.trim();
+  const evidenceRetention = evidenceRaw ? Number(evidenceRaw) : null;
+  if (
+    evidenceRetention !== null &&
+    (!Number.isInteger(evidenceRetention) ||
+      evidenceRetention < EVIDENCE_RETENTION.min ||
+      evidenceRetention > EVIDENCE_RETENTION.max)
+  )
+    problems.push(
+      `Evidence retention must be empty or a whole number of days from ${EVIDENCE_RETENTION.min} to ${EVIDENCE_RETENTION.max}.`,
+    );
   if (problems.length > 0) return { problems };
   const effort = (role: Role) => form.effort[role].trim() || null;
   return {
@@ -203,6 +219,7 @@ export function bodyOf(form: ProductForm): { body: UpdateProductData["body"] } |
       keepTranscripts: form.keepTranscripts,
       webResearch: form.webResearch,
       retroRetentionDays: retention,
+      evidenceRetentionDays: evidenceRetention,
     },
   };
 }

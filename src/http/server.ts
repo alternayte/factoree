@@ -43,6 +43,10 @@ import { registerRetroRoutes, type RetroRouteDependencies } from "./admin/retro.
 import { PrismaRetroGatewayStore, PrismaRetroSettingsStore, PrismaRetroStore, PrismaSignalSourceStore } from "~/persistence/prisma/retro.prisma.js";
 import { RetroGateway } from "~/domain/retro/retro-gateway.js";
 import { registerRetroGatewayRoutes } from "./retro-gateway.routes.js";
+import { registerArtifactRoutes } from "./artifacts.routes.js";
+import { PrismaStoredArtifactStore } from "~/persistence/prisma/stored-artifact.prisma.js";
+import { S3ObjectStore } from "~/adapters/s3/s3-object-store.js";
+import { completeBucket, effectiveBucket } from "~/domain/retro/transcript.js";
 import { ExaSearch } from "~/adapters/exa/exa-search.js";
 import { effectiveExaKey } from "~/domain/settings/install-settings.js";
 import { registerProjectSecrets } from "~/domain/products/redaction-loader.js";
@@ -56,7 +60,7 @@ import type { ModelCatalogService } from "~/domain/products/model-catalog-servic
 import { registerLinearWebhookRoutes } from "./webhooks/linear.routes.js";
 import { registerGitHubWebhookRoutes, type GitHubWebhookDependencies } from "./webhooks/github.routes.js";
 import { PrismaContextSourceConfigurationStore } from "~/persistence/prisma/context-source-configuration.prisma.js";
-import { registerAdminGuard } from "./auth/admin-guard.js";
+import { registerAdminGuard, resolvePrincipal } from "./auth/admin-guard.js";
 import { registerAuthRoutes } from "./auth/auth.routes.js";
 import type { AuthHandle } from "./auth/auth.js";
 import { registerSetupRoutes, type SetupRouteDependencies } from "./setup/setup.routes.js";
@@ -74,6 +78,12 @@ export interface ServerDependencies {
     Partial<
       Pick<
         Env,
+        | "FACTOREE_S3_ENDPOINT"
+        | "FACTOREE_S3_BUCKET"
+        | "FACTOREE_S3_REGION"
+        | "FACTOREE_S3_ACCESS_KEY"
+        | "FACTOREE_S3_SECRET_KEY"
+        | "FACTOREE_EVIDENCE_STORAGE"
         | "FACTOREE_TRANSCRIPT_S3_ENDPOINT"
         | "FACTOREE_TRANSCRIPT_S3_BUCKET"
         | "FACTOREE_TRANSCRIPT_S3_REGION"
@@ -207,6 +217,18 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
 
     registerAuthRoutes(root, { auth: dependencies.auth, publicUrl });
 
+    // docs/specs/s3-object-store.md. The stable links of object store evidence.
+    registerArtifactRoutes(root, {
+      artifacts: new PrismaStoredArtifactStore(dependencies.prisma),
+      objectStore: async () => {
+        const bucket = completeBucket(effectiveBucket((await dependencies.settings.read()).objectStore, dependencies.env));
+        return bucket === null ? null : new S3ObjectStore(bucket);
+      },
+      principal: (request) =>
+        resolvePrincipal({ auth: dependencies.auth, prisma: dependencies.prisma, settings: dependencies.settings, logger: dependencies.logger }, request),
+      masterKey,
+    });
+
     // docs/specs/retro-web-research.md. The retro gateway, reached from a retro sandbox with a session token.
     const exaKey = async (): Promise<string | null> => effectiveExaKey((await dependencies.settings.read()).webSearch, dependencies.env.FACTOREE_WEB_SEARCH_EXA_API_KEY);
     const retroStore = new PrismaRetroStore(dependencies.prisma);
@@ -303,6 +325,7 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         tenants: dependencies.tenants,
         runViews: new PrismaRunViewReader(dependencies.prisma),
         events: runEvents,
+        artifacts: new PrismaStoredArtifactStore(dependencies.prisma),
         // Issue #45. A Factoree UI stop takes the stop path of a Linear stop.
         stopRun: (input) => dependencies.delegation.stopRun(input),
         // docs/specs/draft-of-failed-run.md. A Factoree UI draft takes the path of a Linear reply.
@@ -386,7 +409,13 @@ export const buildServer = (dependencies: ServerDependencies): FastifyInstance =
         temporalNamespace: dependencies.temporalNamespace ?? "default",
         listLinearTeams: dependencies.setup.linear.listTeams,
         ...(dependencies.buildAhead === undefined ? {} : { buildAhead: dependencies.buildAhead }),
-        transcriptBucketEnv: {
+        objectStoreEnv: {
+          FACTOREE_S3_ENDPOINT: dependencies.env.FACTOREE_S3_ENDPOINT,
+          FACTOREE_S3_BUCKET: dependencies.env.FACTOREE_S3_BUCKET,
+          FACTOREE_S3_REGION: dependencies.env.FACTOREE_S3_REGION,
+          FACTOREE_S3_ACCESS_KEY: dependencies.env.FACTOREE_S3_ACCESS_KEY,
+          FACTOREE_S3_SECRET_KEY: dependencies.env.FACTOREE_S3_SECRET_KEY,
+          FACTOREE_EVIDENCE_STORAGE: dependencies.env.FACTOREE_EVIDENCE_STORAGE,
           FACTOREE_TRANSCRIPT_S3_ENDPOINT: dependencies.env.FACTOREE_TRANSCRIPT_S3_ENDPOINT,
           FACTOREE_TRANSCRIPT_S3_BUCKET: dependencies.env.FACTOREE_TRANSCRIPT_S3_BUCKET,
           FACTOREE_TRANSCRIPT_S3_REGION: dependencies.env.FACTOREE_TRANSCRIPT_S3_REGION,

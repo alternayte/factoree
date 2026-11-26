@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createEvidenceStorage } from "~/adapters/evidence/evidence-storage-factory.js";
 import type { LinearFileUploadApi } from "~/adapters/linear/linear-evidence-storage.js";
+import type { EvidenceStoreName } from "~/domain/settings/install-settings.js";
 
 const artifact = {
   tenantId: "tenant-1",
@@ -8,60 +9,37 @@ const artifact = {
   name: "VAL-UI-001-screenshot.png",
   contentType: "image/png",
   bytes: new Uint8Array([1, 2, 3]),
+  kind: "screenshot",
 };
 
-const neverCalled = (): Promise<LinearFileUploadApi> => {
-  throw new Error("the filesystem selection must not build a Linear port");
-};
-
+// docs/specs/s3-object-store.md. Each upload goes to the store chosen at its time.
 describe("createEvidenceStorage", () => {
-  it("selects the filesystem adapter by default", () => {
-    const storage = createEvidenceStorage({
-      storage: "filesystem",
-      localRoot: "/tmp/factoree-evidence-selection-test",
-      linearApiForTenant: neverCalled,
-    });
-    expect(storage.name).toBe("filesystem");
-  });
-
-  it("selects the Linear adapter and resolves the port for the tenant of the artifact", async () => {
+  it("reads the evidence store for each upload", async () => {
+    let store: EvidenceStoreName = "s3";
     const tenants: string[] = [];
-    const uploads: string[] = [];
     const api: LinearFileUploadApi = {
-      fileUpload: (contentType, filename) => {
-        uploads.push(`${contentType} ${filename}`);
-        return Promise.resolve({
-          success: true,
-          uploadFile: {
-            uploadUrl: "https://upload.example/slot",
-            assetUrl: "https://assets.example/a.png",
-            headers: [],
-          },
-        });
-      },
+      fileUpload: () =>
+        Promise.resolve({ success: true, uploadFile: { uploadUrl: "https://upload.example/slot", assetUrl: "https://assets.example/a.png", headers: [] } }),
     };
-
     const storage = createEvidenceStorage({
-      storage: "linear",
+      store: () => Promise.resolve(store),
       localRoot: "/tmp/factoree-evidence-selection-test",
       linearApiForTenant: (tenantId) => {
         tenants.push(tenantId);
         return Promise.resolve(api);
       },
+      s3: { name: "s3", put: () => Promise.resolve({ storageRef: "https://factoree.example/artifacts/a1/token", sha256: "x", byteLength: 3 }) },
     });
+    expect((await storage.put(artifact)).storageRef).toBe("https://factoree.example/artifacts/a1/token");
 
-    expect(storage.name).toBe("linear");
-
+    store = "linear";
     const originalFetch = globalThis.fetch;
     globalThis.fetch = () => Promise.resolve(new Response(null, { status: 200 }));
     try {
-      const stored = await storage.put(artifact);
-      expect(stored.storageRef).toBe("https://assets.example/a.png");
+      expect((await storage.put(artifact)).storageRef).toBe("https://assets.example/a.png");
     } finally {
       globalThis.fetch = originalFetch;
     }
-
     expect(tenants).toEqual(["tenant-1"]);
-    expect(uploads).toEqual(["image/png VAL-UI-001-screenshot.png"]);
   });
 });

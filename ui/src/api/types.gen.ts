@@ -749,6 +749,7 @@ export type CreateSetupProductResponses = {
     keepTranscripts: boolean;
     retroRetentionDays: number;
     webResearch: boolean;
+    evidenceRetentionDays: number | null;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -921,6 +922,7 @@ export type ListProductsResponses = {
     keepTranscripts: boolean;
     retroRetentionDays: number;
     webResearch: boolean;
+    evidenceRetentionDays: number | null;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1028,6 +1030,7 @@ export type CreateProductResponses = {
     keepTranscripts: boolean;
     retroRetentionDays: number;
     webResearch: boolean;
+    evidenceRetentionDays: number | null;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1135,6 +1138,7 @@ export type CopyProductResponses = {
     keepTranscripts: boolean;
     retroRetentionDays: number;
     webResearch: boolean;
+    evidenceRetentionDays: number | null;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1275,6 +1279,7 @@ export type GetProductResponses = {
     keepTranscripts: boolean;
     retroRetentionDays: number;
     webResearch: boolean;
+    evidenceRetentionDays: number | null;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1334,6 +1339,7 @@ export type UpdateProductData = {
     keepTranscripts?: boolean;
     retroRetentionDays?: number;
     webResearch?: boolean;
+    evidenceRetentionDays?: number | null;
   };
   path: {
     id: string;
@@ -1434,6 +1440,7 @@ export type UpdateProductResponses = {
     keepTranscripts: boolean;
     retroRetentionDays: number;
     webResearch: boolean;
+    evidenceRetentionDays: number | null;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -1539,6 +1546,7 @@ export type ActivateProductResponses = {
     keepTranscripts: boolean;
     retroRetentionDays: number;
     webResearch: boolean;
+    evidenceRetentionDays: number | null;
     createdAt: string;
     updatedAt: string;
     pendingRepositories?: number;
@@ -2588,6 +2596,56 @@ export type GetRunResponses = {
 };
 
 export type GetRunResponse = GetRunResponses[keyof GetRunResponses];
+
+export type ListRunArtifactsData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query: {
+    linearWorkspaceId: string;
+  };
+  url: "/admin/runs/{id}/artifacts";
+};
+
+export type ListRunArtifactsErrors = {
+  /**
+   * Default Response
+   */
+  400: {
+    error: unknown;
+  };
+  /**
+   * Default Response
+   */
+  404: {
+    error: unknown;
+  };
+};
+
+export type ListRunArtifactsError = ListRunArtifactsErrors[keyof ListRunArtifactsErrors];
+
+export type ListRunArtifactsResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    items: Array<{
+      id: string;
+      kind: string;
+      source: string;
+      sha256: string;
+      link: string;
+      store: "s3" | "linear" | "filesystem";
+      bytes: number | null;
+      deletedAt: string | null;
+      deletedAfterDays: number | null;
+      createdAt: string;
+    }>;
+  };
+};
+
+export type ListRunArtifactsResponse = ListRunArtifactsResponses[keyof ListRunArtifactsResponses];
 
 export type ListRunEventsData = {
   body?: never;
@@ -4456,7 +4514,7 @@ export type GetInstallSettingsResponses = {
       name: string;
       email: string;
     };
-    transcriptBucket: {
+    objectStore: {
       endpoint: string | null;
       bucket: string | null;
       region: string | null;
@@ -4464,6 +4522,13 @@ export type GetInstallSettingsResponses = {
       secretKeySet: boolean;
       locked: Array<"endpoint" | "bucket" | "region" | "accessKey" | "secretKey">;
       active: boolean;
+      tested: boolean;
+    };
+    evidenceStorage: {
+      value: "linear" | "s3" | "filesystem";
+      stored: "linear" | "s3" | "filesystem";
+      locked: boolean;
+      s3Allowed: boolean;
     };
     webSearch: {
       exaKeySet: boolean;
@@ -4494,7 +4559,7 @@ export type UpdateInstallSettingsData = {
       name?: string;
       email?: string;
     };
-    transcriptBucket?: {
+    objectStore?: {
       endpoint?: string | null;
       bucket?: string | null;
       region?: string | null;
@@ -4504,6 +4569,7 @@ export type UpdateInstallSettingsData = {
     webSearch?: {
       exaApiKey?: string | null;
     };
+    evidenceStorage?: "linear" | "s3" | "filesystem";
   };
   path?: never;
   query?: never;
@@ -4567,7 +4633,7 @@ export type UpdateInstallSettingsResponses = {
       name: string;
       email: string;
     };
-    transcriptBucket: {
+    objectStore: {
       endpoint: string | null;
       bucket: string | null;
       region: string | null;
@@ -4575,6 +4641,13 @@ export type UpdateInstallSettingsResponses = {
       secretKeySet: boolean;
       locked: Array<"endpoint" | "bucket" | "region" | "accessKey" | "secretKey">;
       active: boolean;
+      tested: boolean;
+    };
+    evidenceStorage: {
+      value: "linear" | "s3" | "filesystem";
+      stored: "linear" | "s3" | "filesystem";
+      locked: boolean;
+      s3Allowed: boolean;
     };
     webSearch: {
       exaKeySet: boolean;
@@ -4584,6 +4657,36 @@ export type UpdateInstallSettingsResponses = {
 };
 
 export type UpdateInstallSettingsResponse = UpdateInstallSettingsResponses[keyof UpdateInstallSettingsResponses];
+
+export type TestObjectStoreData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/admin/install-settings/object-store/test";
+};
+
+export type TestObjectStoreErrors = {
+  /**
+   * Default Response
+   */
+  403: {
+    error: unknown;
+  };
+};
+
+export type TestObjectStoreError = TestObjectStoreErrors[keyof TestObjectStoreErrors];
+
+export type TestObjectStoreResponses = {
+  /**
+   * Default Response
+   */
+  200: {
+    ok: boolean;
+    error: string | null;
+  };
+};
+
+export type TestObjectStoreResponse = TestObjectStoreResponses[keyof TestObjectStoreResponses];
 
 export type ListWorkspacesData = {
   body?: never;

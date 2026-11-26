@@ -428,7 +428,8 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
       body.data.productGoal !== undefined ||
       body.data.keepTranscripts !== undefined ||
       body.data.retroRetentionDays !== undefined ||
-      body.data.webResearch !== undefined
+      body.data.webResearch !== undefined ||
+      body.data.evidenceRetentionDays !== undefined
     ) {
       const before = await dependencies.products.findById(tenant.id, request.params.id);
       product = await dependencies.products.updateSettings(tenant.id, request.params.id, {
@@ -451,6 +452,7 @@ export const registerProductRoutes = (app: FastifyInstance, dependencies: Produc
         ...(body.data.keepTranscripts === undefined ? {} : { keepTranscripts: body.data.keepTranscripts }),
         ...(body.data.retroRetentionDays === undefined ? {} : { retroRetentionDays: body.data.retroRetentionDays }),
         ...(body.data.webResearch === undefined ? {} : { webResearch: body.data.webResearch }),
+        ...(body.data.evidenceRetentionDays === undefined ? {} : { evidenceRetentionDays: body.data.evidenceRetentionDays }),
         ...(body.data.sandboxProviderIds === undefined
           ? {}
           : { sandboxProviderIds: [...new Set(body.data.sandboxProviderIds)].sort() }),

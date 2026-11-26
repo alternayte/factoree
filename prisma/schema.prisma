@@ -182,6 +182,7 @@ model Run {
   targetEdges               RunTargetEdge[]
   originOfPullRequests      PullRequest[]
   transcripts               AgentTranscript[]
+  storedArtifacts           StoredArtifact[]
   // docs/specs/factory-floor.md. The status history and the session pulses of the run.
   statusChanges             RunStatusChange[]
   sessionPulses             SessionPulse[]
@@ -733,6 +734,8 @@ model Product {
   retroRetentionDays           Int                          @default(30) @map("retro_retention_days")
   // docs/specs/retro-web-research.md. The retro agent may search the web through the retro gateway.
   webResearch                  Boolean                      @default(false) @map("web_research")
+  // docs/specs/s3-object-store.md. Days after which video and traces leave the object store. Null keeps them.
+  evidenceRetentionDays        Int?                         @map("evidence_retention_days")
   createdAt                    DateTime                     @default(now())
   updatedAt                    DateTime                     @updatedAt
   repositories                 Repository[]
@@ -967,6 +970,10 @@ model InstallSettings {
   transcriptS3SecretKeyCipher String?   @map("transcript_s3_secret_key_cipher")
   // docs/specs/retro-web-research.md. The Exa key of the retro gateway. FACTOREE_WEB_SEARCH_EXA_API_KEY wins.
   exaApiKeyCipher             String?   @map("exa_api_key_cipher")
+  // docs/specs/s3-object-store.md. Where new evidence goes: linear, s3 or filesystem. FACTOREE_EVIDENCE_STORAGE wins.
+  evidenceStorage             String    @default("linear") @map("evidence_storage")
+  // The SHA-256 of the effective object store settings at the last passing test. S3 needs it to match.
+  objectStoreTestedSha256     String?   @map("object_store_tested_sha256")
   updatedAt                   DateTime  @updatedAt
 }
 
@@ -1616,4 +1623,27 @@ model AgentTranscript {
   @@index([runId])
   @@index([productId, createdAt])
   @@map("agent_transcript")
+}
+
+// docs/specs/s3-object-store.md. One evidence object in the object store. /artifacts/<id> opens it
+// after a tenant check; a screenshot or video also opens through its open link.
+model StoredArtifact {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  runId       String    @map("run_id")
+  run         Run       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  // screenshot, video, trace, work_item_image, proof_pack_document or another evidence kind.
+  kind        String
+  name        String
+  contentType String    @map("content_type")
+  objectKey   String    @map("object_key")
+  bytes       Int
+  sha256      String
+  // Set when retention deleted the object. The row stays, so the run page can say so.
+  deletedAt   DateTime? @map("deleted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([runId])
+  @@index([tenantId, kind, createdAt])
+  @@map("stored_artifact")
 }

@@ -116,7 +116,7 @@ export interface GitAuthorSettings {
  * docs/specs/retro-agent.md. The S3-compatible bucket of kept transcripts. With no bucket, the
  * transcripts stay in Postgres. A `FACTOREE_TRANSCRIPT_S3_*` env var wins over each field.
  */
-export interface TranscriptBucketSettings {
+export interface ObjectStoreSettings {
   endpoint: string | null;
   bucket: string | null;
   region: string | null;
@@ -135,13 +135,23 @@ export interface WebSearchSettings {
 /** The effective Exa key: the env var wins over the stored key. */
 export const effectiveExaKey = (stored: WebSearchSettings, envKey: string | undefined): string | null => envKey ?? stored.exaApiKey;
 
+/** docs/specs/s3-object-store.md. Where new evidence goes. */
+export const EVIDENCE_STORES = ["linear", "s3", "filesystem"] as const;
+export type EvidenceStoreName = (typeof EVIDENCE_STORES)[number];
+
+/** The effective evidence store: FACTOREE_EVIDENCE_STORAGE, when set, wins over the stored choice. */
+export const effectiveEvidenceStore = (stored: EvidenceStoreName, envValue: EvidenceStoreName | undefined): EvidenceStoreName => envValue ?? stored;
+
 export interface InstallSettings {
   github: GitHubAppSettings;
   linear: LinearAppSettings;
   sandbox: SandboxSettings;
   gitAuthor: GitAuthorSettings;
-  transcriptBucket: TranscriptBucketSettings;
+  objectStore: ObjectStoreSettings;
   webSearch: WebSearchSettings;
+  evidenceStorage: EvidenceStoreName;
+  /** The fingerprint of the object store settings at the last passing test, or null. */
+  objectStoreTestedSha256: string | null;
   /** The tenant whose Linear workspace admins administer these settings. Null before setup. */
   operatorTenantId: string | null;
   setupCompletedAt: Date | null;
@@ -156,8 +166,10 @@ export interface InstallSettingsPatch {
   linear?: SettingsPatch<LinearAppSettings> | undefined;
   sandbox?: SettingsPatch<SandboxSettings> | undefined;
   gitAuthor?: SettingsPatch<GitAuthorSettings> | undefined;
-  transcriptBucket?: SettingsPatch<TranscriptBucketSettings> | undefined;
+  objectStore?: SettingsPatch<ObjectStoreSettings> | undefined;
   webSearch?: SettingsPatch<WebSearchSettings> | undefined;
+  evidenceStorage?: EvidenceStoreName | undefined;
+  objectStoreTestedSha256?: string | null | undefined;
   operatorTenantId?: string | null | undefined;
 }
 

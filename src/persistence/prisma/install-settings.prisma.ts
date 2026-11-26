@@ -1,7 +1,7 @@
 import type { InstallSettings as InstallSettingsRow } from "@prisma/client";
 import type { FactoreePrismaClient } from "./client.js";
 import { decryptSecret, encryptSecret } from "~/domain/policy/crypto.js";
-import type { InstallSettings, InstallSettingsPatch, InstallSettingsStore } from "~/domain/settings/install-settings.js";
+import { EVIDENCE_STORES, type EvidenceStoreName, type InstallSettings, type InstallSettingsPatch, type InstallSettingsStore } from "~/domain/settings/install-settings.js";
 
 const ROW_ID = "install";
 
@@ -60,7 +60,7 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
         registryToken: this.open(row.sandboxRegistryTokenCipher),
       },
       gitAuthor: { name: row.gitAuthorName, email: row.gitAuthorEmail },
-      transcriptBucket: {
+      objectStore: {
         endpoint: row.transcriptS3Endpoint,
         bucket: row.transcriptS3Bucket,
         region: row.transcriptS3Region,
@@ -68,6 +68,8 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
         secretKey: this.open(row.transcriptS3SecretKeyCipher),
       },
       webSearch: { exaApiKey: this.open(row.exaApiKeyCipher) },
+      evidenceStorage: (EVIDENCE_STORES as readonly string[]).includes(row.evidenceStorage) ? (row.evidenceStorage as EvidenceStoreName) : "linear",
+      objectStoreTestedSha256: row.objectStoreTestedSha256,
       operatorTenantId: row.operatorTenantId,
       setupCompletedAt: row.setupCompletedAt,
     };
@@ -78,7 +80,7 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
   }
 
   async update(patch: InstallSettingsPatch): Promise<InstallSettings> {
-    const { github = {}, linear = {}, sandbox = {}, gitAuthor = {}, transcriptBucket = {}, webSearch = {} } = patch;
+    const { github = {}, linear = {}, sandbox = {}, gitAuthor = {}, objectStore = {}, webSearch = {} } = patch;
     const data = {
       githubAppId: github.appId,
       githubAppSlug: github.appSlug,
@@ -96,12 +98,14 @@ export class PrismaInstallSettingsStore implements InstallSettingsStore {
       sandboxRegistryTokenCipher: this.seal(sandbox.registryToken),
       gitAuthorName: gitAuthor.name,
       gitAuthorEmail: gitAuthor.email,
-      transcriptS3Endpoint: transcriptBucket.endpoint,
-      transcriptS3Bucket: transcriptBucket.bucket,
-      transcriptS3Region: transcriptBucket.region,
-      transcriptS3AccessKey: transcriptBucket.accessKey,
-      transcriptS3SecretKeyCipher: this.seal(transcriptBucket.secretKey),
+      transcriptS3Endpoint: objectStore.endpoint,
+      transcriptS3Bucket: objectStore.bucket,
+      transcriptS3Region: objectStore.region,
+      transcriptS3AccessKey: objectStore.accessKey,
+      transcriptS3SecretKeyCipher: this.seal(objectStore.secretKey),
       exaApiKeyCipher: this.seal(webSearch.exaApiKey),
+      evidenceStorage: patch.evidenceStorage,
+      objectStoreTestedSha256: patch.objectStoreTestedSha256,
       operatorTenantId: patch.operatorTenantId,
     };
     const defined = Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));

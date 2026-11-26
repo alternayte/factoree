@@ -62,6 +62,8 @@ export interface ProductRecord {
   retroRetentionDays: number;
   /** docs/specs/retro-web-research.md. The retro agent may search the web through the retro gateway. */
   webResearch: boolean;
+  /** docs/specs/s3-object-store.md. Days after which video and traces leave the object store, or null to keep them. */
+  evidenceRetentionDays: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -111,6 +113,7 @@ export interface ProductSettingsUpdate {
   keepTranscripts?: boolean;
   retroRetentionDays?: number;
   webResearch?: boolean;
+  evidenceRetentionDays?: number | null;
 }
 
 export interface CreateProductInput {

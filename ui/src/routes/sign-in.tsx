@@ -6,18 +6,27 @@ import { Button } from "@/components/button";
 import { Alert, ErrorAlert, Loading, Skeleton } from "@/components/layout";
 import { signInRefusal, signInWithLinear } from "@/lib/session";
 
-type Search = { error?: string };
+type Search = { error?: string; next?: string };
+
+/**
+ * docs/specs/s3-object-store.md. next is the same-origin path the sign-in returns to, such as
+ * /artifacts/<id>. A value that does not start with one "/" is dropped, so it never leaves the origin.
+ */
+const samePath = (value: unknown): value is string =>
+  typeof value === "string" && value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\");
 
 export const Route = createFileRoute("/sign-in")({
-  validateSearch: (search: Record<string, unknown>): Search =>
-    typeof search.error === "string" && search.error.length > 0 ? { error: search.error } : {},
+  validateSearch: (search: Record<string, unknown>): Search => ({
+    ...(typeof search.error === "string" && search.error.length > 0 ? { error: search.error } : {}),
+    ...(samePath(search.next) ? { next: search.next } : {}),
+  }),
   component: SignInPage,
 });
 
 function SignInPage() {
-  const { error } = Route.useSearch();
+  const { error, next } = Route.useSearch();
   const state = useQuery(getSetupStateOptions());
-  const signIn = useMutation({ mutationFn: () => signInWithLinear("/") });
+  const signIn = useMutation({ mutationFn: () => signInWithLinear(next ?? "/") });
 
   return (
     <CenteredPage>

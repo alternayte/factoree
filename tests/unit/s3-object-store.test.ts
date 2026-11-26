@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { objectUrlOf, signS3Request } from "~/adapters/s3/s3-object-store.js";
+import { objectUrlOf, presignS3Query, signS3Request } from "~/adapters/s3/s3-object-store.js";
 
 // docs/specs/retro-agent.md. The hand-written SigV4 signer must match AWS, or every bucket refuses
 // the transcripts. The vector is the "GET Object" example of the AWS Signature Version 4 docs.
@@ -27,5 +27,19 @@ describe("the S3 request signer", () => {
       origin: "https://minio.example.com",
       path: "/s3/kept/transcripts/t%201/run.txt.gz",
     });
+  });
+
+  // docs/specs/s3-object-store.md. The presigned GET of an artifact must match AWS query
+  // authentication, or every /artifacts redirect fails. The vector is the presigned URL example of
+  // the AWS Signature Version 4 docs.
+  it("presigns the AWS query authentication example to the published signature", () => {
+    const query = presignS3Query(
+      { region: "us-east-1", accessKey: "AKIAIOSFODNN7EXAMPLE", secretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" },
+      { method: "GET", host: "examplebucket.s3.amazonaws.com", path: "/test.txt", expiresSeconds: 86400 },
+      new Date("2013-05-24T00:00:00Z"),
+    );
+    expect(query).toBe(
+      "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20130524T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host&X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+    );
   });
 });

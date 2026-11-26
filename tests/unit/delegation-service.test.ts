@@ -39,7 +39,7 @@ const productFor = (slug: string, organizationSkillsRepository: string | null = 
   repairMaxAttempts: 2,
   sandboxRetentionHours: 24,
   sandboxProviderIds: [],
-  maxConcurrentRuns: 2, appChangeIssues: "one_per_change", reviewAppDenyList: [], automaticFollowUpLimit: 3, productGoal: null, keepTranscripts: false, retroRetentionDays: 30, webResearch: false,
+  maxConcurrentRuns: 2, appChangeIssues: "one_per_change", reviewAppDenyList: [], automaticFollowUpLimit: 3, productGoal: null, keepTranscripts: false, retroRetentionDays: 30, webResearch: false, evidenceRetentionDays: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 });

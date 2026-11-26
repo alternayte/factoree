@@ -2,11 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { getInstallSettingsOptions, getInstallSettingsQueryKey } from "@/api/@tanstack/react-query.gen";
-import { updateInstallSettings } from "@/api/sdk.gen";
+import { testObjectStore, updateInstallSettings } from "@/api/sdk.gen";
 import type { GetInstallSettingsResponse, UpdateInstallSettingsData } from "@/api/types.gen";
 import { Button } from "@/components/button";
 import { CopyValue } from "@/components/copy";
-import { Field, FieldGrid, Input, SavedNote } from "@/components/form";
+import { Field, FieldGrid, Input, SavedNote, Select } from "@/components/form";
 import { Alert, Badge, ErrorAlert, KeyValue, PageHeader, Section, SkeletonCard, Stack } from "@/components/layout";
 import { useMe } from "@/lib/session";
 import { emptySandboxForm, SandboxFields, type SandboxForm } from "./sandbox-fields";
@@ -25,7 +25,7 @@ export function InstallSettingsPage() {
     <>
       <PageHeader
         title="Install settings"
-        description="Settings for the whole install: the GitHub App, the Linear app, the sandbox image and providers, the git author, the transcript bucket and web search."
+        description="Settings for the whole install: the GitHub App, the Linear app, the sandbox image and providers, the git author, the object store, the evidence store and web search."
       />
       {!canEdit ? (
         <Alert tone="info" className="mb-4 max-w-[640px]">
@@ -45,7 +45,8 @@ export function InstallSettingsPage() {
           <LinearSection settings={settings.data} canEdit={canEdit} />
           <SandboxImageSection settings={settings.data} canEdit={canEdit} />
           <GitAuthorSection settings={settings.data} canEdit={canEdit} />
-          <TranscriptBucketSection settings={settings.data} canEdit={canEdit} />
+          <ObjectStoreSection settings={settings.data} canEdit={canEdit} />
+          <EvidenceStoreSection settings={settings.data} canEdit={canEdit} />
           <WebSearchSection settings={settings.data} canEdit={canEdit} />
           <SandboxProvidersSection
             canEdit={canEdit}
@@ -415,20 +416,23 @@ function GitAuthorSection({ settings, canEdit }: { settings: Settings; canEdit: 
   );
 }
 
-type BucketField = Settings["transcriptBucket"]["locked"][number];
+type BucketField = Settings["objectStore"]["locked"][number];
 
-/** docs/specs/retro-agent.md. The environment variable that sets and locks each bucket field. */
+/**
+ * docs/specs/s3-object-store.md. The environment variable that sets and locks each object store field.
+ * The 0.23 names FACTOREE_TRANSCRIPT_S3_* still work.
+ */
 const BUCKET_ENV: Record<BucketField, string> = {
-  endpoint: "FACTOREE_TRANSCRIPT_S3_ENDPOINT",
-  bucket: "FACTOREE_TRANSCRIPT_S3_BUCKET",
-  region: "FACTOREE_TRANSCRIPT_S3_REGION",
-  accessKey: "FACTOREE_TRANSCRIPT_S3_ACCESS_KEY",
-  secretKey: "FACTOREE_TRANSCRIPT_S3_SECRET_KEY",
+  endpoint: "FACTOREE_S3_ENDPOINT",
+  bucket: "FACTOREE_S3_BUCKET",
+  region: "FACTOREE_S3_REGION",
+  accessKey: "FACTOREE_S3_ACCESS_KEY",
+  secretKey: "FACTOREE_S3_SECRET_KEY",
 };
 
 type BucketForm = Record<Exclude<BucketField, "secretKey">, string> & { secretKey: string };
 
-const bucketFormOf = (b: Settings["transcriptBucket"]): BucketForm => ({
+const bucketFormOf = (b: Settings["objectStore"]): BucketForm => ({
   endpoint: b.endpoint ?? "",
   bucket: b.bucket ?? "",
   region: b.region ?? "",
@@ -437,8 +441,8 @@ const bucketFormOf = (b: Settings["transcriptBucket"]): BucketForm => ({
 });
 
 /** bucketPatch sends only the unlocked fields that changed. An emptied field becomes null, which clears it. */
-function bucketPatch(form: BucketForm, b: Settings["transcriptBucket"]): NonNullable<Patch["transcriptBucket"]> {
-  const patch: NonNullable<Patch["transcriptBucket"]> = {};
+function bucketPatch(form: BucketForm, b: Settings["objectStore"]): NonNullable<Patch["objectStore"]> {
+  const patch: NonNullable<Patch["objectStore"]> = {};
   const text = (v: string) => (v.trim() ? v.trim() : null);
   for (const field of ["endpoint", "bucket", "region", "accessKey"] as const) {
     if (!b.locked.includes(field) && text(form[field]) !== b[field]) patch[field] = text(form[field]);
@@ -448,14 +452,20 @@ function bucketPatch(form: BucketForm, b: Settings["transcriptBucket"]): NonNull
 }
 
 /**
- * docs/specs/retro-agent.md. An optional S3-compatible bucket for kept transcripts. Without one,
- * transcripts go to Postgres. A FACTOREE_TRANSCRIPT_S3_* environment variable wins and locks its field.
+ * docs/specs/s3-object-store.md. The install's one S3-compatible object store. It holds kept
+ * transcripts and, when it is the evidence store, evidence. A FACTOREE_S3_* environment variable
+ * wins and locks its field. The test proves the saved store, so a change needs a new test.
  */
-function TranscriptBucketSection({ settings, canEdit }: { settings: Settings; canEdit: boolean }) {
-  const b = settings.transcriptBucket;
+function ObjectStoreSection({ settings, canEdit }: { settings: Settings; canEdit: boolean }) {
+  const b = settings.objectStore;
+  const qc = useQueryClient();
   const [form, setForm] = useState<BucketForm>(() => bucketFormOf(b));
   const save = useSave();
   const clear = useSave();
+  const test = useMutation({
+    mutationFn: async () => (await testObjectStore({ throwOnError: true })).data,
+    onSettled: () => qc.invalidateQueries({ queryKey: getInstallSettingsQueryKey() }),
+  });
   const patch = bucketPatch(form, b);
   const changed = Object.keys(patch).length > 0;
   const locked = (field: BucketField) => b.locked.includes(field);
@@ -464,6 +474,10 @@ function TranscriptBucketSection({ settings, canEdit }: { settings: Settings; ca
   const unlockedStored =
     (["endpoint", "bucket", "region", "accessKey"] as const).some((field) => !locked(field) && b[field] !== null) ||
     (!locked("secretKey") && b.secretKeySet);
+  const afterSave = (next: Settings) => {
+    setForm(bucketFormOf(next.objectStore));
+    test.reset();
+  };
 
   const text = (field: Exclude<BucketField, "secretKey">, label: string, hint: string, placeholder: string, type = "text") => (
     <Field
@@ -488,23 +502,30 @@ function TranscriptBucketSection({ settings, canEdit }: { settings: Settings; ca
 
   return (
     <Section
-      title="Transcript bucket"
-      description="Where kept transcripts go. Without a complete bucket they go to Postgres. With one, new transcripts go to the bucket and the row keeps the object key."
+      title="Object store"
+      description="An S3-compatible bucket. It holds kept transcripts and, when it is the evidence store, evidence. Without a complete bucket, transcripts go to Postgres."
     >
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <span className="t-label text-mute">Transcripts go to</span>
         {b.active ? <Badge tone="success">the bucket</Badge> : <Badge>Postgres</Badge>}
+        {b.active ? (
+          b.tested ? (
+            <Badge tone="success">Tested</Badge>
+          ) : (
+            <Badge tone="warning">Not tested since the last change</Badge>
+          )
+        ) : null}
       </div>
       <form
         className="flex flex-col gap-4"
         onSubmit={(event) => {
           event.preventDefault();
-          save.mutate({ transcriptBucket: patch }, { onSuccess: (next) => setForm(bucketFormOf(next.transcriptBucket)) });
+          save.mutate({ objectStore: patch }, { onSuccess: afterSave });
         }}
       >
         <FieldGrid>
           {text("endpoint", "Endpoint", "The S3 API URL, for example https://s3.eu-west-2.amazonaws.com.", "https://", "url")}
-          {text("bucket", "Bucket", "The bucket name.", "factoree-transcripts")}
+          {text("bucket", "Bucket", "The bucket name.", "factoree")}
           {text("region", "Region", "The bucket region.", "eu-west-2")}
           {text("accessKey", "Access key", "The access key id.", "")}
           {locked("secretKey") ? (
@@ -523,28 +544,124 @@ function TranscriptBucketSection({ settings, canEdit }: { settings: Settings; ca
         </FieldGrid>
         <ErrorAlert error={save.error} />
         <ErrorAlert error={clear.error} />
+        <ErrorAlert error={test.error} title="The test did not run" />
+        {test.data?.ok ? (
+          <Alert tone="success" title="The object store works">
+            Factoree wrote, read and deleted a test object.
+          </Alert>
+        ) : null}
+        {test.data && !test.data.ok ? (
+          <Alert tone="danger" title="The object store test failed">
+            {test.data.error ?? "The store gave no reason."}
+          </Alert>
+        ) : null}
         {canEdit ? (
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" disabled={!changed || clear.isPending} mutation={save}>
+            <Button type="submit" disabled={!changed || clear.isPending || test.isPending} mutation={save}>
               Save the bucket
             </Button>
+            {b.active ? (
+              <Button
+                variant="ghost"
+                disabled={changed || save.isPending || clear.isPending}
+                mutation={test}
+                onClick={() => test.mutate()}
+              >
+                Test object store
+              </Button>
+            ) : null}
             {unlockedStored ? (
               <Button
                 variant="ghost"
-                disabled={save.isPending}
+                disabled={save.isPending || test.isPending}
                 mutation={clear}
                 onClick={() => {
-                  const cleared: NonNullable<Patch["transcriptBucket"]> = {};
+                  const cleared: NonNullable<Patch["objectStore"]> = {};
                   for (const field of ["endpoint", "bucket", "region", "accessKey", "secretKey"] as const) {
                     if (!locked(field)) cleared[field] = null;
                   }
-                  clear.mutate({ transcriptBucket: cleared }, { onSuccess: (next) => setForm(bucketFormOf(next.transcriptBucket)) });
+                  clear.mutate({ objectStore: cleared }, { onSuccess: afterSave });
                 }}
               >
                 Remove the bucket
               </Button>
             ) : null}
             <SavedNote show={(save.isSuccess || clear.isSuccess) && !changed} />
+            {changed && b.active ? <span className="t-hint">Save before you test.</span> : null}
+          </div>
+        ) : null}
+      </form>
+    </Section>
+  );
+}
+
+type EvidenceStore = Settings["evidenceStorage"]["value"];
+
+const EVIDENCE_STORES: { value: EvidenceStore; label: string }[] = [
+  { value: "linear", label: "Linear" },
+  { value: "s3", label: "Object store (S3)" },
+  { value: "filesystem", label: "Filesystem" },
+];
+
+/**
+ * docs/specs/s3-object-store.md. Where a new artifact goes. FACTOREE_EVIDENCE_STORAGE wins and locks
+ * the choice. S3 needs a passing object store test, and the API answers 422 without one.
+ */
+function EvidenceStoreSection({ settings, canEdit }: { settings: Settings; canEdit: boolean }) {
+  const e = settings.evidenceStorage;
+  const [value, setValue] = useState<EvidenceStore>(e.value);
+  const save = useSave();
+  const changed = !e.locked && value !== e.value;
+  const hint = e.locked
+    ? "Set by FACTOREE_EVIDENCE_STORAGE."
+    : !e.s3Allowed
+      ? "Test the object store first."
+      : undefined;
+  return (
+    <Section
+      title="Evidence store"
+      description="A new artifact goes to the chosen store. Old artifacts stay where they are. With the object store, screenshots and videos open through open links that need no sign-in. Logs, traces and documents need a Factoree sign-in."
+    >
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save.mutate({ evidenceStorage: value }, { onSuccess: (next) => setValue(next.evidenceStorage.value) });
+        }}
+      >
+        <Field
+          label="Evidence store"
+          hint={hint}
+          trailing={e.locked ? <Badge>locked</Badge> : undefined}
+          className="max-w-80"
+        >
+          {(props) => (
+            <Select
+              {...props}
+              disabled={!canEdit || e.locked}
+              value={e.locked ? e.value : value}
+              onChange={(event) => setValue(event.target.value as EvidenceStore)}
+            >
+              {EVIDENCE_STORES.map((store) => (
+                <option
+                  key={store.value}
+                  value={store.value}
+                  disabled={store.value === "s3" && !e.s3Allowed && e.value !== "s3"}
+                >
+                  {store.label}
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+        <p className="t-hint">A change of the master key breaks every open link.</p>
+        <ErrorAlert error={save.error} />
+        {canEdit && !e.locked ? (
+          <div className="flex items-center gap-3">
+            <Button type="submit" disabled={!changed} mutation={save}>
+              Save the evidence store
+            </Button>
+            <SavedNote show={save.isSuccess && !changed} />
           </div>
         ) : null}
       </form>

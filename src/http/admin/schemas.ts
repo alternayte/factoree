@@ -1,14 +1,24 @@
 import { z } from "zod";
 import { PROJECT_SECRET_KINDS } from "~/domain/products/secret-store.js";
-import { DEFAULT_KILN_SANDBOX_SIZE, effectiveExaKey, SANDBOX_PROVIDERS, type InstallSettings } from "~/domain/settings/install-settings.js";
+import {
+  DEFAULT_KILN_SANDBOX_SIZE,
+  effectiveEvidenceStore,
+  effectiveExaKey,
+  EVIDENCE_STORES,
+  SANDBOX_PROVIDERS,
+  type EvidenceStoreName,
+  type InstallSettings,
+} from "~/domain/settings/install-settings.js";
 import type { SandboxProviderSettings } from "~/domain/settings/sandbox-providers.js";
 import { buildInfo } from "~/config/build-info.js";
-import { completeBucket, effectiveBucket, lockedBucketFields } from "~/domain/retro/transcript.js";
+import { completeBucket, effectiveBucket, lockedBucketFields, objectStoreTested } from "~/domain/retro/transcript.js";
 
-/** The `FACTOREE_TRANSCRIPT_S3_*` env vars, each of which wins over its install setting. */
-export type TranscriptBucketEnv = Parameters<typeof lockedBucketFields>[0] & {
+/** The `FACTOREE_S3_*` env vars and their 0.23 aliases, each of which wins over its install setting. */
+export type ObjectStoreEnv = Parameters<typeof lockedBucketFields>[0] & {
   /** docs/specs/retro-web-research.md. Wins over the stored Exa key and locks its field. */
   FACTOREE_WEB_SEARCH_EXA_API_KEY?: string | undefined;
+  /** docs/specs/s3-object-store.md. Wins over the Evidence store choice and locks it. */
+  FACTOREE_EVIDENCE_STORAGE?: EvidenceStoreName | undefined;
 };
 import { AGENT_RUNNERS } from "~/domain/products/agent-settings.js";
 import { REFINER_CRITERIA_LIMIT_MAX, REFINER_CRITERIA_LIMIT_MIN } from "~/domain/refinement/refiner-proposal.js";
@@ -96,6 +106,8 @@ export const productSchema = z.object({
   retroRetentionDays: z.number(),
   /** docs/specs/retro-web-research.md. The retro agent may search the web through the retro gateway. */
   webResearch: z.boolean(),
+  /** docs/specs/s3-object-store.md. Days after which video and traces leave the object store, or null to keep them. */
+  evidenceRetentionDays: z.number().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
   /** docs/specs/repository-membership.md. The products list only: the claims no admin decided yet. */
@@ -177,6 +189,7 @@ export const productSettingsFields = {
   keepTranscripts: z.boolean(),
   retroRetentionDays: z.number().int().min(RETRO_RETENTION_DAYS_MIN).max(RETRO_RETENTION_DAYS_MAX),
   webResearch: z.boolean(),
+  evidenceRetentionDays: z.number().int().min(1).max(3650).nullable(),
 };
 
 /** docs/specs/pr-review-merge-and-deploy.md. What each GitHub App installation of a product lacks. */
@@ -251,8 +264,8 @@ export const installSettingsUpdateSchema = z
       })
       .partial()
       .strict(),
-    // docs/specs/retro-agent.md. The bucket of kept transcripts. Null clears a field.
-    transcriptBucket: z
+    // docs/specs/s3-object-store.md. The object store of kept transcripts and S3 evidence. Null clears a field.
+    objectStore: z
       .object({
         endpoint: z.string().url().nullable(),
         bucket: z.string().min(1).nullable(),
@@ -264,6 +277,8 @@ export const installSettingsUpdateSchema = z
       .strict(),
     // docs/specs/retro-web-research.md. The Exa key. Null clears it.
     webSearch: z.object({ exaApiKey: z.string().min(1).nullable() }).partial().strict(),
+    // docs/specs/s3-object-store.md. Where new evidence goes.
+    evidenceStorage: z.enum(EVIDENCE_STORES),
   })
   .partial()
   .strict();
@@ -300,8 +315,8 @@ export const installSettingsViewSchema = z.object({
     localAllowed: z.boolean(),
   }),
   gitAuthor: z.object({ name: z.string(), email: z.string() }),
-  /** docs/specs/retro-agent.md. The effective bucket of kept transcripts, and the fields an env var locks. */
-  transcriptBucket: z.object({
+  /** docs/specs/s3-object-store.md. The effective object store, and the fields an env var locks. */
+  objectStore: z.object({
     endpoint: z.string().nullable(),
     bucket: z.string().nullable(),
     region: z.string().nullable(),
@@ -310,6 +325,16 @@ export const installSettingsViewSchema = z.object({
     locked: z.array(z.enum(["endpoint", "bucket", "region", "accessKey", "secretKey"])),
     /** True when new transcripts go to the bucket, false when they stay in Postgres. */
     active: z.boolean(),
+    /** True when the settings as they are now passed "Test object store". */
+    tested: z.boolean(),
+  }),
+  /** docs/specs/s3-object-store.md. Where new evidence goes, and whether FACTOREE_EVIDENCE_STORAGE locks it. */
+  evidenceStorage: z.object({
+    value: z.enum(EVIDENCE_STORES),
+    stored: z.enum(EVIDENCE_STORES),
+    locked: z.boolean(),
+    /** True when S3 can be chosen: the object store is complete and passed its test. */
+    s3Allowed: z.boolean(),
   }),
   /** docs/specs/retro-web-research.md. The Exa key of the retro gateway, never its value. */
   webSearch: z.object({
@@ -330,7 +355,7 @@ export const viewInstallSettings = (
   settings: InstallSettings,
   publicUrl: string,
   localAllowed: boolean,
-  bucketEnv: TranscriptBucketEnv = {},
+  bucketEnv: ObjectStoreEnv = {},
 ): InstallSettingsView => ({
   publicUrl,
   github: {
@@ -364,8 +389,8 @@ export const viewInstallSettings = (
     localAllowed,
   },
   gitAuthor: settings.gitAuthor,
-  transcriptBucket: (() => {
-    const bucket = effectiveBucket(settings.transcriptBucket, bucketEnv);
+  objectStore: (() => {
+    const bucket = effectiveBucket(settings.objectStore, bucketEnv);
     return {
       endpoint: bucket.endpoint,
       bucket: bucket.bucket,
@@ -374,8 +399,15 @@ export const viewInstallSettings = (
       secretKeySet: bucket.secretKey !== null,
       locked: lockedBucketFields(bucketEnv),
       active: completeBucket(bucket) !== null,
+      tested: objectStoreTested(settings.objectStore, settings.objectStoreTestedSha256, bucketEnv),
     };
   })(),
+  evidenceStorage: {
+    value: effectiveEvidenceStore(settings.evidenceStorage, bucketEnv.FACTOREE_EVIDENCE_STORAGE),
+    stored: settings.evidenceStorage,
+    locked: bucketEnv.FACTOREE_EVIDENCE_STORAGE !== undefined,
+    s3Allowed: objectStoreTested(settings.objectStore, settings.objectStoreTestedSha256, bucketEnv),
+  },
   webSearch: {
     exaKeySet: effectiveExaKey(settings.webSearch, bucketEnv.FACTOREE_WEB_SEARCH_EXA_API_KEY) !== null,
     locked: bucketEnv.FACTOREE_WEB_SEARCH_EXA_API_KEY !== undefined,

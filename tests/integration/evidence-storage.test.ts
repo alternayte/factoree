@@ -28,6 +28,7 @@ describe("FilesystemEvidenceStorage", () => {
       runId: "r",
       name: "a.txt",
       contentType: "text/plain",
+      kind: "check_log",
       bytes,
     });
 
@@ -45,6 +46,7 @@ describe("FilesystemEvidenceStorage", () => {
       runId: "r",
       name: "a.txt",
       contentType: "text/plain",
+      kind: "check_log",
       bytes,
     });
     const second = await storage.put({
@@ -52,6 +54,7 @@ describe("FilesystemEvidenceStorage", () => {
       runId: "r",
       name: "a.txt",
       contentType: "text/plain",
+      kind: "check_log",
       bytes,
     });
 
@@ -67,6 +70,7 @@ describe("LinearEvidenceStorage", () => {
     runId: "r",
     name: "after-reload.png",
     contentType: "image/png",
+    kind: "screenshot",
     bytes: new TextEncoder().encode("png-bytes"),
   };
 
