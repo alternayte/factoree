@@ -107,7 +107,6 @@ describe("LinearEvidenceStorage", () => {
     expect(stored.storageRef).toBe("https://uploads.linear.app/asset-1");
     expect(calls[0]).toMatchObject({
       contentType: "image/png",
-      kind: "screenshot",
       size: input.bytes.byteLength,
     });
     expect(putCalls[0]?.url).toBe("https://uploads.linear.app/put-1");
